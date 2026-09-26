@@ -1,6 +1,7 @@
 // Pure, deterministic simulation steps. The server runs these to produce the
 // authoritative state; the client runs the exact same functions to predict its
 // own player. No randomness, no wall-clock time, no side effects.
+// (Player abilities and weapons build on these in combat.ts.)
 
 import { ARENA_HALF, OBSTACLES, type Box } from "./arena.ts";
 import {
@@ -42,7 +43,7 @@ export function clampMove(mx: number, mz: number): Vec2 {
   return { x, z };
 }
 
-function clamp(v: number, lo: number, hi: number): number {
+export function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
@@ -96,24 +97,37 @@ export function circlesOverlap(
   return dx * dx + dz * dz < r * r;
 }
 
+/** Longest distance moved between two collision passes. */
+const MOVE_SUBSTEP = 0.25;
+
 /**
- * Advances a player by one fixed tick. This is THE movement function: the
- * server calls it once per received input, the client calls it once per sent
- * input (and again when replaying unacknowledged inputs after a correction).
+ * Moves a player circle by (dx, dz) with collision against the cover and the
+ * arena walls. Long moves (a dash covers ~1 m per tick, as thick as the thinnest
+ * wall) are split into sub-steps so they can't tunnel through cover. A normal
+ * walking step is shorter than one sub-step, so it takes exactly one pass.
  */
-export function stepPlayer(pos: Vec2, input: MoveInput, dt: number = TICK_DT): Vec2 {
-  const m = clampMove(input.mx, input.mz);
-  let p: Vec2 = {
-    x: pos.x + m.x * PLAYER_SPEED * dt,
-    z: pos.z + m.z * PLAYER_SPEED * dt,
-  };
-  // Two passes settle the case of being wedged between two boxes.
-  for (let pass = 0; pass < 2; pass++) {
-    for (const b of OBSTACLES) p = resolveCircleBox(p, PLAYER_RADIUS, b);
-  }
+export function movePlayer(pos: Vec2, dx: number, dz: number): Vec2 {
+  const len = Math.sqrt(dx * dx + dz * dz);
+  const n = Math.max(1, Math.ceil(len / MOVE_SUBSTEP));
+  const sx = dx / n;
+  const sz = dz / n;
   const lim = ARENA_HALF - PLAYER_RADIUS;
-  p = { x: clamp(p.x, -lim, lim), z: clamp(p.z, -lim, lim) };
+  let p: Vec2 = pos;
+  for (let i = 0; i < n; i++) {
+    p = { x: p.x + sx, z: p.z + sz };
+    // Two passes settle the case of being wedged between two boxes.
+    for (let pass = 0; pass < 2; pass++) {
+      for (const b of OBSTACLES) p = resolveCircleBox(p, PLAYER_RADIUS, b);
+    }
+    p = { x: clamp(p.x, -lim, lim), z: clamp(p.z, -lim, lim) };
+  }
   return p;
+}
+
+/** Plain walking for one tick (no abilities). */
+export function walk(pos: Vec2, input: MoveInput, dt: number = TICK_DT): Vec2 {
+  const m = clampMove(input.mx, input.mz);
+  return movePlayer(pos, m.x * PLAYER_SPEED * dt, m.z * PLAYER_SPEED * dt);
 }
 
 export function bulletBlocked(x: number, z: number): boolean {

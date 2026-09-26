@@ -1,10 +1,7 @@
 import { Room, type Client } from "@colyseus/core";
 import {
-  BULLET_DAMAGE,
-  BULLET_LIFETIME,
   BULLET_RADIUS,
-  BULLET_SPEED,
-  FIRE_COOLDOWN,
+  GRENADE_FUSE_TICKS,
   INPUT_BURST,
   KILLS_TO_WIN,
   MATCH_END_DELAY,
@@ -12,27 +9,39 @@ import {
   MAX_INPUT_QUEUE,
   MAX_PLAYERS,
   MSG_INPUT,
+  MSG_PICK,
   PLAYER_RADIUS,
   RESPAWN_DELAY,
+  SHIELD,
+  SHIELD_TICKS,
   SPAWN_POINTS,
-  TICK_DT,
   TICK_RATE,
+  bulletId,
+  bulletLifeTicks,
   circlesOverlap,
-  muzzle,
+  grenadeArc,
+  grenadeDamage,
+  grenadeFlightTicks,
+  isWeaponId,
+  readSim,
+  shotPellets,
+  spawnSim,
   stepBullet,
   stepPlayer,
+  ticks,
+  weaponDef,
+  writeSim,
   type InputMessage,
   type Phase,
+  type Vec2,
 } from "@bagarre/shared";
-import { Bullet, DuelState, Player } from "./state.ts";
+import { Bullet, DuelState, Grenade, Player } from "./state.ts";
 
 /** Server-only bookkeeping per player. Never synced. */
 interface PlayerInternal {
   queue: InputMessage[];
   /** Input budget, see INPUT_BURST. */
   tokens: number;
-  /** Seconds until the next shot is allowed. */
-  cooldown: number;
 }
 
 /** Server-only bookkeeping per bullet. */
@@ -40,19 +49,43 @@ interface BulletInternal {
   vx: number;
   vz: number;
   ticksLeft: number;
+  damage: number;
 }
 
-const secondsToTicks = (s: number) => Math.round(s * TICK_RATE);
+/** Server-only bookkeeping per grenade. */
+interface GrenadeInternal {
+  ox: number;
+  oz: number;
+  flightTicks: number;
+  age: number;
+  fuseLeft: number;
+}
+
+const MAX_COUNTER = 0xffffffff;
 
 function sanitizeInput(raw: unknown): InputMessage | null {
   if (typeof raw !== "object" || raw === null) return null;
   const m = raw as Record<string, unknown>;
   const seq = m.seq;
-  if (typeof seq !== "number" || !Number.isInteger(seq) || seq < 0) return null;
+  if (typeof seq !== "number" || !Number.isInteger(seq) || seq < 0 || seq > MAX_COUNTER) return null;
   const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
-  // Length clamping happens inside stepPlayer (clampMove), so the move vector
-  // can never exceed 1 no matter what the client sends.
-  return { seq, mx: num(m.mx), mz: num(m.mz), aim: num(m.aim), fire: m.fire === true };
+  const counter = (v: unknown) =>
+    typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= MAX_COUNTER ? v : 0;
+  // Move length is clamped inside the step (clampMove) and the grenade target
+  // to GRENADE.range (grenadeTarget), whatever the client sends.
+  return {
+    seq,
+    mx: num(m.mx),
+    mz: num(m.mz),
+    aim: num(m.aim),
+    fire: m.fire === true,
+    gx: num(m.gx),
+    gz: num(m.gz),
+    dash: counter(m.dash),
+    grenade: counter(m.grenade),
+    shield: counter(m.shield),
+    reload: counter(m.reload),
+  };
 }
 
 export class DuelRoom extends Room<{ state: DuelState }> {
@@ -61,7 +94,8 @@ export class DuelRoom extends Room<{ state: DuelState }> {
 
   private internals = new Map<string, PlayerInternal>();
   private bulletInternals = new Map<string, BulletInternal>();
-  private nextBulletId = 0;
+  private grenadeInternals = new Map<string, GrenadeInternal>();
+  private nextGrenadeId = 0;
   private matchResetTicks = 0;
 
   onCreate() {
@@ -73,6 +107,16 @@ export class DuelRoom extends Room<{ state: DuelState }> {
       if (!player || input.seq <= player.lastSeq) return;
       if (internal.queue.length >= MAX_INPUT_QUEUE) return;
       internal.queue.push(input);
+    });
+
+    // Weapon pick: only valid ids, only while dead or between matches. It is
+    // stored as `pick` and only put in hand on the next (re)spawn.
+    this.onMessage(MSG_PICK, (client, raw: unknown) => {
+      const player = this.state.players.get(client.sessionId);
+      const weapon = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>).weapon : undefined;
+      if (!player || !isWeaponId(weapon)) return;
+      if (player.alive && this.state.phase === "playing") return;
+      player.pick = weapon;
     });
 
     // Fixed-timestep loop with an accumulator (Colyseus runs a whole number of
@@ -98,11 +142,10 @@ export class DuelRoom extends Room<{ state: DuelState }> {
     const spawn = SPAWN_POINTS[slot];
     const player = new Player();
     player.slot = slot;
-    player.x = spawn.x;
-    player.z = spawn.z;
+    writeSim(player, spawnSim(spawn.x, spawn.z, player.weapon));
     player.aim = slot === 0 ? Math.PI / 4 : (-3 * Math.PI) / 4;
     this.state.players.set(client.sessionId, player);
-    this.internals.set(client.sessionId, { queue: [], tokens: INPUT_BURST, cooldown: 0 });
+    this.internals.set(client.sessionId, { queue: [], tokens: INPUT_BURST });
 
     if (this.state.players.size === MAX_PLAYERS) this.startMatch();
   }
@@ -110,7 +153,7 @@ export class DuelRoom extends Room<{ state: DuelState }> {
   onLeave(client: Client) {
     this.state.players.delete(client.sessionId);
     this.internals.delete(client.sessionId);
-    this.clearBullets();
+    this.clearProjectiles();
     this.setPhase("waiting");
     this.state.winner = "";
     // The remaining player keeps playing alone, with a clean slate.
@@ -127,23 +170,32 @@ export class DuelRoom extends Room<{ state: DuelState }> {
   }
 
   private startMatch() {
-    this.clearBullets();
+    this.clearProjectiles();
     this.state.winner = "";
     this.state.players.forEach((p) => {
       const spawn = SPAWN_POINTS[p.slot];
-      p.x = spawn.x;
-      p.z = spawn.z;
-      p.hp = MAX_HP;
+      this.spawnAt(p, spawn.x, spawn.z);
       p.kills = 0;
-      p.alive = true;
-      p.respawnTicks = 0;
     });
     this.setPhase("playing");
   }
 
-  private clearBullets() {
+  /** Puts a player back in the game: picked weapon in hand, fresh HP, ammo and cooldowns. */
+  private spawnAt(p: Player, x: number, z: number) {
+    p.weapon = p.pick;
+    writeSim(p, spawnSim(x, z, p.weapon, readSim(p)));
+    p.hp = MAX_HP;
+    p.alive = true;
+    p.respawnTicks = 0;
+    p.shieldTicks = 0;
+    p.shieldHp = 0;
+  }
+
+  private clearProjectiles() {
     this.state.bullets.clear();
     this.bulletInternals.clear();
+    this.state.grenades.clear();
+    this.grenadeInternals.clear();
   }
 
   private tick() {
@@ -151,7 +203,9 @@ export class DuelRoom extends Room<{ state: DuelState }> {
 
     // 1. Apply queued inputs. One input == one fixed step of TICK_DT, exactly
     //    like the client's prediction. The token budget allows catching up a
-    //    few inputs after jitter but caps the average at one per tick.
+    //    few inputs after jitter but caps the average at one per tick, which is
+    //    also what makes the tick-counted cooldowns (fire interval, dash, ...)
+    //    impossible to beat by sending inputs faster.
     this.state.players.forEach((player, id) => {
       const internal = this.internals.get(id);
       if (!internal) return;
@@ -159,15 +213,20 @@ export class DuelRoom extends Room<{ state: DuelState }> {
       while (internal.tokens >= 1 && internal.queue.length > 0) {
         const input = internal.queue.shift()!;
         internal.tokens -= 1;
-        this.applyInput(id, player, internal, input);
+        this.applyInput(id, player, input);
       }
     });
 
-    // 2. Move bullets, resolve hits.
+    // 2. Move bullets and grenades, resolve hits and blasts.
     this.stepBullets();
+    this.stepGrenades();
 
-    // 3. Timers: respawns and match reset.
+    // 3. Timers: shields, respawns and match reset.
     this.state.players.forEach((player, id) => {
+      if (player.shieldTicks > 0) {
+        player.shieldTicks--;
+        if (player.shieldTicks === 0) player.shieldHp = 0;
+      }
       if (player.alive) return;
       player.respawnTicks--;
       if (player.respawnTicks <= 0) this.respawn(id, player);
@@ -184,36 +243,58 @@ export class DuelRoom extends Room<{ state: DuelState }> {
     this.broadcastPatch();
   }
 
-  private applyInput(id: string, player: Player, internal: PlayerInternal, input: InputMessage) {
+  private applyInput(id: string, player: Player, input: InputMessage) {
     // Always acknowledge, even when the input has no effect (dead, match
     // over): the client needs the ack to drop it from its replay buffer.
     player.lastSeq = input.seq;
-    internal.cooldown = Math.max(0, internal.cooldown - TICK_DT);
-    if (!player.alive || this.state.phase === "ended") return;
-
-    const next = stepPlayer({ x: player.x, z: player.z }, input);
-    player.x = next.x;
-    player.z = next.z;
+    const canAct = player.alive && this.state.phase !== "ended";
+    // The same function the client predicts with. It enforces the fire
+    // interval, magazine, reload and ability cooldowns.
+    const res = stepPlayer(readSim(player), input, player.weapon, canAct);
+    writeSim(player, res.sim);
+    if (!canAct) return;
     player.aim = input.aim;
 
-    if (input.fire && internal.cooldown <= 0) {
-      internal.cooldown = FIRE_COOLDOWN;
-      this.spawnBullet(id, player);
+    if (res.fired) this.spawnShot(id, player, input);
+    if (res.grenade) this.spawnGrenade(id, player, res.grenade);
+    if (res.shield) {
+      player.shieldTicks = SHIELD_TICKS;
+      player.shieldHp = SHIELD.absorb;
     }
   }
 
-  private spawnBullet(owner: string, player: Player) {
-    const pos = muzzle(player.x, player.z, player.aim);
-    const id = String(this.nextBulletId++);
-    const bullet = new Bullet();
-    bullet.x = pos.x;
-    bullet.z = pos.z;
-    bullet.owner = owner;
-    this.state.bullets.set(id, bullet);
-    this.bulletInternals.set(id, {
-      vx: Math.cos(player.aim) * BULLET_SPEED,
-      vz: Math.sin(player.aim) * BULLET_SPEED,
-      ticksLeft: secondsToTicks(BULLET_LIFETIME),
+  private spawnShot(owner: string, player: Player, input: InputMessage) {
+    const w = weaponDef(player.weapon);
+    const pellets = shotPellets(player.weapon, player.x, player.z, input.aim, input.seq);
+    pellets.forEach((b, i) => {
+      const id = bulletId(player.slot, input.seq, i);
+      const bullet = new Bullet();
+      bullet.x = b.x;
+      bullet.z = b.z;
+      bullet.owner = owner;
+      this.state.bullets.set(id, bullet);
+      this.bulletInternals.set(id, { vx: b.vx, vz: b.vz, ticksLeft: bulletLifeTicks(w), damage: w.damage });
+    });
+  }
+
+  private spawnGrenade(owner: string, player: Player, target: Vec2) {
+    const id = String(this.nextGrenadeId++);
+    const g = new Grenade();
+    const start = grenadeArc(player.x, player.z, target.x, target.z, 0);
+    g.x = start.x;
+    g.y = start.y;
+    g.z = start.z;
+    g.tx = target.x;
+    g.tz = target.z;
+    g.owner = owner;
+    this.state.grenades.set(id, g);
+    const dist = Math.hypot(target.x - player.x, target.z - player.z);
+    this.grenadeInternals.set(id, {
+      ox: player.x,
+      oz: player.z,
+      flightTicks: grenadeFlightTicks(dist),
+      age: 0,
+      fuseLeft: GRENADE_FUSE_TICKS,
     });
   }
 
@@ -232,7 +313,7 @@ export class DuelRoom extends Room<{ state: DuelState }> {
           if (hit || targetId === bullet.owner || !target.alive) return;
           if (circlesOverlap(bx, bz, BULLET_RADIUS, target.x, target.z, PLAYER_RADIUS)) {
             hit = true;
-            this.damage(bullet.owner, target);
+            this.damage(bullet.owner, targetId, target, internal.damage);
           }
         });
         return hit;
@@ -248,24 +329,84 @@ export class DuelRoom extends Room<{ state: DuelState }> {
     }
   }
 
-  private damage(shooterId: string, target: Player) {
-    target.hp = Math.max(0, target.hp - BULLET_DAMAGE);
+  private stepGrenades() {
+    const dead: string[] = [];
+    const blasts: { owner: string; x: number; z: number }[] = [];
+    this.state.grenades.forEach((g, id) => {
+      const internal = this.grenadeInternals.get(id);
+      // An exploded grenade stays for exactly one snapshot so clients see the blast.
+      if (!internal || g.exploded) {
+        dead.push(id);
+        return;
+      }
+      if (!g.landed) {
+        internal.age++;
+        const t = Math.min(1, internal.age / internal.flightTicks);
+        const p = grenadeArc(internal.ox, internal.oz, g.tx, g.tz, t);
+        g.x = p.x;
+        g.y = p.y;
+        g.z = p.z;
+        if (t >= 1) g.landed = true;
+        return;
+      }
+      internal.fuseLeft--;
+      if (internal.fuseLeft <= 0) {
+        g.exploded = true;
+        blasts.push({ owner: g.owner, x: g.tx, z: g.tz });
+      }
+    });
+    for (const id of dead) {
+      this.state.grenades.delete(id);
+      this.grenadeInternals.delete(id);
+    }
+    for (const b of blasts) this.explode(b.owner, b.x, b.z);
+  }
+
+  private explode(owner: string, x: number, z: number) {
+    // Collect first: a kill can end the match and clear the state mid-loop.
+    const hits: { id: string; p: Player; dmg: number }[] = [];
+    this.state.players.forEach((p, id) => {
+      if (!p.alive) return;
+      const edge = Math.hypot(p.x - x, p.z - z) - PLAYER_RADIUS;
+      const dmg = grenadeDamage(edge, id === owner);
+      if (dmg !== null && dmg > 0) hits.push({ id, p, dmg });
+    });
+    for (const h of hits) {
+      if (this.state.phase === "ended") break;
+      this.damage(owner, h.id, h.p, h.dmg);
+    }
+  }
+
+  /** Shield first, then HP. Kills are credited to the attacker, never for self-damage. */
+  private damage(attackerId: string, targetId: string, target: Player, amount: number) {
+    if (!target.alive) return;
+    let left = amount;
+    if (target.shieldHp > 0) {
+      const absorbed = Math.min(target.shieldHp, left);
+      target.shieldHp -= absorbed;
+      left -= absorbed;
+      if (target.shieldHp === 0) target.shieldTicks = 0;
+    }
+    if (left <= 0) return;
+    target.hp = Math.max(0, target.hp - left);
     if (target.hp > 0) return;
 
     target.alive = false;
-    target.respawnTicks = secondsToTicks(RESPAWN_DELAY);
+    target.respawnTicks = ticks(RESPAWN_DELAY);
+    target.shieldTicks = 0;
+    target.shieldHp = 0;
     // Waiting mode (alone in the room) still lets you shoot, but kills only
     // count during a real match.
-    if (this.state.phase !== "playing") return;
+    if (this.state.phase !== "playing" || attackerId === targetId) return;
 
-    const shooter = this.state.players.get(shooterId);
+    const shooter = this.state.players.get(attackerId);
     if (!shooter) return;
     shooter.kills++;
     if (shooter.kills >= KILLS_TO_WIN) {
-      this.state.winner = shooterId;
+      this.state.winner = attackerId;
       this.setPhase("ended");
-      this.matchResetTicks = secondsToTicks(MATCH_END_DELAY);
-      this.clearBullets();
+      this.matchResetTicks = ticks(MATCH_END_DELAY);
+      this.clearProjectiles();
     }
   }
 
@@ -286,10 +427,6 @@ export class DuelRoom extends Room<{ state: DuelState }> {
         }
       }
     }
-    player.x = best.x;
-    player.z = best.z;
-    player.hp = MAX_HP;
-    player.alive = true;
-    player.respawnTicks = 0;
+    this.spawnAt(player, best.x, best.z);
   }
 }

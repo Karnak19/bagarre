@@ -1,9 +1,10 @@
 import { schema, t, type SchemaType } from "@colyseus/schema";
-import { MAX_HP } from "@bagarre/shared";
+import { DEFAULT_WEAPON, MAX_HP, WEAPONS } from "@bagarre/shared";
 
-// Positions are float64 on purpose: the client re-runs the shared step
-// function from these exact values during reconciliation. A lossy float32
-// would make the replayed prediction drift from what the server computed.
+// Positions and the dash direction are float64 on purpose: the client re-runs
+// the shared step function from these exact values during reconciliation. A
+// lossy float32 would make the replayed prediction drift from the server.
+// Every field of PlayerSim is synced for the same reason.
 export const Player = schema(
   {
     x: t.float64().default(0),
@@ -15,6 +16,26 @@ export const Player = schema(
     lastSeq: t.uint32().default(0),
     slot: t.uint8().default(0),
     respawnTicks: t.uint16().default(0),
+
+    // Simulation state (see PlayerSim in shared/src/protocol.ts).
+    dashTicks: t.uint8().default(0),
+    dashDx: t.float64().default(0),
+    dashDz: t.float64().default(0),
+    dashCd: t.uint16().default(0),
+    fireCd: t.uint16().default(0),
+    grenadeCd: t.uint16().default(0),
+    shieldCd: t.uint16().default(0),
+    ammo: t.uint8().default(WEAPONS[DEFAULT_WEAPON].magazine),
+    reloadTicks: t.uint16().default(0),
+    dashSeen: t.uint32().default(0),
+    grenadeSeen: t.uint32().default(0),
+    shieldSeen: t.uint32().default(0),
+    reloadSeen: t.uint32().default(0),
+
+    weapon: t.uint8().default(DEFAULT_WEAPON),
+    pick: t.uint8().default(DEFAULT_WEAPON),
+    shieldTicks: t.uint16().default(0),
+    shieldHp: t.uint8().default(0),
   },
   "Player",
 );
@@ -30,6 +51,21 @@ export const Bullet = schema(
 );
 export type Bullet = SchemaType<typeof Bullet>;
 
+export const Grenade = schema(
+  {
+    x: t.float32().default(0),
+    y: t.float32().default(0),
+    z: t.float32().default(0),
+    tx: t.float32().default(0),
+    tz: t.float32().default(0),
+    landed: t.boolean().default(false),
+    exploded: t.boolean().default(false),
+    owner: t.string().default(""),
+  },
+  "Grenade",
+);
+export type Grenade = SchemaType<typeof Grenade>;
+
 export const DuelState = schema(
   {
     phase: t.string().default("waiting"),
@@ -37,6 +73,7 @@ export const DuelState = schema(
     tick: t.uint32().default(0),
     players: t.map(Player),
     bullets: t.map(Bullet),
+    grenades: t.map(Grenade),
   },
   "DuelState",
 );

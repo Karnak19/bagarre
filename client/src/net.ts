@@ -1,8 +1,11 @@
 import { Client, type Room } from "@colyseus/sdk";
 import {
   MSG_INPUT,
+  MSG_PICK,
+  PLAYER_VIEW_KEYS,
   ROOM_NAME,
   type BulletView,
+  type GrenadeView,
   type InputMessage,
   type Phase,
   type PlayerView,
@@ -18,26 +21,32 @@ export interface Snapshot {
   winner: string;
   players: Map<string, PlayerView>;
   bullets: Map<string, BulletView>;
+  grenades: Map<string, GrenadeView>;
 }
 
 function capture(state: RoomStateView): Omit<Snapshot, "t"> {
   const players = new Map<string, PlayerView>();
   state.players.forEach((p, id) => {
-    players.set(id, {
-      x: p.x,
-      z: p.z,
-      aim: p.aim,
-      hp: p.hp,
-      kills: p.kills,
-      alive: p.alive,
-      lastSeq: p.lastSeq,
-      slot: p.slot,
-      respawnTicks: p.respawnTicks,
-    });
+    const copy = {} as Record<string, unknown>;
+    for (const k of PLAYER_VIEW_KEYS) copy[k] = p[k];
+    players.set(id, copy as unknown as PlayerView);
   });
   const bullets = new Map<string, BulletView>();
   state.bullets.forEach((b, id) => bullets.set(id, { x: b.x, z: b.z, owner: b.owner }));
-  return { tick: state.tick, phase: state.phase, winner: state.winner, players, bullets };
+  const grenades = new Map<string, GrenadeView>();
+  state.grenades.forEach((g, id) =>
+    grenades.set(id, {
+      x: g.x,
+      y: g.y,
+      z: g.z,
+      tx: g.tx,
+      tz: g.tz,
+      landed: g.landed,
+      exploded: g.exploded,
+      owner: g.owner,
+    }),
+  );
+  return { tick: state.tick, phase: state.phase, winner: state.winner, players, bullets, grenades };
 }
 
 export type NetStatus = "connecting" | "connected" | "disconnected";
@@ -93,5 +102,11 @@ export class Net {
     const room = this.room;
     if (!room || this.status !== "connected") return;
     this.delay(() => room.send(MSG_INPUT, input));
+  }
+
+  sendPick(weapon: number) {
+    const room = this.room;
+    if (!room || this.status !== "connected") return;
+    this.delay(() => room.send(MSG_PICK, { weapon }));
   }
 }

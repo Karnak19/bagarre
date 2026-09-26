@@ -1,4 +1,4 @@
-import type { BulletView, PlayerView } from "@bagarre/shared";
+import type { BulletView, GrenadeView, PlayerView } from "@bagarre/shared";
 import type { Snapshot } from "./net.ts";
 
 const KEEP_MS = 1000;
@@ -69,6 +69,24 @@ export class SnapshotBuffer {
       z: lerp(pa.z, pb.z, br.alpha),
       aim: lerpAngle(pa.aim, pb.aim, br.alpha),
     };
+  }
+
+  /** Grenades present in both bracketing snapshots, interpolated (arc height too). */
+  sampleGrenades(renderTime: number): Map<string, GrenadeView> {
+    const out = new Map<string, GrenadeView>();
+    const br = this.bracket(renderTime);
+    if (!br) return out;
+    br.b.grenades.forEach((gb, id) => {
+      const ga = br.a.grenades.get(id);
+      if (!ga) return;
+      out.set(id, {
+        ...gb,
+        x: lerp(ga.x, gb.x, br.alpha),
+        y: lerp(ga.y, gb.y, br.alpha),
+        z: lerp(ga.z, gb.z, br.alpha),
+      });
+    });
+    return out;
   }
 
   /** Bullets present in both bracketing snapshots, interpolated. */

@@ -10,11 +10,24 @@ export class Input {
   readonly ndc = new THREE.Vector2(0, 0);
   firing = false;
   hasPointer = false;
+  /**
+   * Running press totals, sent in every input (see InputMessage). Bumped on
+   * key-down only, so auto-repeat while holding the key doesn't count.
+   */
+  readonly presses = { dash: 0, grenade: 0, shield: 0, reload: 0 };
+  /** Called with 0-3 when a weapon key (1-4) is pressed. */
+  onPick: (weapon: number) => void = () => {};
 
   constructor(canvas: HTMLCanvasElement) {
     window.addEventListener("keydown", (e) => {
       this.keys.add(e.code);
       if (e.code.startsWith("Arrow") || e.code === "Space") e.preventDefault();
+      if (e.repeat) return;
+      if (e.code === "Space") this.presses.dash++;
+      else if (e.code === "KeyQ") this.presses.grenade++;
+      else if (e.code === "KeyE") this.presses.shield++;
+      else if (e.code === "KeyR") this.presses.reload++;
+      else if (/^Digit[1-4]$/.test(e.code)) this.onPick(Number(e.code.slice(5)) - 1);
     });
     window.addEventListener("keyup", (e) => this.keys.delete(e.code));
     window.addEventListener("blur", () => {

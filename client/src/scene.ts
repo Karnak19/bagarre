@@ -3,10 +3,13 @@ import {
   ARENA_HALF,
   BULLET_HEIGHT,
   BULLET_RADIUS,
+  GRENADE,
   OBSTACLES,
+  PLAYER_SPEED,
   PLAYER_RADIUS,
   WALL_HEIGHT,
   WALL_THICKNESS,
+  type GrenadeView,
 } from "@bagarre/shared";
 
 export const PLAYER_COLORS = [0xff6b4a, 0x4ab8ff];
@@ -26,6 +29,14 @@ export class PlayerMesh {
   private bodyMat: THREE.MeshStandardMaterial;
   private flashUntil = 0;
   private baseColor: THREE.Color;
+  private shield: THREE.Mesh;
+  private shieldMat: THREE.MeshStandardMaterial;
+  private lastPos = new THREE.Vector2();
+  private lastT = 0;
+  /** Drawn speed above this means a dash (walking is PLAYER_SPEED). */
+  private static DASH_SPEED_VISUAL = PLAYER_SPEED * 1.8;
+  /** Set when the mesh moved at dash speed since the last update. */
+  dashing = false;
 
   constructor(color: number, isLocal: boolean) {
     this.baseColor = new THREE.Color(color);
@@ -62,6 +73,29 @@ export class PlayerMesh {
       ring.position.y = 0.02;
       this.group.add(ring);
     }
+
+    this.shieldMat = new THREE.MeshStandardMaterial({
+      color: 0x9fe6ff,
+      emissive: 0x3aa8ff,
+      emissiveIntensity: 0.6,
+      transparent: true,
+      opacity: 0.3,
+      depthWrite: false,
+    });
+    this.shield = new THREE.Mesh(new THREE.SphereGeometry(1.05, 24, 16), this.shieldMat);
+    this.shield.position.y = 0.9;
+    this.shield.visible = false;
+    this.group.add(this.shield);
+  }
+
+  get color(): THREE.Color {
+    return this.baseColor;
+  }
+
+  /** `fraction` = shield strength left (0 hides the bubble). */
+  setShield(fraction: number) {
+    this.shield.visible = fraction > 0;
+    this.shieldMat.opacity = 0.15 + 0.3 * fraction;
   }
 
   setColor(color: number) {
@@ -81,6 +115,12 @@ export class PlayerMesh {
   }
 
   update(now: number) {
+    const p = this.group.position;
+    const dt = (now - this.lastT) / 1000;
+    const moved = Math.hypot(p.x - this.lastPos.x, p.z - this.lastPos.y);
+    this.dashing = this.group.visible && dt > 0 && dt < 0.1 && moved < 3 && moved / dt > PlayerMesh.DASH_SPEED_VISUAL;
+    this.lastPos.set(p.x, p.z);
+    this.lastT = now;
     const on = now < this.flashUntil;
     this.bodyMat.emissive.set(on ? 0xffffff : 0x000000);
     this.bodyMat.emissiveIntensity = on ? 0.8 : 0;
@@ -97,6 +137,14 @@ export class GameScene {
   private bulletMats = PLAYER_COLORS.map(
     (c) => new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: c, emissiveIntensity: 1.6 }),
   );
+  private grenades = new Map<string, { ball: THREE.Mesh; ring: THREE.Mesh; ringMat: THREE.MeshBasicMaterial }>();
+  private grenadeGeo = new THREE.SphereGeometry(0.2, 12, 10);
+  private grenadeMat = new THREE.MeshStandardMaterial({ color: 0x30343c, emissive: 0xffaa33, emissiveIntensity: 0.5 });
+  private telegraphGeo = new THREE.CircleGeometry(GRENADE.radius, 40);
+  /** Short-lived effects: explosion flashes and dash ghosts. */
+  private effects: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; born: number; life: number; grow: number }[] = [];
+  private blastGeo = new THREE.SphereGeometry(1, 20, 14);
+  private ghostGeo = new THREE.CapsuleGeometry(PLAYER_RADIUS, 0.8, 4, 10);
   private raycaster = new THREE.Raycaster();
   private ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
@@ -228,7 +276,84 @@ export class GameScene {
     }
   }
 
-  render() {
+  /**
+   * Grenades: the ball follows its arc (y comes from the server), and a ground
+   * circle shows the blast radius at the landing point. Faint while it flies,
+   * pulsing red during the fuse so it can be dodged. (The blast flash is
+   * triggered separately, see `blast`.)
+   */
+  syncGrenades(grenades: Map<string, GrenadeView>, now: number) {
+    for (const [id, g] of this.grenades) {
+      if (!grenades.has(id)) {
+        this.scene.remove(g.ball, g.ring);
+        this.grenades.delete(id);
+      }
+    }
+    for (const [id, gv] of grenades) {
+      let g = this.grenades.get(id);
+      if (!g) {
+        const ball = new THREE.Mesh(this.grenadeGeo, this.grenadeMat);
+        ball.castShadow = true;
+        const ringMat = new THREE.MeshBasicMaterial({ color: 0xff4030, transparent: true, opacity: 0.1, depthWrite: false });
+        const ring = new THREE.Mesh(this.telegraphGeo, ringMat);
+        ring.rotation.x = -Math.PI / 2;
+        g = { ball, ring, ringMat };
+        this.grenades.set(id, g);
+        this.scene.add(ball, ring);
+      }
+      g.ball.position.set(gv.x, gv.y + 0.2, gv.z);
+      g.ball.visible = !gv.exploded;
+      g.ring.position.set(gv.tx, 0.03, gv.tz);
+      g.ring.visible = !gv.exploded;
+      g.ringMat.opacity = gv.landed ? 0.28 + 0.2 * Math.sin(now / 45) : 0.1;
+    }
+  }
+
+  /** Explosion flash filling the blast radius. */
+  blast(x: number, z: number, now: number) {
+    this.addEffect(this.blastGeo, 0xffc060, x, 0.4, z, 0.9, now, 320, GRENADE.radius);
+  }
+
+  /** A fading afterimage, for the dash streak. */
+  addGhost(x: number, z: number, color: THREE.Color, now: number) {
+    this.addEffect(this.ghostGeo, color.getHex(), x, PLAYER_RADIUS + 0.4, z, 0.35, now, 220, 0);
+  }
+
+  private addEffect(
+    geo: THREE.BufferGeometry,
+    color: number,
+    x: number,
+    y: number,
+    z: number,
+    opacity: number,
+    now: number,
+    life: number,
+    grow: number,
+  ) {
+    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x, y, z);
+    if (grow > 0) mesh.scale.setScalar(grow * 0.3);
+    this.scene.add(mesh);
+    this.effects.push({ mesh, mat, born: now, life, grow });
+  }
+
+  private updateEffects(now: number) {
+    this.effects = this.effects.filter((e) => {
+      const t = (now - e.born) / e.life;
+      if (t >= 1) {
+        this.scene.remove(e.mesh);
+        e.mat.dispose();
+        return false;
+      }
+      if (e.grow > 0) e.mesh.scale.setScalar(e.grow * (0.3 + 0.7 * Math.sqrt(t)));
+      e.mat.opacity = (e.grow > 0 ? 0.9 : 0.35) * (1 - t);
+      return true;
+    });
+  }
+
+  render(now: number) {
+    this.updateEffects(now);
     this.renderer.render(this.scene, this.camera);
   }
 }
