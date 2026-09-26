@@ -1,0 +1,100 @@
+:root {
+  --p0: #ff6b4a;
+  --p1: #4ab8ff;
+  --text: #f2f2f2;
+  --panel: rgba(12, 14, 20, 0.6);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #1a1d24;
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  user-select: none;
+}
+
+#game {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  cursor: crosshair;
+}
+
+#hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+}
+
+.top {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.player {
+  width: min(320px, 38vw);
+  background: var(--panel);
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+.player.right { text-align: right; }
+.player .name { font-size: 13px; font-weight: 600; margin-bottom: 6px; opacity: 0.9; }
+.player .hp { height: 10px; background: rgba(255, 255, 255, 0.12); border-radius: 5px; overflow: hidden; }
+.player.right .hp { transform: scaleX(-1); }
+.player .fill { height: 100%; width: 100%; background: var(--color, #888); transition: width 120ms linear; }
+.player.absent { opacity: 0.35; }
+
+.score {
+  background: var(--panel);
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+#hud-status {
+  position: absolute;
+  top: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--panel);
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 14px;
+}
+#hud-status:empty { display: none; }
+
+#hud-banner {
+  position: absolute;
+  top: 38%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  background: var(--panel);
+  padding: 20px 36px;
+  border-radius: 12px;
+}
+#hud-banner[hidden] { display: none; }
+#hud-banner .title { font-size: 40px; font-weight: 800; }
+#hud-banner .sub { margin-top: 6px; font-size: 14px; opacity: 0.8; }
+
+#hud-debug {
+  position: absolute;
+  bottom: 10px;
+  left: 12px;
+  font-size: 12px;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}

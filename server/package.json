@@ -1,0 +1,23 @@
+{
+  "name": "@bagarre/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "build": "tsc --noEmit -p .",
+    "smoke": "bun smoke.ts"
+  },
+  "dependencies": {
+    "@bagarre/shared": "workspace:*",
+    "@colyseus/core": "^0.18.17",
+    "@colyseus/schema": "^5.0.34",
+    "@colyseus/ws-transport": "^0.18.4"
+  },
+  "devDependencies": {
+    "@colyseus/sdk": "^0.18.4",
+    "@types/node": "^26.6.3",
+    "typescript": "^7.0.2"
+  }
+}

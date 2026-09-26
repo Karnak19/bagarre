@@ -1,0 +1,74 @@
+import * as THREE from "three";
+
+/**
+ * Keyboard + mouse state. Uses `KeyboardEvent.code` (physical key position),
+ * so WASD works on AZERTY keyboards too (the same physical keys, ZQSD).
+ */
+export class Input {
+  private keys = new Set<string>();
+  /** Cursor in normalised device coordinates (-1..1). */
+  readonly ndc = new THREE.Vector2(0, 0);
+  firing = false;
+  hasPointer = false;
+
+  constructor(canvas: HTMLCanvasElement) {
+    window.addEventListener("keydown", (e) => {
+      this.keys.add(e.code);
+      if (e.code.startsWith("Arrow") || e.code === "Space") e.preventDefault();
+    });
+    window.addEventListener("keyup", (e) => this.keys.delete(e.code));
+    window.addEventListener("blur", () => {
+      this.keys.clear();
+      this.firing = false;
+    });
+    canvas.addEventListener("pointermove", (e) => {
+      const r = canvas.getBoundingClientRect();
+      this.ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+      this.hasPointer = true;
+    });
+    canvas.addEventListener("pointerdown", (e) => {
+      if (e.button === 0) this.firing = true;
+    });
+    window.addEventListener("pointerup", (e) => {
+      if (e.button === 0) this.firing = false;
+    });
+    canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+  }
+
+  private down(...codes: string[]) {
+    return codes.some((c) => this.keys.has(c));
+  }
+
+  /** Screen-space axes: x = right, y = up (W). Each in -1..1. */
+  screenAxes(): { x: number; y: number } {
+    const x = (this.down("KeyD", "ArrowRight") ? 1 : 0) - (this.down("KeyA", "ArrowLeft") ? 1 : 0);
+    const y = (this.down("KeyW", "ArrowUp") ? 1 : 0) - (this.down("KeyS", "ArrowDown") ? 1 : 0);
+    return { x, y };
+  }
+}
+
+const _fwd = new THREE.Vector3();
+
+/**
+ * Turns screen-relative input into a world-space move vector on the ground.
+ * "Up on screen" is the camera's view direction flattened onto the ground;
+ * with the iso camera that is the world diagonal (-1, 0, -1), i.e. the input
+ * rotated by 45 degrees. Deriving it from the camera keeps it correct if the
+ * camera angle ever changes.
+ */
+export function screenToWorldMove(camera: THREE.Camera, axes: { x: number; y: number }) {
+  camera.getWorldDirection(_fwd);
+  _fwd.y = 0;
+  _fwd.normalize();
+  // Right = forward rotated 90 degrees clockwise when seen from above.
+  const rx = -_fwd.z;
+  const rz = _fwd.x;
+  let mx = _fwd.x * axes.y + rx * axes.x;
+  let mz = _fwd.z * axes.y + rz * axes.x;
+  const len = Math.hypot(mx, mz);
+  if (len > 1) {
+    mx /= len;
+    mz /= len;
+  }
+  return { mx, mz };
+}

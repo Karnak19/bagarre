@@ -1,0 +1,5 @@
+[install]
+# One flat node_modules. The isolated linker installs two copies of
+# @colyseus/core (peer-dependency variants), which gives ws-transport and the
+# app two different matchmaker singletons ("seat reservation expired").
+linker = "hoisted"
