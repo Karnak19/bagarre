@@ -23,7 +23,8 @@
 import type { Phase } from "@bagarre/shared";
 import { guestName } from "./auth.ts";
 import type { Match } from "./match.ts";
-import { JoinError, Net, joinGame, type JoinRequest, type Snapshot } from "./net.ts";
+import { CloseCode } from "@colyseus/sdk";
+import { JoinError, Net, joinGame, resumeFor, type JoinRequest, type Snapshot } from "./net.ts";
 
 /** How the flow moves between pages (implemented on TanStack Router in router.tsx). */
 export interface Navigator {
@@ -42,8 +43,8 @@ export const GAME_CODE = /^[A-Za-z0-9_-]{1,32}$/;
 
 export type Screen = "menu" | "joining" | "game" | "notice";
 
-/** The card shown over a game: none while playing. */
-export type GameCard = "none" | "loading" | "waiting" | "pause" | "result";
+/** The card shown over a game: none while playing. `reconnecting`: our connection dropped, the SDK is retrying. */
+export type GameCard = "none" | "loading" | "reconnecting" | "waiting" | "pause" | "result";
 
 export interface Notice {
   title: string;
@@ -114,6 +115,23 @@ const initialState: AppState = {
   isPrivate: false,
 };
 
+/** What to say when the game's connection ends without us leaving. */
+function closedNotice(code: number): Notice {
+  if (code === CloseCode.SERVER_SHUTDOWN)
+    return {
+      title: "The game server is restarting",
+      body: "An update is going out, so this match had to stop. Start a new game in a moment.",
+      retry: null,
+    };
+  if (code === CloseCode.FAILED_TO_RECONNECT)
+    return {
+      title: "Connection lost",
+      body: "We couldn't get you back into the match in time, so your seat was given up.",
+      retry: null,
+    };
+  return { title: "Connection lost", body: "The game server closed the connection.", retry: null };
+}
+
 function joinLabels(req: JoinRequest): { title: string; sub: string } {
   if (req.kind === "quick") return { title: "Finding a game…", sub: "Joining an open game, or opening a new one." };
   if (req.kind === "private") return { title: "Creating your private game…", sub: "You'll get a link to send a friend." };
@@ -170,7 +188,8 @@ export class App {
       if (phase === "playing" && (this.state.opponentLeft || this.state.staying)) this.set({ opponentLeft: false, staying: false });
     }
     let card: GameCard = "none";
-    if (this.state.paused) card = "pause";
+    if (m.net.status === "reconnecting") card = "reconnecting";
+    else if (this.state.paused) card = "pause";
     else if (!snapshot) card = "loading";
     else if (phase === "waiting") card = "waiting";
     else if (phase === "ended") card = "result";
@@ -286,18 +305,21 @@ export class App {
         await new Net(room, 0).leave();
         return;
       }
-      const net = new Net(room, this.config.lagMs);
-      net.onClosed = () => {
+      // A reload that took its seat back (see resumeFor) keeps the private flag.
+      const resumed = resumeFor(room.roomId);
+      const isPrivate = req.kind === "private" || (resumed?.sessionId === room.sessionId && resumed.isPrivate);
+      const net = new Net(room, this.config.lagMs, { isPrivate });
+      net.onClosed = (code) => {
         if (this.current?.net !== net) return;
         this.leaveRoom();
-        this.showNotice({ title: "Connection lost", body: "The game server closed the connection.", retry: null });
+        this.showNotice(closedNotice(code));
       };
       this.current = this.engine.createMatch(net);
       this.set({
         screen: "game",
         roomId: room.roomId,
         inviteUrl: this.config.nav.inviteUrl(room.roomId),
-        isPrivate: req.kind === "private",
+        isPrivate,
       });
       // Play / Private game joined from the menu: now the game has a page.
       if (req.kind !== "id") this.config.nav.toGame(room.roomId);

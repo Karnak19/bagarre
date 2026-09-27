@@ -1,4 +1,4 @@
-import { Client, ErrorCode, type Room } from "@colyseus/sdk";
+import { Client, CloseCode, ErrorCode, type Room } from "@colyseus/sdk";
 import {
   GAMES_ROUTE,
   MSG_INPUT,
@@ -21,6 +21,11 @@ import { account } from "./auth.ts";
 export interface Snapshot {
   /** performance.now() when the snapshot was received (after artificial lag). */
   t: number;
+  /**
+   * Connection number it arrived on: 0 from the join, +1 after each
+   * automatic reconnection. A new epoch is a hard boundary, see match.ts.
+   */
+  epoch: number;
   tick: number;
   phase: Phase;
   winner: string;
@@ -34,7 +39,7 @@ export interface Snapshot {
   grenades: Map<string, GrenadeView>;
 }
 
-function capture(state: RoomStateView): Omit<Snapshot, "t"> {
+function capture(state: RoomStateView): Omit<Snapshot, "t" | "epoch"> {
   const players = new Map<string, PlayerView>();
   state.players.forEach((p, id) => {
     const copy = {} as Record<string, unknown>;
@@ -69,7 +74,57 @@ function capture(state: RoomStateView): Omit<Snapshot, "t"> {
   };
 }
 
-export type NetStatus = "connected" | "disconnected";
+/**
+ * `reconnecting`: the connection dropped and the SDK is retrying on its own
+ * (the server holds our seat for RECONNECT_GRACE_S). `disconnected`: for good.
+ */
+export type NetStatus = "connected" | "reconnecting" | "disconnected";
+
+// --- Resuming after a page reload ------------------------------------------------
+//
+// The SDK's automatic reconnection lives in the Room object, which a reload
+// destroys. So the reconnection token of the game being played is kept in
+// sessionStorage (per tab, gone with the tab); reopening that game's page
+// within the grace period resumes the same seat with `client.reconnect()`.
+// A deliberate leave or a closed connection forgets it.
+
+const RESUME_KEY = "bagarre:resume";
+
+interface ResumeRecord {
+  roomId: string;
+  sessionId: string;
+  /** `roomId:token`, what `client.reconnect()` takes. Refreshed on every (re)connection. */
+  token: string;
+  /** We created it as a private game (the waiting card's wording). */
+  isPrivate: boolean;
+}
+
+function readResume(): ResumeRecord | null {
+  try {
+    const raw = sessionStorage.getItem(RESUME_KEY);
+    const r = raw ? (JSON.parse(raw) as Partial<ResumeRecord>) : null;
+    return r && typeof r.roomId === "string" && typeof r.sessionId === "string" && typeof r.token === "string"
+      ? { roomId: r.roomId, sessionId: r.sessionId, token: r.token, isPrivate: r.isPrivate === true }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeResume(r: ResumeRecord | null) {
+  try {
+    if (r) sessionStorage.setItem(RESUME_KEY, JSON.stringify(r));
+    else sessionStorage.removeItem(RESUME_KEY);
+  } catch {
+    // Storage blocked: a reload simply won't resume.
+  }
+}
+
+/** The stored resume record of this room, if there is one. */
+export function resumeFor(roomId: string): ResumeRecord | null {
+  const r = readResume();
+  return r?.roomId === roomId ? r : null;
+}
 
 /** How to get into a game: quick match, a new private game, or a given room (its /game/<code> page). */
 export type JoinRequest = { kind: "quick" } | { kind: "private" } | { kind: "id"; roomId: string };
@@ -92,8 +147,8 @@ export class JoinError extends Error {
   }
 }
 
-/** Colyseus' MATCHMAKE_INVALID_ROOM_ID: joinById of a room that is gone, or locked because it is full. */
-const INVALID_ROOM_ID = 522;
+/** joinById of a room that is gone, or locked because it is full. */
+const INVALID_ROOM_ID = ErrorCode.MATCHMAKE_INVALID_ROOM_ID;
 
 function toJoinError(err: unknown): JoinError {
   if (err instanceof JoinError) return err;
@@ -117,6 +172,17 @@ function toJoinError(err: unknown): JoinError {
  * production).
  */
 export async function joinGame(url: string, req: JoinRequest, options: Record<string, unknown> = {}): Promise<Room> {
+  // This tab was in that game a moment ago (a reload): take the held seat back.
+  const resume = req.kind === "id" ? resumeFor(req.roomId) : null;
+  if (resume) {
+    try {
+      return await new Client(url).reconnect(resume.token);
+    } catch (err) {
+      // The grace period is over, or the room is gone: join like anyone else.
+      console.info("[net] couldn't resume the previous session, joining again:", err);
+      writeResume(null);
+    }
+  }
   const token = await account.getJoinToken();
   const attempt = (client: Client) => {
     if (req.kind === "quick") return client.joinOrCreate(ROOM_NAME, options);
@@ -155,6 +221,10 @@ export async function fetchOpenGames(url: string, signal?: AbortSignal): Promise
  * half on the way out and half on the way back. `leave()` really leaves (the
  * server sees a consented leave at once) and silences everything, including
  * snapshots still sitting in the lag queue.
+ *
+ * A dropped connection is not the end: the SDK reconnects the same Room
+ * object on its own (status `reconnecting`, then `connected` again, with a
+ * new `epoch`), within the server's grace period. Nothing is sent meanwhile.
  */
 export class Net {
   readonly room: Room;
@@ -162,37 +232,77 @@ export class Net {
   readonly roomId: string;
   status: NetStatus = "connected";
   error = "";
+  /** The close code once `disconnected` (CloseCode: 4001 server shutdown, 4003 failed to reconnect...). */
+  closeCode = 0;
+  /** Bumped by every automatic reconnection; stamped on each snapshot. */
+  epoch = 0;
   readonly lagMs: number;
+  readonly isPrivate: boolean;
   onSnapshot: (s: Snapshot) => void = () => {};
-  /** The server closed the connection, or it dropped (not called after `leave()`). */
-  onClosed: () => void = () => {};
+  /** The server closed the connection, or it dropped for good (not called after `leave()`). */
+  onClosed: (code: number) => void = () => {};
   private closed = false;
   private timers = new Set<ReturnType<typeof setTimeout>>();
 
-  constructor(room: Room, lagMs: number) {
+  constructor(room: Room, lagMs: number, opts: { isPrivate?: boolean } = {}) {
     this.room = room;
     this.sessionId = room.sessionId;
     this.roomId = room.roomId;
     this.lagMs = Math.max(0, lagMs);
+    this.isPrivate = opts.isPrivate ?? false;
+    // Retry every 2 s at most (the default backs off to 5 s): with the SDK's
+    // 15 attempts that is about 25 s, a little past the server's grace period,
+    // after which the server answers FAILED_TO_RECONNECT (4003) at once.
+    room.reconnection.maxDelay = 2000;
+    this.remember();
     room.onStateChange((state) => {
       if (this.closed) return;
       // Copy now (the live state object keeps mutating), deliver later.
       const snap = capture(state as unknown as RoomStateView);
       const mine = snap.players.get(room.sessionId);
       if (mine?.name) account.setPlayingAs(mine.name);
-      this.delay(() => this.onSnapshot({ ...snap, t: performance.now() }));
+      const epoch = this.epoch;
+      this.delay(() => this.onSnapshot({ ...snap, epoch, t: performance.now() }));
     });
-    room.onLeave(() => {
+    // Fires again on every failed retry: idempotent.
+    room.onDrop(() => {
+      if (this.closed || this.status !== "connected") return;
+      this.status = "reconnecting";
+    });
+    room.onReconnect(() => {
+      if (this.closed) return;
+      this.status = "connected";
+      this.epoch++;
+      this.remember();
+    });
+    room.onLeave((code) => {
       if (this.closed) return;
       this.status = "disconnected";
-      this.onClosed();
+      this.closeCode = code;
+      this.forget();
+      this.onClosed(code);
     });
     room.onError((code, message) => {
       this.error = `${code} ${message ?? ""}`;
     });
     // The server's latency probe: answered at once (through the `?lag=`
     // delay both ways, so the measured ping includes it).
-    room.onMessage(MSG_PING, (m: unknown) => this.delay(() => this.delay(() => this.room.send(MSG_PONG, m))));
+    room.onMessage(MSG_PING, (m: unknown) => this.delay(() => this.delay(() => this.send(MSG_PONG, m))));
+  }
+
+  /** The server restarted (a deploy) rather than the connection failing. */
+  get serverRestarted(): boolean {
+    return this.closeCode === CloseCode.SERVER_SHUTDOWN;
+  }
+
+  /** Keeps the current reconnection token for a reload (see resumeFor). */
+  private remember() {
+    writeResume({ roomId: this.roomId, sessionId: this.sessionId, token: this.room.reconnectionToken, isPrivate: this.isPrivate });
+  }
+
+  /** Forgets it, if it is still ours (a newer game may have replaced it). */
+  private forget() {
+    if (readResume()?.sessionId === this.sessionId) writeResume(null);
   }
 
   private delay(fn: () => void) {
@@ -208,29 +318,48 @@ export class Net {
     this.timers.add(t);
   }
 
+  /**
+   * Sends now if connected. While reconnecting nothing goes out (the SDK
+   * would queue it and flush stale inputs on reconnect).
+   */
+  private send(type: string, payload: unknown) {
+    if (this.status === "connected") this.room.send(type, payload);
+  }
+
   sendInput(input: InputMessage) {
     if (this.status !== "connected") return;
-    this.delay(() => this.room.send(MSG_INPUT, input));
+    this.delay(() => this.send(MSG_INPUT, input));
   }
 
   sendPick(weapon: number) {
     if (this.status !== "connected") return;
-    this.delay(() => this.room.send(MSG_PICK, { weapon }));
+    this.delay(() => this.send(MSG_PICK, { weapon }));
   }
 
   /** Leaves the room for good. Safe to call twice. */
   async leave() {
     if (this.closed) return;
+    const reconnecting = this.status === "reconnecting";
     this.closed = true;
     this.status = "disconnected";
+    this.forget();
     for (const t of this.timers) clearTimeout(t);
     this.timers.clear();
     this.onSnapshot = () => {};
     this.onClosed = () => {};
     this.room.onStateChange.clear();
+    // No reconnection attempts: this is a deliberate leave.
+    this.room.reconnection.enabled = false;
+    if (reconnecting) {
+      // The socket is down, so there is nothing to send the leave on, and
+      // the SDK may already have a retry scheduled (it can't be cancelled).
+      // No retry after that one; if it lands, leave for real right away.
+      // Otherwise the server frees the seat when its grace period ends.
+      this.room.reconnection.maxRetries = 0;
+      this.room.onReconnect(() => void this.room.leave(true).finally(() => this.room.removeAllListeners()));
+      return;
+    }
     try {
-      // No reconnection attempts: this is a deliberate leave.
-      this.room.reconnection.enabled = false;
       await this.room.leave(true);
     } catch (err) {
       console.warn("[net] leave failed", err);

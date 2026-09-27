@@ -1,4 +1,4 @@
-// The cards over the live scene, one at a time: joining, waiting for an
+// The cards over the live scene, one at a time: joining, reconnecting, waiting for an
 // opponent (with the invite link), the Esc menu, the match result, and the
 // "this game is full / gone" notices. While any card is up the game's input
 // is off (engine.ts' frame loop); the match itself keeps running.
@@ -18,7 +18,7 @@ import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { Text } from "@astryxdesign/core/Text";
 import { TextInput } from "@astryxdesign/core/TextInput";
-import { MATCH_END_DELAY, type PlayerView } from "@bagarre/shared";
+import { MATCH_END_DELAY, RECONNECT_GRACE_S, type PlayerView } from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Notice } from "../../app.ts";
@@ -31,7 +31,7 @@ import { shared, slotDot } from "../styles.ts";
 import { Scoreboard } from "./Scoreboard.tsx";
 import { WeaponPicker } from "./WeaponPicker.tsx";
 
-type CardName = "joining" | "waiting" | "pause" | "result" | "notice";
+type CardName = "joining" | "reconnecting" | "waiting" | "pause" | "result" | "notice";
 
 const styles = stylex.create({
   layer: {
@@ -114,6 +114,7 @@ export function Cards() {
   return (
     <Layer card={card}>
       {card === "joining" && <JoiningCard />}
+      {card === "reconnecting" && <ReconnectingCard />}
       {card === "waiting" && <WaitingCard />}
       {card === "pause" && <PauseCard />}
       {card === "result" && <ResultCard />}
@@ -190,6 +191,28 @@ function JoiningCard() {
       </VStack>
       <HStack justify="center" xstyle={styles.actions}>
         <Button label="Cancel" variant="secondary" onClick={() => app.leave()} data-testid="joining-cancel" />
+      </HStack>
+    </CardBox>
+  );
+}
+
+// --- Reconnecting ------------------------------------------------------------------
+
+/** Our connection dropped: the SDK is retrying, the server holds the seat. Replaced by the game, or by a notice. */
+function ReconnectingCard() {
+  countRender("card.reconnecting");
+  const { app } = useEngine();
+  return (
+    <CardBox name="reconnecting" centered>
+      <Spinner size="xl" aria-label="Reconnecting" />
+      <VStack gap={0} align="center" xstyle={styles.stack}>
+        <Title name="reconnecting">Reconnecting…</Title>
+        <Text color="secondary" xstyle={styles.sub}>
+          The connection dropped. Your seat is kept for {RECONNECT_GRACE_S} seconds while we get you back in.
+        </Text>
+      </VStack>
+      <HStack justify="center" xstyle={styles.actions}>
+        <Button label="Leave match" variant="secondary" onClick={() => app.leave()} data-testid="reconnecting-leave" />
       </HStack>
     </CardBox>
   );

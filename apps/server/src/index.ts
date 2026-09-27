@@ -12,6 +12,14 @@ if (process.argv.includes("--healthcheck")) {
   process.exit(res?.ok ? 0 : 1);
 }
 
+// SIGTERM (a redeploy: `docker stop` sends it to the binary, PID 1 in the
+// container) and SIGINT run Colyseus' graceful shutdown, which createServer
+// turns on: every room is locked, then disconnects its clients with close
+// code 4001 (SERVER_SHUTDOWN), which the client shows as "the server is
+// restarting"; joins are refused meanwhile (DuelRoom.onAuth), then the
+// process exits 0.
 const server = createServer();
+server.onBeforeShutdown(() => console.log("[bagarre] shutting down: closing every room"));
+server.onShutdown(() => console.log("[bagarre] shut down"));
 await server.listen(port);
 console.log(`[bagarre] server listening on ws://localhost:${port}`);

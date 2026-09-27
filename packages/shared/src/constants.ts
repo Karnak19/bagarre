@@ -140,3 +140,17 @@ export const INTERP_DELAY_MS = 100;
 export const INPUT_BURST = 4;
 /** Inputs queued beyond this are dropped. */
 export const MAX_INPUT_QUEUE = 16;
+/**
+ * Seconds a dropped player's seat is held (Colyseus `allowReconnection`).
+ * Meanwhile their character stays where it was, takes no input and can still
+ * be shot; after it, the drop is a normal leave.
+ */
+export const RECONNECT_GRACE_S = 20;
+/**
+ * Messages per second a client may send before the server closes its
+ * connection (Colyseus `maxMessagesPerSecond`). A real client sends TICK_RATE
+ * inputs per second plus a latency answer every two seconds; the margin
+ * absorbs a network stall whose backlog arrives in one burst. This is flood
+ * protection only: the input budget (INPUT_BURST) is what paces the game.
+ */
+export const MAX_MESSAGES_PER_SECOND = TICK_RATE * 10;

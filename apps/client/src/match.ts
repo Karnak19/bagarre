@@ -102,6 +102,8 @@ export class Match {
   private remoteShots: { at: number; id: string }[] = [];
   /** The map of the latest snapshot ("" before the first one). */
   private mapId = "";
+  /** Connection epoch of the snapshots in use (see Snapshot.epoch); -1 before the first. */
+  private epoch = -1;
   /**
    * Time left on the map name card shown at match start, in ms. It counts down
    * by frame time capped at 100 ms per frame, not by the wall clock: the first
@@ -215,10 +217,57 @@ export class Match {
     this.cameraSnapped = false;
   }
 
+  /**
+   * A fresh start from this snapshot: the first one, or the first one after
+   * an automatic reconnection. Everything from before the drop is dropped
+   * the same way a map switch does it (the opponent would slide from where
+   * they were, our pending inputs were lost with the connection). On top of
+   * that, what already happened while we were away is taken as known, not
+   * replayed: no hit, death or throw sound for it, no blast.
+   */
+  private resync(s: Snapshot) {
+    this.epoch = s.epoch;
+    // A new map rebuilds the arena; the same map only needs what switchMap
+    // drops besides the arena.
+    if (s.mapId !== this.mapId) this.switchMap(s.mapId);
+    else {
+      this.buffer.clear();
+      this.scene.clearProjectiles();
+      this.blasts.length = 0;
+      this.remoteShots.length = 0;
+      this.opponentDrawn = null;
+      this.cameraSnapped = false;
+    }
+    this.predictor.reset();
+    this.localBullets.clear();
+    this.lastView.clear();
+    this.accumulator = 0;
+    s.grenades.forEach((g, id) => {
+      this.seenGrenades.add(id);
+      if (g.landed) this.landedGrenades.add(id);
+      if (g.exploded) this.announcedBlasts.add(id);
+    });
+    // After a reload this is a new Match on an old seat: carry on from what
+    // the server already has, or it would ignore our inputs (seq) and
+    // ability presses (counters) until ours caught up.
+    const me = s.players.get(this.net.sessionId);
+    if (me) {
+      this.seq = Math.max(this.seq, me.lastSeq);
+      const p = this.input.presses;
+      p.dash = Math.max(p.dash, me.dashSeen);
+      p.grenade = Math.max(p.grenade, me.grenadeSeen);
+      p.shield = Math.max(p.shield, me.shieldSeen);
+      p.reload = Math.max(p.reload, me.reloadSeen);
+    }
+  }
+
   private onSnapshot(s: Snapshot) {
     if (this.disposed) return;
     const sessionId = this.net.sessionId;
-    if (s.mapId !== this.mapId) this.switchMap(s.mapId);
+    // Still in the `?lag=` queue from before a reconnection: stale.
+    if (s.epoch < this.epoch) return;
+    if (s.epoch !== this.epoch) this.resync(s);
+    else if (s.mapId !== this.mapId) this.switchMap(s.mapId);
     this.buffer.push(s);
     const me = s.players.get(sessionId);
     if (me) {
@@ -306,7 +355,10 @@ export class Match {
     //    keep flowing while an overlay is up (Input is then off, so they say
     //    "stand still, don't fire"): the server still acks them and the
     //    prediction stays in step.
-    if (latest && meServer) {
+    //    Nothing while reconnecting: the server takes no input from us then,
+    //    and our character must not run off on its own.
+    if (net.status !== "connected") this.accumulator = 0;
+    else if (latest && meServer) {
       this.accumulator += dtMs;
       let steps = 0;
       while (this.accumulator >= TICK_MS && steps < 5) {
@@ -410,8 +462,12 @@ export class Match {
     }
 
     // 4. HUD. Waiting and the match result have their own cards (overlays.ts).
+    // (`opponent` is assigned in a callback above, which TypeScript can't follow.)
+    const opp = opponent as PlayerView | null;
+    const away = opp && !opp.connected ? opp : null;
     let status = "";
     if (net.status === "disconnected") status = `Disconnected${net.error ? `: ${net.error}` : ""}.`;
+    else if (away) status = `${away.name || "Your opponent"} lost their connection. Waiting for them to come back…`;
     else if (meServer && !meServer.alive && latest?.phase === "playing")
       status = `Respawning in ${(meServer.respawnTicks / TICK_RATE).toFixed(1)}s (1-4 to change weapon)`;
 

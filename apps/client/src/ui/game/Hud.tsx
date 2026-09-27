@@ -139,20 +139,23 @@ function PlayerBar({ mine }: { mine: boolean }) {
     hud,
     (m) => {
       const v = mine ? m?.me : m?.opponent;
-      return { name: v?.name ?? "", hp: v?.hp ?? 0, slot: v ? v.slot : null, present: !!v };
+      return { name: v?.name ?? "", hp: v?.hp ?? 0, slot: v ? v.slot : null, present: !!v, away: !!v && !v.connected };
     },
     shallowEqual,
   );
-  const label = p.name ? (mine ? `${p.name} (you)` : p.name) : mine ? "You" : "Opponent";
+  const name = p.name ? (mine ? `${p.name} (you)` : p.name) : mine ? "You" : "Opponent";
+  // The opponent's connection dropped: the server keeps their seat for a while.
+  const label = p.away ? `${name} · reconnecting…` : name;
   return (
     <VStack
-      xstyle={[styles.panel, styles.player, !mine && styles.right, !p.present && styles.absent]}
+      xstyle={[styles.panel, styles.player, !mine && styles.right, (!p.present || p.away) && styles.absent]}
+      data-away={p.away || undefined}
       data-testid={mine ? "hud-me" : "hud-opponent"}
     >
       <Text xstyle={styles.name} color="inherit">
         {label}
       </Text>
-      <VStack xstyle={[styles.hp, !mine && styles.hpRight]} role="meter" aria-label={`${label} health`} aria-valuemin={0} aria-valuemax={MAX_HP} aria-valuenow={p.hp}>
+      <VStack xstyle={[styles.hp, !mine && styles.hpRight]} role="meter" aria-label={`${name} health`} aria-valuemin={0} aria-valuemax={MAX_HP} aria-valuenow={p.hp}>
         <VStack xstyle={[styles.hpFill, slotFill(p.slot)]} style={{ transform: `scaleX(${p.hp / MAX_HP})` }} />
       </VStack>
     </VStack>

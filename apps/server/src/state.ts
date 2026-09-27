@@ -49,6 +49,8 @@ export const Player = schema(
     damage: t.uint16().default(0),
     /** Round trip in ms, measured by the server. */
     ping: t.uint16().default(0),
+    /** False while the server holds a dropped player's seat (see DuelRoom.onDrop). */
+    connected: t.boolean().default(true),
   },
   "Player",
 );

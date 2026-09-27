@@ -31,4 +31,10 @@ EXPOSE 2567
 USER nonroot
 HEALTHCHECK --interval=15s --timeout=5s --start-period=5s --retries=3 \
   CMD ["/app/bagarre-server", "--healthcheck"]
+# Exec form, no shell: the binary is PID 1 and receives `docker stop`'s
+# SIGTERM itself (a shell form would leave /bin/sh as PID 1, which doesn't
+# forward it, and the container would be SIGKILLed after the timeout). On
+# SIGTERM the server closes every match with close code 4001, which clients
+# show as "the server is restarting", and exits 0 (see src/index.ts).
+STOPSIGNAL SIGTERM
 ENTRYPOINT ["/app/bagarre-server"]

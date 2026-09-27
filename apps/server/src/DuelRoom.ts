@@ -1,4 +1,14 @@
-import { ErrorCode, Room, ServerError, type AuthContext, type Client } from "@colyseus/core";
+import {
+  CloseCode,
+  ErrorCode,
+  Room,
+  ServerError,
+  matchMaker,
+  type AuthContext,
+  type Client,
+  type RoomException,
+  type RoomMethodName,
+} from "@colyseus/core";
 import {
   BULLET_RADIUS,
   DEFAULT_MAP_ID,
@@ -8,6 +18,7 @@ import {
   MATCH_END_DELAY,
   MAX_HP,
   MAX_INPUT_QUEUE,
+  MAX_MESSAGES_PER_SECOND,
   MAX_PLAYERS,
   MSG_INPUT,
   MAPS,
@@ -15,6 +26,7 @@ import {
   MSG_PING,
   MSG_PONG,
   PLAYER_RADIUS,
+  RECONNECT_GRACE_S,
   RESPAWN_DELAY,
   SHIELD,
   SHIELD_TICKS,
@@ -25,7 +37,6 @@ import {
   grenadeArc,
   grenadeDamage,
   grenadeFlightTicks,
-  isWeaponId,
   mapById,
   readSim,
   respawnPoint,
@@ -33,6 +44,9 @@ import {
   spawnSim,
   stepBullet,
   stepPlayer,
+  parseInput,
+  parsePick,
+  parsePong,
   ticks,
   weaponDef,
   writeSim,
@@ -63,6 +77,12 @@ interface PlayerInternal {
   deaths: number;
   /** The latency probe in flight: its number and when it was sent (performance.now()). */
   ping: { n: number; at: number } | null;
+  /**
+   * The press counters of this seat's first input are taken as the baseline
+   * (see applyInput). False from a fresh join until that input; a reconnect
+   * keeps it true and resumes from the synced counters.
+   */
+  baselined: boolean;
 }
 
 /** Server-only bookkeeping per bullet. */
@@ -82,7 +102,6 @@ interface GrenadeInternal {
   fuseLeft: number;
 }
 
-const MAX_COUNTER = 0xffffffff;
 const PING_INTERVAL_MS = 2000;
 let pingCounter = 0;
 
@@ -106,34 +125,56 @@ function requestedGuestName(options: unknown): string | null {
   return typeof v === "string" && /^Guest-\d{4}$/.test(v) ? v : null;
 }
 
-function sanitizeInput(raw: unknown): InputMessage | null {
-  if (typeof raw !== "object" || raw === null) return null;
-  const m = raw as Record<string, unknown>;
-  const seq = m.seq;
-  if (typeof seq !== "number" || !Number.isInteger(seq) || seq < 0 || seq > MAX_COUNTER) return null;
-  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
-  const counter = (v: unknown) =>
-    typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= MAX_COUNTER ? v : 0;
-  // Move length is clamped inside the step (clampMove) and the grenade target
-  // to GRENADE.range (grenadeTarget), whatever the client sends.
-  return {
-    seq,
-    mx: num(m.mx),
-    mz: num(m.mz),
-    aim: num(m.aim),
-    fire: m.fire === true,
-    gx: num(m.gx),
-    gz: num(m.gz),
-    dash: counter(m.dash),
-    grenade: counter(m.grenade),
-    shield: counter(m.shield),
-    reload: counter(m.reload),
-  };
-}
-
 export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
   maxClients = MAX_PLAYERS;
   state = new DuelState();
+  /** Flood protection: past this the client is disconnected (4002, no seat held). */
+  maxMessagesPerSecond = MAX_MESSAGES_PER_SECOND;
+  /** Seconds a dropped player's seat is held. A property so the smoke test can shorten it in a subclass. */
+  protected reconnectGrace = RECONNECT_GRACE_S;
+
+  /**
+   * Every client message. Each payload goes through its parser from
+   * @bagarre/shared first: anything malformed is dropped, never coerced.
+   * Handlers read the sender from `client`, never from the payload.
+   */
+  messages = {
+    [MSG_INPUT]: (client: Client, raw: unknown) => {
+      const input = parseInput(raw);
+      const internal = this.internals.get(client.sessionId);
+      const player = this.state.players.get(client.sessionId);
+      if (!input || !internal || !player?.connected) return;
+      if (input.seq <= player.lastSeq || internal.queue.length >= MAX_INPUT_QUEUE) return;
+      internal.queue.push(input);
+    },
+
+    // Weapon pick: only valid ids, only while dead or between matches. It is
+    // stored as `pick` and only put in hand on the next (re)spawn.
+    [MSG_PICK]: (client: Client, raw: unknown) => {
+      const pick = parsePick(raw);
+      const player = this.state.players.get(client.sessionId);
+      if (!pick || !player) return;
+      if (player.alive && this.state.phase === "playing") return;
+      player.pick = pick.weapon;
+    },
+
+    // Latency: one probe per client every PING_INTERVAL_MS; the answer's
+    // round trip becomes the player's synced `ping`. Only the probe in flight
+    // is accepted, so a client can't make its ping up.
+    [MSG_PONG]: (client: Client, raw: unknown) => {
+      const pong = parsePong(raw);
+      const internal = this.internals.get(client.sessionId);
+      const player = this.state.players.get(client.sessionId);
+      if (!pong || !internal?.ping || !player || pong.n !== internal.ping.n) return;
+      // At least 1 ms, so 0 keeps meaning "not measured yet".
+      player.ping = Math.min(9999, Math.max(1, Math.round(performance.now() - internal.ping.at)));
+      internal.ping = null;
+    },
+
+    // Any other type is dropped. Without this fallback Colyseus closes the
+    // sender's connection in production (and answers with an error in dev).
+    "*": () => {},
+  };
 
   private internals = new Map<string, PlayerInternal>();
   private bulletInternals = new Map<string, BulletInternal>();
@@ -160,6 +201,10 @@ export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
    * sent as an Authorization header. What we return becomes `client.auth`.
    */
   static async onAuth(token: string | undefined, _options: unknown, _context: AuthContext): Promise<Identity> {
+    // Shutting down (SIGTERM, see index.ts): no new seat anywhere. The
+    // client's join fails and it offers to try again.
+    if (matchMaker.state === matchMaker.MatchMakerState.SHUTTING_DOWN)
+      throw new ServerError(ErrorCode.MATCHMAKE_UNHANDLED, "The game server is restarting.");
     try {
       return await resolveIdentity(token || undefined);
     } catch (err) {
@@ -203,38 +248,6 @@ export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
     this.state.mapId = this.map.id;
     this.syncListing();
 
-    this.onMessage(MSG_INPUT, (client, raw: unknown) => {
-      const input = sanitizeInput(raw);
-      const internal = this.internals.get(client.sessionId);
-      if (!input || !internal) return;
-      const player = this.state.players.get(client.sessionId);
-      if (!player || input.seq <= player.lastSeq) return;
-      if (internal.queue.length >= MAX_INPUT_QUEUE) return;
-      internal.queue.push(input);
-    });
-
-    // Weapon pick: only valid ids, only while dead or between matches. It is
-    // stored as `pick` and only put in hand on the next (re)spawn.
-    this.onMessage(MSG_PICK, (client, raw: unknown) => {
-      const player = this.state.players.get(client.sessionId);
-      const weapon = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>).weapon : undefined;
-      if (!player || !isWeaponId(weapon)) return;
-      if (player.alive && this.state.phase === "playing") return;
-      player.pick = weapon;
-    });
-
-    // Latency: one probe per client every PING_INTERVAL_MS; the answer's
-    // round trip becomes the player's synced `ping`. Only the probe in flight
-    // is accepted, so a client can't make its ping up.
-    this.onMessage(MSG_PONG, (client, raw: unknown) => {
-      const internal = this.internals.get(client.sessionId);
-      const player = this.state.players.get(client.sessionId);
-      const n = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>).n : undefined;
-      if (!internal?.ping || !player || n !== internal.ping.n) return;
-      // At least 1 ms, so 0 keeps meaning "not measured yet".
-      player.ping = Math.min(9999, Math.max(1, Math.round(performance.now() - internal.ping.at)));
-      internal.ping = null;
-    });
     this.clock.setInterval(() => this.probeLatency(), PING_INTERVAL_MS);
 
     // Fixed-timestep loop with an accumulator (Colyseus runs a whole number of
@@ -286,13 +299,68 @@ export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
     player.aim = Math.atan2(-spawn.z, -spawn.x);
     this.state.players.set(client.sessionId, player);
     player.account = hasUsername;
-    this.internals.set(client.sessionId, { queue: [], tokens: INPUT_BURST, identity, deaths: 0, ping: null });
+    this.internals.set(client.sessionId, { queue: [], tokens: INPUT_BURST, identity, deaths: 0, ping: null, baselined: false });
     this.joinOrder.push(client.sessionId);
 
-    if (this.state.players.size === MAX_PLAYERS) this.startMatch();
+    if (this.bothConnected()) this.startMatch();
     this.syncListing();
   }
 
+  /**
+   * The connection dropped without a leave (network loss, tab reload, a
+   * closed laptop). The seat is held for `reconnectGrace` seconds: the
+   * character stays where it is, takes no input (the queue is dropped, and
+   * inputs are refused while `connected` is false) and can still be shot.
+   * The SDK retries on its own; `onReconnect` or, after the grace period,
+   * `onLeave` follows.
+   *
+   * No seat is held when the server itself closed the connection: a flood
+   * or protocol error (4002), or a shutdown (4001, the room is going away).
+   */
+  onDrop(client: Client, code: number) {
+    if (code === CloseCode.WITH_ERROR || code === CloseCode.SERVER_SHUTDOWN) return;
+    const player = this.state.players.get(client.sessionId);
+    const internal = this.internals.get(client.sessionId);
+    if (!player || !internal) return;
+    player.connected = false;
+    internal.queue.length = 0;
+    internal.ping = null;
+    // Not awaited: the outcome comes back as onReconnect or onLeave. It
+    // rejects at once when the room is disposing; onLeave follows then too.
+    this.allowReconnection(client, this.reconnectGrace).catch(() => {});
+  }
+
+  /** Back within the grace period: same session id, same seat, score and weapon. */
+  onReconnect(client: Client) {
+    const player = this.state.players.get(client.sessionId);
+    const internal = this.internals.get(client.sessionId);
+    if (!player || !internal) return;
+    player.connected = true;
+    internal.queue.length = 0;
+    internal.tokens = INPUT_BURST;
+    internal.ping = null;
+    // Someone took the other seat while this player was away.
+    if (this.state.phase === "waiting" && this.bothConnected()) this.startMatch();
+  }
+
+  /** Two players, both connected: a match can start. */
+  private bothConnected(): boolean {
+    if (this.state.players.size !== MAX_PLAYERS) return false;
+    let all = true;
+    this.state.players.forEach((p) => (all &&= p.connected));
+    return all;
+  }
+
+  /**
+   * Room errors (a throwing tick, message handler or timer) are logged here
+   * instead of reaching the process: without this hook, Colyseus' uncaught
+   * exception handler shuts the whole server down.
+   */
+  onUncaughtException(err: RoomException, methodName: RoomMethodName) {
+    console.error(`[room ${this.roomId}] ${methodName} failed:`, err.cause ?? err);
+  }
+
+  /** Gone for good: a Leave, the grace period running out, or a shutdown. */
   onLeave(client: Client) {
     this.state.players.delete(client.sessionId);
     this.internals.delete(client.sessionId);
@@ -455,11 +523,15 @@ export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
       if (player.respawnTicks <= 0) this.respawn(id, player);
     });
 
+    // After the result delay: the rematch, or back to waiting if the
+    // opponent left. A player who dropped holds the result card up until they
+    // are back (or their grace period ends and onLeave sends the room back to
+    // waiting): a match never starts against an empty seat.
     if (this.state.phase === "ended") {
-      this.matchResetTicks--;
+      if (this.matchResetTicks > 0) this.matchResetTicks--;
       if (this.matchResetTicks <= 0) {
-        if (this.state.players.size === MAX_PLAYERS) this.startMatch();
-        else this.setPhase("waiting");
+        if (this.state.players.size < MAX_PLAYERS) this.setPhase("waiting");
+        else if (this.bothConnected()) this.startMatch();
       }
     }
 
@@ -470,6 +542,17 @@ export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
     // Always acknowledge, even when the input has no effect (dead, match
     // over): the client needs the ack to drop it from its replay buffer.
     player.lastSeq = input.seq;
+    // A fresh seat: the client's press counters are running totals from
+    // before this game (same tab, earlier games), so its first input's
+    // counters are the baseline, not presses. Only a later increase fires.
+    const internal = this.internals.get(id);
+    if (internal && !internal.baselined) {
+      internal.baselined = true;
+      player.dashSeen = Math.max(player.dashSeen, input.dash);
+      player.grenadeSeen = Math.max(player.grenadeSeen, input.grenade);
+      player.shieldSeen = Math.max(player.shieldSeen, input.shield);
+      player.reloadSeen = Math.max(player.reloadSeen, input.reload);
+    }
     const canAct = player.alive && this.state.phase !== "ended";
     // The same function the client predicts with. It enforces the fire
     // interval, magazine, reload and ability cooldowns.

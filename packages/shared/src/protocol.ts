@@ -135,6 +135,12 @@ export interface PlayerView extends PlayerSim {
   damage: number;
   /** Round-trip time to the server in ms, measured by the server (MSG_PING). */
   ping: number;
+  /**
+   * False while the player's connection is lost and the server holds their
+   * seat (RECONNECT_GRACE_S): the character stays put, takes no input and can
+   * still be shot. Back to true when they reconnect.
+   */
+  connected: boolean;
 }
 
 export const PLAYER_VIEW_KEYS = [
@@ -157,6 +163,7 @@ export const PLAYER_VIEW_KEYS = [
   "hits",
   "damage",
   "ping",
+  "connected",
 ] as const satisfies readonly (keyof PlayerView)[];
 
 /**

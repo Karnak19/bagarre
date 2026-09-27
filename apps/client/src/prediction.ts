@@ -62,6 +62,19 @@ export class Predictor {
     this.lastError = 0;
   }
 
+  /**
+   * Forgets everything: predicted state, smoothing and the inputs in flight
+   * (after a reconnection they were lost with the connection, and the server
+   * has already acknowledged all it applied). The next `reconcile` restarts
+   * from the server's state.
+   */
+  reset() {
+    this.sim = null;
+    this.pending = [];
+    this.offset = { x: 0, z: 0 };
+    this.lastError = 0;
+  }
+
   /** Applies an input we just sent. `canAct` mirrors the server's rules. */
   apply(input: InputMessage, canAct: boolean): StepResult | null {
     if (!this.sim) return null;

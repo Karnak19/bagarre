@@ -64,6 +64,10 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
         attract?.stop();
         scene!.resetView();
         hud.clear();
+        // Press counters start over with each game (the server takes a new
+        // seat's first counters as its baseline anyway). A resumed seat
+        // lifts them back to the server's in Match.resync.
+        Object.assign(input.presses, { dash: 0, grenade: 0, shield: 0, reload: 0 });
         return new Match({ scene: scene!, input, hud, net, bot, sfxLog });
       },
     },

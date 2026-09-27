@@ -7,10 +7,16 @@
 // grenade, and the shield. Part 3 (smoke-accounts.ts, run alongside part 2)
 // covers guest names, Clerk token checks and match stats in Convex. Part 4
 // covers game pages (private rooms, the open games list, joins by id, room
-// metadata, guest names) and part 5 the scoreboard counters and ping.
+// metadata, guest names) and part 5 the scoreboard counters and ping. Part 6
+// covers reconnection (a dropped client keeps its seat for a grace period),
+// malformed messages and the message rate limit, and part 7 a SIGTERM on a
+// server running in a child process.
 
+import { spawn } from "node:child_process";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { matchMaker } from "@colyseus/core";
-import { Client, type Room } from "@colyseus/sdk";
+import { Client, CloseCode, type Room } from "@colyseus/sdk";
 import {
   BULLET_RADIUS,
   DASH,
@@ -25,6 +31,7 @@ import {
   MSG_PICK,
   MSG_PING,
   MSG_PONG,
+  MAX_MESSAGES_PER_SECOND,
   PLAYER_RADIUS,
   PLAYER_SPEED,
   GAMES_ROUTE,
@@ -144,7 +151,7 @@ function driver(room: Room, map: MapDef = YARD) {
     },
   };
 
-  const timer = setInterval(() => {
+  const tick = () => {
     const p = me(room);
     if (!p) return;
     for (let k = 0; k < d.spam; k++) {
@@ -172,7 +179,12 @@ function driver(room: Room, map: MapDef = YARD) {
         arrived = null;
       }
     }
-  }, TICK_MS);
+  };
+  // One input right away, before any press: a fresh seat takes the first
+  // input's counters as its baseline (DuelRoom.applyInput), like a real
+  // client's first input after joining.
+  tick();
+  const timer = setInterval(tick, TICK_MS);
   return d;
 }
 type Driver = ReturnType<typeof driver>;
@@ -1011,6 +1023,321 @@ async function scoreboardChecks() {
   await Promise.all([r1.leave(), r2.leave()]);
 }
 
+
+// ---------------------------------------------------------------------------
+// Part 6: reconnection, malformed messages, rate limit.
+// ---------------------------------------------------------------------------
+
+/** What the smoke test pokes at on the server side of a room. */
+type LocalDuel = {
+  damage(a: string, t: string, target: unknown, n: number): void;
+  state: { players: Map<string, PlayerView & { toJSON(): unknown }>; phase: string };
+  clients: { sessionId: string; ref: { terminate(): void } }[];
+};
+const duelRoom = (roomId: string) => localRoom(roomId) as unknown as LocalDuel;
+
+/**
+ * Cuts a client's connection the way a network loss does: the server drops
+ * the TCP socket without a close frame, so both sides see 1006.
+ */
+function cutConnection(room: Room) {
+  duelRoom(room.roomId).clients.find((c) => c.sessionId === room.sessionId)?.ref.terminate();
+}
+
+/** Every SDK event of one room, in order, for the reconnection checks. */
+function lifecycle(room: Room) {
+  const events: string[] = [];
+  room.onDrop((code) => events.push(`drop:${code}`));
+  room.onReconnect(() => events.push("reconnect"));
+  room.onLeave((code) => events.push(`leave:${code}`));
+  return events;
+}
+
+/** A two-player private room in "playing". `name` picks another room type. */
+async function playingDuel(name = ROOM_NAME) {
+  const r1 = await new Client(URL).create(name);
+  const r2 = await new Client(URL).joinById(r1.roomId);
+  // The SDK only retries once a room has been up for 5 s (minUptime); the checks don't wait that long.
+  for (const r of [r1, r2]) r.reconnection.minUptime = 0;
+  const started = await waitFor(() => state(r1).phase === "playing" && !!me(r1) && !!me(r2), 3000);
+  if (!started) throw new Error("match did not start");
+  return { r1, r2 };
+}
+
+/** The SDK's own automatic reconnection: same seat, score and weapon. */
+async function reconnectAuto() {
+  const tag = "[reconnect]";
+  const lines: [boolean, string][] = [];
+  const ok = (c: boolean, l: string) => lines.push([c, `${tag} ${l}`]);
+  const { r1, r2 } = await playingDuel();
+  try {
+    const room = duelRoom(r1.roomId);
+    // Something worth keeping: player 1 scores on player 2, who picks the sniper while dead.
+    room.damage(r1.sessionId, r2.sessionId, room.state.players.get(r2.sessionId), MAX_HP);
+    r2.send(MSG_PICK, { weapon: 2 });
+    await waitFor(() => me(r2)!.alive && me(r2)!.weapon === 2 && me(r1)!.kills === 1, 4000);
+    const before = { slot: me(r2)!.slot, weapon: me(r2)!.weapon, kills: me(r1)!.kills, deaths: me(r2)!.deaths };
+    ok(before.weapon === 2 && before.kills === 1, `setup: score 1-0, player 2 holds the sniper (${JSON.stringify(before)})`);
+
+    const events = lifecycle(r2);
+    const t0 = performance.now();
+    cutConnection(r2);
+    const seenDropped = await waitFor(() => other(r1)?.connected === false, 2000);
+    ok(seenDropped, "the opponent sees the dropped player as not connected");
+    const back = await waitFor(() => events.includes("reconnect"), 8000);
+    ok(
+      back && events[0]?.startsWith("drop:") && !events.some((e) => e.startsWith("leave")),
+      `the SDK reconnects on its own within the grace period (${events.join(", ")}, ${Math.round(performance.now() - t0)} ms)`,
+    );
+    const resynced = await waitFor(() => other(r1)?.connected === true && me(r2)?.connected === true, 2000);
+    const after = { slot: me(r2)!.slot, weapon: me(r2)!.weapon, kills: me(r1)!.kills, deaths: me(r2)!.deaths };
+    ok(
+      resynced && JSON.stringify(after) === JSON.stringify(before) && room.state.players.has(r2.sessionId) && room.state.players.size === 2,
+      `same session, seat, score and weapon after the reconnect (${JSON.stringify(after)})`,
+    );
+    ok(state(r1).phase === "playing" && state(r2).phase === "playing", "the match goes on");
+    const seq = me(r2)!.lastSeq + 1;
+    r2.send(MSG_INPUT, { ...idle, seq });
+    ok(await waitFor(() => me(r2)!.lastSeq === seq, 1500), "the reconnected client's inputs are applied again");
+  } finally {
+    await Promise.all([r1.leave(), r2.leave()]);
+  }
+  return lines;
+}
+
+/**
+ * A page reload: the old Room is gone (no automatic retry), the page calls
+ * `client.reconnect(token)`. Meanwhile, the dropped character stays put and
+ * can be shot.
+ */
+async function reconnectReload() {
+  const tag = "[reconnect: reload]";
+  const lines: [boolean, string][] = [];
+  const ok = (c: boolean, l: string) => lines.push([c, `${tag} ${l}`]);
+  const { r1, r2 } = await playingDuel();
+  const d1 = driver(r1);
+  const d2 = driver(r2);
+  let r2b: Room | null = null;
+  try {
+    const room = duelRoom(r1.roomId);
+    // Face to face in the open, player 2 four metres right of player 1.
+    const [a1, a2] = await Promise.all([d1.goTo(4, -12), d2.goTo(12, -12).then(() => d2.goTo(8, -12))]);
+    if (!a1 || !a2) throw new Error(`${tag} players did not reach their spots`);
+    await caughtUp(r2, d2);
+
+    // The page dies with player 2 walking away: inputs are in flight.
+    d2.set({ mx: 1 });
+    await sleep(100);
+    r2.reconnection.enabled = false;
+    const token = r2.reconnectionToken;
+    const events = lifecycle(r2);
+    cutConnection(r2);
+    d2.stop();
+    const dropped = await waitFor(
+      () => room.state.players.get(r2.sessionId)?.connected === false && events.some((e) => e.startsWith("leave")),
+      3000,
+    );
+    ok(dropped, `the server holds the seat, the dead page's Room is gone (${events.join(", ")})`);
+    await sleep(100);
+    const p = room.state.players.get(r2.sessionId)!;
+    const at = { x: p.x, z: p.z };
+    await sleep(1000);
+    ok(p.x === at.x && p.z === at.z, `the dropped character doesn't move (${at.x.toFixed(3)}, ${at.z.toFixed(3)} one second later)`);
+
+    const hp0 = p.hp;
+    d1.set({ aim: 0, fire: true });
+    const hurt = await waitFor(() => !p.alive || p.hp < hp0, 3000);
+    d1.set({ fire: false });
+    ok(hurt, `the dropped character can be shot (hp ${hp0} -> ${p.hp})`);
+    await caughtUp(r1, d1);
+    await sleep(100);
+    const hpNow = p.hp;
+
+    r2b = await new Client(URL).reconnect(token);
+    const rb = r2b;
+    const resumed = await waitFor(() => !!me(rb) && other(r1)?.connected === true, 2000);
+    ok(
+      resumed && rb.sessionId === r2.sessionId && me(rb)!.slot === p.slot && me(rb)!.hp === hpNow,
+      `client.reconnect(token) gets the same session back, with its state (hp ${me(rb)?.hp})`,
+    );
+    const seq = me(rb)!.lastSeq + 1;
+    rb.send(MSG_INPUT, { ...idle, seq, mx: -1 });
+    ok(await waitFor(() => me(rb)!.lastSeq === seq, 1500), "the resumed session's inputs are applied again");
+  } finally {
+    d1.stop();
+    d2.stop();
+    await Promise.all([r1.leave(), r2b?.leave()]);
+  }
+  return lines;
+}
+
+/** A room whose grace period is 2 s, for the expiry check. */
+class ShortGraceRoom extends DuelRoom.pinnedTo("yard") {
+  protected override reconnectGrace = 2;
+}
+
+/** After the grace period the drop is a leave: the seat is freed, the opponent goes back to waiting. */
+async function reconnectExpired() {
+  const tag = "[reconnect: expired]";
+  const lines: [boolean, string][] = [];
+  const ok = (c: boolean, l: string) => lines.push([c, `${tag} ${l}`]);
+  const { r1, r2 } = await playingDuel("duel_short_grace");
+  let r3: Room | null = null;
+  try {
+    r2.reconnection.enabled = false;
+    const token = r2.reconnectionToken;
+    const t0 = performance.now();
+    cutConnection(r2);
+    await waitFor(() => other(r1)?.connected === false, 2000);
+    ok(state(r1).phase === "playing", "during the grace period the match is still on");
+    const freed = await waitFor(() => state(r1).phase === "waiting" && state(r1).players.get(r2.sessionId) === undefined, 5000);
+    const took = performance.now() - t0;
+    ok(freed && took > 1800, `after the grace period the seat is freed and the opponent is back to waiting (${Math.round(took)} ms)`);
+    const late = await new Client(URL).reconnect(token).then(
+      (r) => r.leave().then(() => "reconnected"),
+      (e: { code?: number }) => `refused ${e?.code ?? ""}`,
+    );
+    ok(late.startsWith("refused"), `a reconnect after the grace period is refused (${late})`);
+    r3 = await new Client(URL).joinById(r1.roomId);
+    const rb = r3;
+    ok(await waitFor(() => state(r1).phase === "playing" && !!me(rb), 3000), "a new player takes the freed seat and the match starts");
+  } finally {
+    await Promise.all([r1.leave(), r3?.leave()]);
+  }
+  return lines;
+}
+
+/** Malformed and unknown messages are dropped: the room, the sender's connection and the state are untouched. */
+async function malformedMessages() {
+  const tag = "[messages]";
+  const lines: [boolean, string][] = [];
+  const ok = (c: boolean, l: string) => lines.push([c, `${tag} ${l}`]);
+  const r1 = await new Client(URL).create(ROOM_NAME, { private: true });
+  const events = lifecycle(r1);
+  try {
+    await waitFor(() => !!me(r1), 2000);
+    const room = duelRoom(r1.roomId);
+    const player = room.state.players.get(r1.sessionId)!;
+    const before = JSON.stringify(player.toJSON());
+    const valid = { ...idle, seq: 5, mx: 1 };
+    const missingReload: Record<string, unknown> = { ...valid };
+    delete missingReload.reload;
+    const inputs: unknown[] = [
+      undefined, null, 42, "input", [], [valid], {},
+      { ...valid, seq: "5" }, { ...valid, seq: 1.5 }, { ...valid, seq: -1 }, { ...valid, seq: 0 }, { ...valid, seq: 2 ** 40 },
+      { ...valid, mx: NaN }, { ...valid, mz: Infinity }, { ...valid, mx: 1e308 }, { ...valid, mx: "1" },
+      { ...valid, aim: NaN }, { ...valid, aim: 1e9 }, { ...valid, gx: -Infinity }, { ...valid, gz: 1e12 },
+      { ...valid, fire: "yes" }, { ...valid, fire: 1 },
+      { ...valid, dash: -1 }, { ...valid, dash: 1.5 }, { ...valid, grenade: 2 ** 40 }, { ...valid, shield: "1" },
+      missingReload,
+    ];
+    for (const m of inputs) r1.send(MSG_INPUT, m);
+    for (const m of [undefined, null, 1, { weapon: "1" }, { weapon: 1.5 }, { weapon: -1 }, { weapon: 99 }, { weapon: NaN }, {}, [1]])
+      r1.send(MSG_PICK, m);
+    for (const m of [undefined, null, { n: "1" }, { n: NaN }, { n: -1 }, { n: 12345 }, { n: 2 ** 40 }]) r1.send(MSG_PONG, m);
+    for (const type of ["hax", "__proto__", "constructor", "toString", MSG_PING, ""]) r1.send(type, { seq: 9, weapon: 1 });
+    r1.send(99, { x: 1 });
+    await sleep(400);
+    ok(!!localRoom(r1.roomId) && events.length === 0, `the room and the sender's connection survive ${inputs.length + 25} bad messages`);
+    ok(JSON.stringify(player.toJSON()) === before, "none of them changed the player's state");
+    r1.send(MSG_INPUT, { ...valid, seq: 1 });
+    r1.send(MSG_PICK, { weapon: 3 });
+    ok(await waitFor(() => me(r1)?.lastSeq === 1 && me(r1)?.pick === 3, 1500), "valid messages right after are applied");
+  } finally {
+    await r1.leave();
+  }
+  return lines;
+}
+
+/** A fresh seat takes its first input's press counters as the baseline: nothing fires from them, the next press does. */
+async function pressBaseline() {
+  const tag = "[presses]";
+  const lines: [boolean, string][] = [];
+  const ok = (c: boolean, l: string) => lines.push([c, `${tag} ${l}`]);
+  const r1 = await new Client(URL).create(ROOM_NAME, { private: true });
+  try {
+    await waitFor(() => !!me(r1), 2000);
+    const room = duelRoom(r1.roomId);
+    // Counters left over from earlier games in the same tab.
+    r1.send(MSG_INPUT, { ...idle, seq: 1, dash: 7, grenade: 3, shield: 2, reload: 4 });
+    await waitFor(() => me(r1)?.lastSeq === 1, 1500);
+    await sleep(100);
+    const p = me(r1)!;
+    ok(
+      p.dashCd === 0 && p.dashTicks === 0 && p.grenadeCd === 0 && p.shieldTicks === 0 && p.reloadTicks === 0 && room.state.players.size === 1,
+      `a first input with counters {dash: 7, grenade: 3, shield: 2, reload: 4} triggers nothing (seen ${p.dashSeen}, ${p.grenadeSeen}, ${p.shieldSeen}, ${p.reloadSeen})`,
+    );
+    r1.send(MSG_INPUT, { ...idle, seq: 2, dash: 8, grenade: 3, shield: 2, reload: 4 });
+    ok(await waitFor(() => me(r1)!.dashCd > 0, 1500), `the next increment does (dash 7 -> 8: dash cooldown ${me(r1)!.dashCd})`);
+  } finally {
+    await r1.leave();
+  }
+  return lines;
+}
+
+/** A client flooding the room is disconnected (4002) without a held seat; the room goes on. */
+async function messageFlood() {
+  const tag = "[messages]";
+  const lines: [boolean, string][] = [];
+  const ok = (c: boolean, l: string) => lines.push([c, `${tag} ${l}`]);
+  const { r1, r2 } = await playingDuel();
+  try {
+    const events = lifecycle(r2);
+    for (let i = 0; i < MAX_MESSAGES_PER_SECOND * 2; i++) r2.send(MSG_PONG, { n: i });
+    const kicked = await waitFor(() => events.length > 0, 2000);
+    ok(kicked && events[0] === `leave:${CloseCode.WITH_ERROR}`, `a flood of ${MAX_MESSAGES_PER_SECOND * 2} messages closes the sender's connection (${events.join(", ")})`);
+    const freed = await waitFor(() => state(r1).phase === "waiting" && state(r1).players.get(r2.sessionId) === undefined, 2000);
+    ok(freed, "no seat is held for it: the opponent is back to waiting at once");
+  } finally {
+    await r1.leave();
+  }
+  return lines;
+}
+
+// ---------------------------------------------------------------------------
+// Part 7: SIGTERM on a server with a live match (a child process, production mode).
+// ---------------------------------------------------------------------------
+async function shutdownCheck() {
+  const tag = "[shutdown]";
+  const port = 2598;
+  const url = `http://localhost:${port}`;
+  const child = spawn(process.execPath, ["src/index.ts"], {
+    cwd: dirname(fileURLToPath(import.meta.url)),
+    env: { ...process.env, PORT: String(port), NODE_ENV: "production" },
+    stdio: "ignore",
+  });
+  const exited = new Promise<number | null>((r) => child.once("exit", (code) => r(code)));
+  try {
+    let up = false;
+    for (let i = 0; i < 100 && !up; i++) {
+      up = !!(await fetch(`${url}${GAMES_ROUTE}`).catch(() => null))?.ok;
+      if (!up) await sleep(100);
+    }
+    if (!up) throw new Error(`${tag} the child server did not start`);
+    const r1 = await new Client(url).joinOrCreate(ROOM_NAME);
+    const r2 = await new Client(url).joinOrCreate(ROOM_NAME);
+    await waitFor(() => state(r1).phase === "playing", 3000);
+    const codes: number[] = [];
+    const dropped: number[] = [];
+    for (const r of [r1, r2]) {
+      r.onLeave((code) => codes.push(code));
+      r.onDrop((code) => dropped.push(code));
+    }
+    const t0 = performance.now();
+    child.kill("SIGTERM");
+    const exit = await Promise.race([exited, sleep(8000).then(() => "timeout")]);
+    const took = Math.round(performance.now() - t0);
+    await waitFor(() => codes.length === 2, 1000);
+    check(
+      codes.length === 2 && codes.every((c) => c === CloseCode.SERVER_SHUTDOWN) && dropped.length === 0,
+      `${tag} SIGTERM with a live match: both clients get close code ${CloseCode.SERVER_SHUTDOWN} (server shutdown), no reconnect attempt (${codes.join(", ")})`,
+    );
+    check(exit === 0, `${tag} the process exits cleanly (exit code ${exit}, ${took} ms)`);
+  } finally {
+    child.kill("SIGKILL");
+  }
+}
+
 // ---------------------------------------------------------------------------
 
 const accounts = await setupTestAccounts();
@@ -1019,6 +1346,7 @@ await server.listen(PORT);
 // Extra room types for the map checks: one unpinned (random maps), one pinned per wall case.
 matchMaker.defineRoomType("duel_random", DuelRoom);
 for (const c of WALL_CASES) matchMaker.defineRoomType(`duel_${c.map}`, DuelRoom.pinnedTo(c.map));
+matchMaker.defineRoomType("duel_short_grace", ShortGraceRoom);
 
 let exitCode = 0;
 try {
@@ -1049,6 +1377,18 @@ try {
   await lobbyChecks();
   console.log("\n-- scoreboard --");
   await scoreboardChecks();
+
+  console.log("\n-- reconnection, malformed messages, rate limit --");
+  const netResults = await Promise.allSettled([reconnectAuto(), reconnectReload(), reconnectExpired(), malformedMessages(), messageFlood(), pressBaseline()]);
+  for (const r of netResults) {
+    if (r.status === "fulfilled") for (const [c, l] of r.value) check(c, l);
+    else {
+      console.error(r.reason);
+      check(false, `scenario crashed: ${r.reason instanceof Error ? r.reason.message : r.reason}`);
+    }
+  }
+  console.log("\n-- SIGTERM --");
+  await shutdownCheck();
 
   // Last and alone: it flips NODE_ENV for the whole process.
   console.log("\n-- dev ?map= option --");

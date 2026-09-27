@@ -30,7 +30,7 @@ what it can (a second `bun run build` with nothing changed is instant).
 | `bun run build`         | Type-checks every package, then builds the client into `apps/client/dist` |
 | `bun run typecheck`     | Type-checks every package                                          |
 | `bun run lint`          | oxlint on every package                                             |
-| `bun run smoke`         | Boots a real server, connects headless clients, checks the game loop and accounts |
+| `bun run smoke`         | Boots a real server, connects headless clients, checks the game loop, accounts, reconnection and shutdown |
 | `bun run maps:validate` | Checks every map and prints its stats (see [docs/maps.md](docs/maps.md)) |
 | `bun run start`         | Runs the server alone (no watch)                                    |
 
@@ -403,3 +403,39 @@ drops its predicted bullets and every drawn bullet and grenade, rebuilds the
 arena, and resets the prediction to restart from the server's state on the new
 map. The inputs still waiting for the server are replayed on the new map,
 which is where the server will run them, so the prediction stays exact.
+
+### Dropped connections, restarts and bad messages
+
+A connection that drops (network loss, a closed laptop, a page reload) doesn't
+throw you out. The server keeps your seat for 20 seconds (`RECONNECT_GRACE_S`,
+Colyseus' `onDrop` and `allowReconnection`). Meanwhile your character stays
+where it was, takes no input and can still be shot, and your opponent sees
+"reconnecting…" on your name and a line saying you lost your connection.
+
+- The client reconnects on its own with the Colyseus SDK's automatic
+  reconnection (a retry every 2 s at most) and shows a "Reconnecting…" card.
+  Back in, it treats the first snapshot like a map change: it empties the
+  interpolation buffer, resets the prediction and forgets the inputs lost with
+  the connection, and takes what happened meanwhile as known, so no sound or
+  effect plays for it.
+- A reload of the game's page takes the seat back too: the page keeps the
+  reconnection token in `sessionStorage` (per tab) and opening `/game/<code>`
+  within the grace period calls `client.reconnect()` before trying a normal
+  join.
+- After the grace period it's a normal leave: the opponent goes back to
+  waiting. A match never starts against an empty seat: the rematch waits until
+  both players are connected.
+- Leaving on purpose (Leave match, Main menu, Back) is a consented leave: no
+  seat is held and no reconnection is attempted.
+
+On SIGTERM (Coolify redeploys by stopping the container) the server refuses
+new joins, closes every match with close code 4001 and exits 0. Clients show
+"The game server is restarting" instead of trying to reconnect to a server
+that no longer has the room.
+
+Every client message is checked before it touches the room
+(`packages/shared/src/messages.ts`): shape, types, finite numbers, ranges. A
+bad one is dropped whole, and message types the room doesn't know are dropped
+too. A client sending more than 300 messages a second (ten times the normal
+rate) is disconnected with no seat held; the input budget still paces the
+game itself.
