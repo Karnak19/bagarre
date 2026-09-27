@@ -2,6 +2,7 @@
 // Usage (from packages/shared): bun scripts/ffa/validate.ts [mapId...]   Exits 1 on any error.
 
 import { FFA_MAPS } from "../../src/maps/ffa/index.ts";
+import { fairValue } from "../analyze.ts";
 import {
   checkFfa,
   CONTACT_MEDIAN,
@@ -27,7 +28,6 @@ import { BALANCE, checkTeams, MAX_HUB_GAP, MIN_ENEMY_SPAWN_DIST, MIN_TEAM_SPAWNS
 const only = process.argv.slice(2);
 const maps = only.length ? FFA_MAPS.filter((m) => only.includes(m.id)) : FFA_MAPS;
 const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
-const val = (unit: "%" | "m" | "m2", v: number) => (unit === "%" ? pct(v) : unit === "m" ? `${v.toFixed(1)} m` : `${v.toFixed(1)} m²`);
 const ids = new Set<string>();
 let failed = false;
 
@@ -76,8 +76,8 @@ for (const m of maps) {
       const d = SPREAD[k];
       return [
         `spread: ${d.label}`,
-        `median ${val(d.unit, sp.median)}, worst spawn ${sp.worstAt} at ${Math.round(sp.worst * 100)}%`,
-        `${d.worse === "high" ? "at most" : d.worse === "low" ? "at least" : "within"} ${val(d.unit, sp.tol)} ${d.worse === "high" ? "over" : d.worse === "low" ? "under" : "of"} the median`,
+        `median ${fairValue(d.unit, sp.median)}, worst spawn ${sp.worstAt} at ${Math.round(sp.worst * 100)}%`,
+        `${d.worse === "high" ? "at most" : d.worse === "low" ? "at least" : "within"} ${fairValue(d.unit, sp.tol)} ${d.worse === "high" ? "over" : d.worse === "low" ? "under" : "of"} the median`,
       ];
     }),
   ];
@@ -122,7 +122,7 @@ for (const m of maps) {
             ["opposite spawn pairs in sight", String(t.pairsInSight), "0, at any distance"],
             ...t.balance.map((x): [string, string, string] => {
               const d = BALANCE[x.key];
-              return [d.label, `${val(d.unit, x.a)} / ${val(d.unit, x.b)}`, `gap ${val(d.unit, x.gap)} <= ${val(d.unit, x.tol)}${x.gap > x.tol ? "  FAIL" : ""}`];
+              return [d.label, `${fairValue(d.unit, x.a)} / ${fairValue(d.unit, x.b)}`, `gap ${fairValue(d.unit, x.gap)} <= ${fairValue(d.unit, x.tol)}${x.gap > x.tol ? "  FAIL" : ""}`];
             }),
           ],
         ),

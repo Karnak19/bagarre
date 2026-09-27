@@ -144,8 +144,8 @@ Extras in `types.ts` and `index.ts`:
 - Authoring helpers: `box(kind, x, z, w, d, h)` and `ascii(halfX, halfZ,
   rows, legend, { cell? })`: the whole floor as ASCII art, rows from -z to
   +z, one character per `cell` metres (default 1), `.` for floor, runs of the
-  same character merged into as few boxes as possible (Dockside and
-  Scrapyard are drawn this way). What is drawn is the map; nothing is
+  same character merged into as few boxes as possible (Runway, Dockside
+  and Scrapyard are drawn this way). What is drawn is the map; nothing is
   mirrored.
 
 ## Fairness

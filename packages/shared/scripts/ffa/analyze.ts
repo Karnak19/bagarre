@@ -37,7 +37,6 @@ import {
   mirrorCheck,
 } from "../analyze.ts";
 
-export { nearestCover };
 
 // --- Thresholds ----------------------------------------------------------------
 
