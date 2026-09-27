@@ -17,8 +17,13 @@ import { matchMaker } from "@colyseus/core";
 import { createServer } from "@bagarre/server/app";
 
 export const E2E_RULES = {
-  /** Two kills win a duel: one kill leaves a score to check, the second ends the match. */
-  duel: { killsToWin: 2, respawnDelay: 0.5 },
+  /**
+   * Two kills win a duel: one kill leaves a score to check, the second ends the match.
+   * The result card stays 10 s before the rematch (4 s in the game): CI draws a
+   * page about once a second, and a click there needs two still frames before
+   * the card goes. The card's own countdown still counts from 4 (client rules).
+   */
+  duel: { killsToWin: 2, respawnDelay: 0.5, endDelay: 10 },
   /** An FFA starts 2 s after the third player is in. */
   ffa: { countdown: 2, respawnDelay: 0.5 },
   /** A team deathmatch starts 2 s after it is 2v2. */
