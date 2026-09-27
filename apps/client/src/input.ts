@@ -1,11 +1,23 @@
 import * as THREE from "three";
 
+/** A text field (ours, or one inside Clerk's modal, even in a shadow root). */
+function isEditable(e: Event) {
+  const t = e.composedPath()[0] ?? e.target;
+  return t instanceof HTMLElement && (t.isContentEditable || t.matches("input, textarea, select"));
+}
+
 /**
  * Keyboard + mouse state. Uses `KeyboardEvent.code` (physical key position),
  * so WASD works on AZERTY keyboards too (the same physical keys, ZQSD).
+ *
+ * Off (`enabled = false`) while the menu or any overlay is up: keys, clicks
+ * and presses are ignored and nothing is held, so the player stands still and
+ * doesn't fire. Keys typed in a text field are always ignored, so typing a
+ * username never moves, fires, mutes (M) or picks a weapon (1-4).
  */
 export class Input {
   private keys = new Set<string>();
+  private on = false;
   /** Cursor in normalised device coordinates (-1..1). */
   readonly ndc = new THREE.Vector2(0, 0);
   firing = false;
@@ -20,8 +32,20 @@ export class Input {
   /** Called when M (mute toggle) is pressed. */
   onMute: () => void = () => {};
 
+  get enabled() {
+    return this.on;
+  }
+
+  set enabled(on: boolean) {
+    if (on === this.on) return;
+    this.on = on;
+    this.keys.clear();
+    this.firing = false;
+  }
+
   constructor(canvas: HTMLCanvasElement) {
     window.addEventListener("keydown", (e) => {
+      if (!this.on || isEditable(e)) return;
       this.keys.add(e.code);
       if (e.code.startsWith("Arrow") || e.code === "Space") e.preventDefault();
       if (e.repeat) return;
@@ -43,7 +67,7 @@ export class Input {
       this.hasPointer = true;
     });
     canvas.addEventListener("pointerdown", (e) => {
-      if (e.button === 0) this.firing = true;
+      if (this.on && e.button === 0) this.firing = true;
     });
     window.addEventListener("pointerup", (e) => {
       if (e.button === 0) this.firing = false;

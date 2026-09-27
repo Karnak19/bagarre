@@ -12,6 +12,8 @@ import {
   MSG_INPUT,
   MAPS,
   MSG_PICK,
+  MSG_PING,
+  MSG_PONG,
   PLAYER_RADIUS,
   RESPAWN_DELAY,
   SHIELD,
@@ -37,6 +39,7 @@ import {
   type InputMessage,
   type MapDef,
   type Phase,
+  type RoomMeta,
   type Vec2,
 } from "@bagarre/shared";
 import { AuthRejected, guestName, recordMatch, resolveIdentity, type Identity, type MatchResult } from "./accounts.ts";
@@ -58,6 +61,8 @@ interface PlayerInternal {
   identity: Identity;
   /** Deaths in the current match (kills are synced on Player). */
   deaths: number;
+  /** The latency probe in flight: its number and when it was sent (performance.now()). */
+  ping: { n: number; at: number } | null;
 }
 
 /** Server-only bookkeeping per bullet. */
@@ -78,6 +83,8 @@ interface GrenadeInternal {
 }
 
 const MAX_COUNTER = 0xffffffff;
+const PING_INTERVAL_MS = 2000;
+let pingCounter = 0;
 
 /** A map id that exists, or null. */
 function knownMap(id: unknown): MapDef | null {
@@ -91,6 +98,12 @@ function knownMap(id: unknown): MapDef | null {
 function devMap(options: unknown): MapDef | null {
   if (process.env.NODE_ENV === "production") return null;
   return typeof options === "object" && options !== null ? knownMap((options as Record<string, unknown>).map) : null;
+}
+
+/** The `guestName` join option, when it has the server's own guest name format. */
+function requestedGuestName(options: unknown): string | null {
+  const v = typeof options === "object" && options !== null ? (options as Record<string, unknown>).guestName : undefined;
+  return typeof v === "string" && /^Guest-\d{4}$/.test(v) ? v : null;
 }
 
 function sanitizeInput(raw: unknown): InputMessage | null {
@@ -118,7 +131,7 @@ function sanitizeInput(raw: unknown): InputMessage | null {
   };
 }
 
-export class DuelRoom extends Room<{ state: DuelState }> {
+export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
   maxClients = MAX_PLAYERS;
   state = new DuelState();
 
@@ -135,6 +148,11 @@ export class DuelRoom extends Room<{ state: DuelState }> {
   private fixedMap = false;
   /** A match has been started on `map`, so the next one moves to another map. */
   private mapPlayed = false;
+  private createdAt = Date.now();
+  /** Session ids in join order: the first one is the host shown in the open games list. */
+  private joinOrder: string[] = [];
+  /** Last metadata written, to skip no-op writes. */
+  private metaKey = "";
 
   /**
    * Runs before a seat is reserved (Colyseus 0.18 only calls the static
@@ -167,6 +185,12 @@ export class DuelRoom extends Room<{ state: DuelState }> {
   protected pinnedMap: MapDef | null = null;
 
   onCreate(options?: unknown) {
+    // A private room is never listed nor quick-matched, only joined by id
+    // (its invite link). Only the creator's options reach onCreate, so no one
+    // can make someone else's room private; join options are never read for it.
+    if (typeof options === "object" && options !== null && (options as Record<string, unknown>).private === true) {
+      void this.setPrivate(true);
+    }
     // Map: pinned by the server, else by the dev `?map=` option of whoever
     // created the room, else random.
     const pinned = this.pinnedMap ?? devMap(options);
@@ -177,6 +201,7 @@ export class DuelRoom extends Room<{ state: DuelState }> {
       this.map = MAPS[Math.floor(Math.random() * MAPS.length)];
     }
     this.state.mapId = this.map.id;
+    this.syncListing();
 
     this.onMessage(MSG_INPUT, (client, raw: unknown) => {
       const input = sanitizeInput(raw);
@@ -197,6 +222,20 @@ export class DuelRoom extends Room<{ state: DuelState }> {
       if (player.alive && this.state.phase === "playing") return;
       player.pick = weapon;
     });
+
+    // Latency: one probe per client every PING_INTERVAL_MS; the answer's
+    // round trip becomes the player's synced `ping`. Only the probe in flight
+    // is accepted, so a client can't make its ping up.
+    this.onMessage(MSG_PONG, (client, raw: unknown) => {
+      const internal = this.internals.get(client.sessionId);
+      const player = this.state.players.get(client.sessionId);
+      const n = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>).n : undefined;
+      if (!internal?.ping || !player || n !== internal.ping.n) return;
+      // At least 1 ms, so 0 keeps meaning "not measured yet".
+      player.ping = Math.min(9999, Math.max(1, Math.round(performance.now() - internal.ping.at)));
+      internal.ping = null;
+    });
+    this.clock.setInterval(() => this.probeLatency(), PING_INTERVAL_MS);
 
     // Fixed-timestep loop with an accumulator (Colyseus runs a whole number of
     // steps per interval from the measured time), so the long-run tick rate is
@@ -231,9 +270,12 @@ export class DuelRoom extends Room<{ state: DuelState }> {
     });
     const slot = taken.has(0) ? 1 : 0;
     const identity: Identity = (client.auth as Identity | undefined) ?? { kind: "guest", name: guestName() };
+    const hasUsername = identity.kind === "account" && !!identity.username;
+    // A guest keeps the guest name the client shows on its menu, if it is one
+    // (`Guest-` and four digits: nobody can pick a real-looking name this way).
+    let name = hasUsername ? identity.name : (requestedGuestName(options) ?? identity.name);
     // Two guests could draw the same number.
-    let name = identity.name;
-    if (names.has(name) && !(identity.kind === "account" && identity.username)) name = guestName(names);
+    if (names.has(name) && !hasUsername) name = guestName(names);
 
     const spawn = this.map.spawns[slot];
     const player = new Player();
@@ -243,28 +285,75 @@ export class DuelRoom extends Room<{ state: DuelState }> {
     // Face the centre of the map.
     player.aim = Math.atan2(-spawn.z, -spawn.x);
     this.state.players.set(client.sessionId, player);
-    this.internals.set(client.sessionId, { queue: [], tokens: INPUT_BURST, identity, deaths: 0 });
+    player.account = hasUsername;
+    this.internals.set(client.sessionId, { queue: [], tokens: INPUT_BURST, identity, deaths: 0, ping: null });
+    this.joinOrder.push(client.sessionId);
 
     if (this.state.players.size === MAX_PLAYERS) this.startMatch();
+    this.syncListing();
   }
 
   onLeave(client: Client) {
     this.state.players.delete(client.sessionId);
     this.internals.delete(client.sessionId);
+    this.joinOrder = this.joinOrder.filter((id) => id !== client.sessionId);
     this.clearProjectiles();
     this.setPhase("waiting");
     this.state.winner = "";
     // The remaining player keeps playing alone, with a clean slate.
+    this.resetScoreboard();
+    this.state.startTick = 0;
+    this.state.endTick = 0;
     this.state.players.forEach((p) => {
-      p.kills = 0;
       p.hp = MAX_HP;
       p.alive = true;
       p.respawnTicks = 0;
     });
   }
 
+  private probeLatency() {
+    for (const client of this.clients) {
+      const internal = this.internals.get(client.sessionId);
+      if (!internal) continue;
+      internal.ping = { n: ++pingCounter, at: performance.now() };
+      client.send(MSG_PING, { n: internal.ping.n });
+    }
+  }
+
+  /** Clears everyone's scoreboard counters (match start, or back to waiting). */
+  private resetScoreboard() {
+    this.state.players.forEach((p) => {
+      p.kills = 0;
+      p.deaths = 0;
+      p.shots = 0;
+      p.hits = 0;
+      p.damage = 0;
+    });
+  }
+
   private setPhase(phase: Phase) {
     this.state.phase = phase;
+    this.syncListing();
+  }
+
+  /**
+   * Keeps the matchmaking metadata (host, map, phase, player count) in step
+   * with the room, for the menu's open games list. Written only when it
+   * changed.
+   */
+  private syncListing() {
+    const host = this.joinOrder.length > 0 ? this.state.players.get(this.joinOrder[0]) : undefined;
+    const meta: RoomMeta = {
+      hostName: host?.name ?? "",
+      mapId: this.map.id,
+      phase: this.state.phase as Phase,
+      players: this.state.players.size,
+      createdAt: this.createdAt,
+    };
+    const key = JSON.stringify(meta);
+    if (key === this.metaKey) return;
+    this.metaKey = key;
+    this.setMetadata(meta).catch((err) => console.warn("[room] metadata update failed", err));
   }
 
   /**
@@ -290,6 +379,7 @@ export class DuelRoom extends Room<{ state: DuelState }> {
   private switchMap(map: MapDef) {
     this.map = map;
     this.state.mapId = map.id;
+    this.syncListing();
     this.clearProjectiles();
     this.state.players.forEach((p) => {
       const spawn = map.spawns[p.slot];
@@ -303,11 +393,13 @@ export class DuelRoom extends Room<{ state: DuelState }> {
     this.state.winner = "";
     this.matchId = `${this.roomId}:${crypto.randomUUID()}`;
     this.internals.forEach((i) => (i.deaths = 0));
+    this.resetScoreboard();
     this.state.players.forEach((p) => {
       const spawn = this.map.spawns[p.slot];
       this.spawnAt(p, spawn.x, spawn.z);
-      p.kills = 0;
     });
+    this.state.startTick = this.state.tick;
+    this.state.endTick = 0;
     this.setPhase("playing");
   }
 
@@ -397,6 +489,8 @@ export class DuelRoom extends Room<{ state: DuelState }> {
   private spawnShot(owner: string, player: Player, input: InputMessage) {
     const w = weaponDef(player.weapon);
     const pellets = shotPellets(player.weapon, player.x, player.z, input.aim, input.seq);
+    // Scoreboard: every bullet fired in a match, pellets included.
+    if (this.state.phase === "playing") player.shots = Math.min(0xffff, player.shots + pellets.length);
     pellets.forEach((b, i) => {
       const id = bulletId(player.slot, input.seq, i);
       const bullet = new Bullet();
@@ -444,6 +538,8 @@ export class DuelRoom extends Room<{ state: DuelState }> {
           if (hit || targetId === bullet.owner || !target.alive) return;
           if (circlesOverlap(bx, bz, BULLET_RADIUS, target.x, target.z, PLAYER_RADIUS)) {
             hit = true;
+            const shooter = this.state.players.get(bullet.owner);
+            if (shooter && this.state.phase === "playing") shooter.hits = Math.min(0xffff, shooter.hits + 1);
             this.damage(bullet.owner, targetId, target, internal.damage);
           }
         });
@@ -511,6 +607,10 @@ export class DuelRoom extends Room<{ state: DuelState }> {
   /** Shield first, then HP. Kills are credited to the attacker, never for self-damage. */
   private damage(attackerId: string, targetId: string, target: Player, amount: number) {
     if (!target.alive) return;
+    // Scoreboard: what actually came off the opponent (shield, then HP down to 0).
+    const dealt = Math.min(amount, target.shieldHp + target.hp);
+    const attacker = attackerId === targetId ? undefined : this.state.players.get(attackerId);
+    if (attacker && this.state.phase === "playing") attacker.damage = Math.min(0xffff, attacker.damage + dealt);
     let left = amount;
     if (target.shieldHp > 0) {
       const absorbed = Math.min(target.shieldHp, left);
@@ -531,6 +631,7 @@ export class DuelRoom extends Room<{ state: DuelState }> {
     if (this.state.phase !== "playing") return;
     const targetInternal = this.internals.get(targetId);
     if (targetInternal) targetInternal.deaths++;
+    target.deaths = Math.min(0xff, target.deaths + 1);
     if (attackerId === targetId) return;
 
     const shooter = this.state.players.get(attackerId);
@@ -538,6 +639,7 @@ export class DuelRoom extends Room<{ state: DuelState }> {
     shooter.kills++;
     if (shooter.kills >= KILLS_TO_WIN) {
       this.state.winner = attackerId;
+      this.state.endTick = this.state.tick;
       this.setPhase("ended");
       this.matchResetTicks = ticks(MATCH_END_DELAY);
       this.clearProjectiles();

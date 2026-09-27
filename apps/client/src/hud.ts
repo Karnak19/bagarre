@@ -23,7 +23,6 @@ export interface HudModel {
   sim: PlayerSim | null;
   /** Weapon picks are accepted right now (dead or between matches). */
   canPick: boolean;
-  banner: { title: string; sub: string } | null;
   /** The map's name and blurb, for a few seconds at match start. */
   mapCard: { title: string; sub: string; opacity: number } | null;
   debug: string;
@@ -36,7 +35,7 @@ export class Hud {
   private opp = $("#hud-opp");
   private score = $("#hud-score");
   private status = $("#hud-status");
-  private banner = $("#hud-banner");
+  private root = $("#hud");
   private mapCard = $("#hud-map");
   private debug = $("#hud-debug");
   private weapon = $("#hud-weapon");
@@ -55,6 +54,11 @@ export class Hud {
     $("#hud-bottom").append(el);
     return el;
   })();
+
+  /** The HUD only shows in a game (hidden on the menu). */
+  set visible(on: boolean) {
+    this.root.hidden = !on;
+  }
 
   private setBar(el: HTMLElement, p: PlayerView | null) {
     el.classList.toggle("absent", !p);
@@ -83,11 +87,6 @@ export class Hud {
     this.score.textContent = `${m.me?.kills ?? 0} - ${m.opponent?.kills ?? 0}`;
     this.score.title = `First to ${KILLS_TO_WIN}`;
     if (this.status.textContent !== m.status) this.status.textContent = m.status;
-    this.banner.hidden = !m.banner;
-    if (m.banner) {
-      this.banner.querySelector(".title")!.textContent = m.banner.title;
-      this.banner.querySelector(".sub")!.textContent = m.banner.sub;
-    }
     this.mapCard.hidden = !m.mapCard;
     if (m.mapCard) {
       const title = this.mapCard.querySelector(".title")!;

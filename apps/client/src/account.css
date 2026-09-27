@@ -1,74 +1,93 @@
-/* Account widget, bottom-right corner. Uses the HUD tokens from style.css. */
+/* The account chip on the menu and the account panel. Tokens from style.css / menu.css. */
 
-#account {
-  position: fixed;
-  right: 16px;
-  bottom: 16px;
-  z-index: 10;
-  max-width: min(340px, calc(100vw - 32px));
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--text, #f2f2f2);
-  user-select: text;
-}
-
-#account > * {
-  background: var(--panel, rgba(12, 14, 20, 0.6));
-  border-radius: 8px;
-  padding: 7px 10px;
-}
-#account [hidden] { display: none !important; }
-
-#account .acc-row {
+.acc-chip {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 34px;
-  align-self: flex-end;
-}
-#account .acc-line { opacity: 0.9; }
-#account[data-status="disabled"] .acc-line,
-#account[data-status="error"] .acc-line { opacity: 0.65; }
-#account .acc-line strong { font-weight: 700; }
-#account .acc-user { display: flex; }
-
-#account button {
+  gap: 10px;
+  width: 100%;
+  padding: 8px 14px 8px 8px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
   font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease-out;
+}
+.acc-chip:hover { background: var(--panel-hover); }
+.acc-chip-avatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: rgba(74, 184, 255, 0.18);
+  color: #9fd8ff;
+}
+.acc-chip-text { display: flex; flex-direction: column; min-width: 0; }
+.acc-chip-name { font-weight: 700; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acc-chip-sub { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.acc-panel { display: flex; flex-direction: column; gap: 18px; user-select: text; }
+.acc-panel [hidden] { display: none !important; }
+.acc-who { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.acc-name { font-size: 22px; font-weight: 800; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.acc-line { margin-top: 4px; font-size: 14px; color: var(--muted); max-width: 46ch; }
+.acc-user { display: flex; flex: none; }
+
+.acc-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.acc-actions:not(:has(> :not([hidden]))) { display: none; }
+
+.acc-stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+.acc-stat {
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+}
+.acc-stat dd { margin: 0; font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.acc-stat dt { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+
+.acc-form { display: flex; flex-direction: column; gap: 8px; }
+.acc-form label { font-weight: 700; font-size: 14px; }
+.acc-field { display: flex; gap: 8px; }
+.acc-field input { flex: 1; min-width: 0; }
+.acc-error { color: #ff9a85; font-size: 13px; min-height: 16px; }
+.acc-error:empty { display: none; }
+
+.acc-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 210, 74, 0.12);
+  color: #ffe3a0;
+  font-size: 13px;
+}
+.acc-dismiss {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: inherit;
   cursor: pointer;
-  border: 0;
-  border-radius: 5px;
-  padding: 3px 9px;
-  background: rgba(255, 255, 255, 0.14);
 }
-#account button:hover { background: rgba(255, 255, 255, 0.24); }
-#account button:disabled { opacity: 0.5; cursor: default; }
-#account .acc-signin { background: var(--p1, #4ab8ff); color: #0b1620; font-weight: 600; }
-#account .acc-signin:hover { background: #7ccbff; }
-#account .acc-rename { font-size: 12px; padding: 2px 7px; opacity: 0.8; }
+.acc-dismiss:hover { background: rgba(255, 255, 255, 0.12); }
 
-#account .acc-form { display: flex; flex-direction: column; gap: 6px; }
-#account .acc-form label { font-weight: 600; }
-#account .acc-field { display: flex; gap: 6px; }
-#account .acc-field input {
-  flex: 1;
-  min-width: 0;
-  font: inherit;
-  color: inherit;
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 5px;
-  padding: 4px 8px;
-  outline: none;
+@media (max-width: 520px) {
+  .acc-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
-#account .acc-field input:focus { border-color: var(--p1, #4ab8ff); }
-#account .acc-field button[type="submit"] { background: var(--p1, #4ab8ff); color: #0b1620; font-weight: 600; }
-#account .acc-error { color: #ff9a85; font-size: 12px; min-height: 15px; }
-#account .acc-error:empty { display: none; }
-
-#account .acc-hint,
-#account .acc-notice { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-#account .acc-notice { color: #ffd24a; }
-#account .acc-dismiss { padding: 0 6px; background: transparent; }

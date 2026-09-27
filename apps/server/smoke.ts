@@ -5,7 +5,9 @@
 // rejoin) plus dash and weapon-pick checks. Part 2 runs several extra rooms in
 // parallel, one per scenario: each weapon's fire rate / damage / spread, the
 // grenade, and the shield. Part 3 (smoke-accounts.ts, run alongside part 2)
-// covers guest names, Clerk token checks and match stats in Convex.
+// covers guest names, Clerk token checks and match stats in Convex. Part 4
+// covers game pages (private rooms, the open games list, joins by id, room
+// metadata, guest names) and part 5 the scoreboard counters and ping.
 
 import { matchMaker } from "@colyseus/core";
 import { Client, type Room } from "@colyseus/sdk";
@@ -21,8 +23,11 @@ import {
   MAX_HP,
   MSG_INPUT,
   MSG_PICK,
+  MSG_PING,
+  MSG_PONG,
   PLAYER_RADIUS,
   PLAYER_SPEED,
+  GAMES_ROUTE,
   ROOM_NAME,
   SHIELD,
   TICK_DT,
@@ -46,12 +51,13 @@ import {
   type Arena,
   type InputMessage,
   type MapDef,
+  type OpenGame,
   type PlayerSim,
   type PlayerView,
   type RoomStateView,
   type Vec2,
 } from "@bagarre/shared";
-import { createServer } from "./src/app.ts";
+import { createServer, openGames } from "./src/app.ts";
 import { DuelRoom } from "./src/DuelRoom.ts";
 import { accountChecks, liveConvexChecks, setupTestAccounts } from "./smoke-accounts.ts";
 
@@ -855,6 +861,156 @@ async function devMapOption() {
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// Part 4: game pages. Private rooms, the open games list and joins by id.
+
+async function listedOverHttp(): Promise<OpenGame[]> {
+  const res = await fetch(`${URL}${GAMES_ROUTE}`, { headers: { origin: "http://localhost:5173" } });
+  const body = (await res.json()) as { games: OpenGame[] };
+  return body.games;
+}
+
+async function joinError(roomId: string): Promise<{ code?: number; message: string } | null> {
+  try {
+    const r = await new Client(URL).joinById(roomId);
+    await r.leave();
+    return null;
+  } catch (err) {
+    const e = err as { code?: number; message?: string };
+    return { code: e.code, message: String(e.message ?? err) };
+  }
+}
+
+async function lobbyChecks() {
+  // Every earlier room has emptied (they auto-dispose), so quick match below
+  // can only find the rooms made here.
+  const idle = await waitFor(() => matchMaker.stats.local.roomCount === 0, 3000);
+  check(idle, `[games] no rooms left over from the earlier checks (${matchMaker.stats.local.roomCount})`);
+
+  // A private room: not listed, not quick-matched, joinable by id.
+  const priv = await new Client(URL).create(ROOM_NAME, { private: true });
+  await sleep(100);
+  const [cache] = await matchMaker.query({ roomId: priv.roomId });
+  check(cache?.private === true, "[games] create({ private: true }) makes a private room");
+  check(!(await openGames()).some((g) => g.roomId === priv.roomId), "[games] a private room is not in the open games list");
+  check(!(await listedOverHttp()).some((g) => g.roomId === priv.roomId), `[games] ...nor in GET ${GAMES_ROUTE}`);
+  const quick = await new Client(URL).joinOrCreate(ROOM_NAME);
+  check(quick.roomId !== priv.roomId, "[games] quick match (joinOrCreate) never lands in a private room");
+
+  // The public room quick match just created is listed, with its metadata.
+  await sleep(100);
+  const listed = (await listedOverHttp()).find((g) => g.roomId === quick.roomId);
+  const quickName = me(quick)?.name ?? "";
+  check(
+    !!listed && listed.hostName === quickName && listed.mapId === "yard" && Math.abs(Date.now() - listed.createdAt) < 10000,
+    `[games] a public room waiting alone is listed with host, map and age (${JSON.stringify(listed)})`,
+  );
+
+  // A friend joins the private room by id (the invite link): the match starts.
+  const friend = await new Client(URL).joinById(priv.roomId);
+  const privStarted = await waitFor(() => state(priv).phase === "playing" && state(friend).phase === "playing", 3000);
+  check(privStarted, "[games] joining a private room by id starts its match");
+  const [privMeta] = await matchMaker.query({ roomId: priv.roomId });
+  check(
+    privMeta?.metadata?.players === 2 && privMeta.metadata.phase === "playing" && privMeta.locked === true,
+    `[games] metadata follows the room: 2 players, playing, locked (${JSON.stringify(privMeta?.metadata)})`,
+  );
+
+  // A third player with the link: refused cleanly, the room goes on.
+  const full = await joinError(priv.roomId);
+  check(!!full && full.code === 522 && /locked/.test(full.message), `[games] joinById of a full room is rejected (${full?.code} ${full?.message})`);
+  const gone = await joinError("doesnotexist");
+  check(!!gone && gone.code === 522 && /not found/.test(gone.message), `[games] joinById of an unknown room is rejected (${gone?.code} ${gone?.message})`);
+  await sleep(100);
+  check(state(priv).phase === "playing" && !!other(priv), "[games] the full room is unaffected by the refused join");
+
+  // A second player's join options can't make someone else's room private.
+  const guest = await new Client(URL).joinById(quick.roomId, { private: true });
+  await waitFor(() => state(quick).phase === "playing", 3000);
+  const [quickMeta] = await matchMaker.query({ roomId: quick.roomId });
+  check(quickMeta?.private === false, "[games] { private: true } from a joiner is ignored");
+  check(!(await openGames()).some((g) => g.roomId === quick.roomId), "[games] a full room leaves the open games list");
+
+  // The host leaves: the room is listed again, under the remaining player's name.
+  const guestName = me(guest)?.name ?? "";
+  await quick.leave();
+  await waitFor(() => state(guest).phase === "waiting", 2000);
+  await sleep(100);
+  const again = (await openGames()).find((g) => g.roomId === quick.roomId);
+  check(again?.hostName === guestName, `[games] after the host leaves, the room is listed under the remaining player (${again?.hostName})`);
+
+  await Promise.all([guest.leave(), priv.leave(), friend.leave()]);
+
+  // A guest keeps the name its menu shows, if it has the guest format.
+  const named = await new Client(URL).create(ROOM_NAME, { guestName: "Guest-4242" });
+  const twin = await new Client(URL).joinById(named.roomId, { guestName: "Guest-4242" });
+  await waitFor(() => !!me(twin)?.name && !!other(twin)?.name, 2000);
+  check(me(named)?.name === "Guest-4242", `[games] the guestName option is kept (${me(named)?.name})`);
+  check(/^Guest-\d{4}$/.test(me(twin)?.name ?? "") && me(twin)?.name !== "Guest-4242", `[games] ...but never twice in one room (${me(twin)?.name})`);
+  await Promise.all([named.leave(), twin.leave()]);
+  const fake = await new Client(URL).create(ROOM_NAME, { guestName: "Admin" });
+  await waitFor(() => !!me(fake)?.name, 2000);
+  check(/^Guest-\d{4}$/.test(me(fake)?.name ?? ""), `[games] a guestName that isn't Guest-NNNN is ignored (${me(fake)?.name})`);
+  await fake.leave();
+  const cleaned = await waitFor(() => matchMaker.stats.local.roomCount === 0, 3000);
+  check(cleaned, "[games] every room is disposed once its players left");
+}
+
+/** The scoreboard counters: counted by the server during a match, reset by the next one. Ping measured by the server. */
+async function scoreboardChecks() {
+  const r1 = await new Client(URL).create(ROOM_NAME);
+  const r2 = await new Client(URL).joinById(r1.roomId);
+  // r1 answers the latency probe 120 ms late; r2 never answers.
+  r1.onMessage(MSG_PING, (m: unknown) => setTimeout(() => r1.send(MSG_PONG, m), 120));
+  await waitFor(() => state(r1).phase === "playing" && !!me(r2), 3000);
+  const d1 = driver(r1);
+  const d2 = driver(r2);
+  check(me(r1)!.shots === 0 && me(r1)!.hits === 0 && me(r1)!.damage === 0 && me(r2)!.deaths === 0, "[scoreboard] counters start at 0");
+  // Face to face in the open (same lane as the weapon checks).
+  await Promise.all([d1.goTo(4, -12), d2.goTo(12, -12).then(() => d2.goTo(8, -12))]);
+  d1.set({ aim: 0, fire: true });
+  await waitFor(() => me(r1)!.kills >= 1, 5000);
+  d1.set({ fire: false });
+  await sleep(300);
+  const a = me(r1)!;
+  const b = me(r2)!;
+  check(
+    a.shots >= a.hits && a.hits >= 5 && a.damage >= MAX_HP && a.damage <= a.hits * WEAPONS[0].damage,
+    `[scoreboard] shots, hits and damage are counted by the server (shots ${a.shots}, hits ${a.hits}, damage ${a.damage})`,
+  );
+  check(b.deaths === 1 && b.shots === 0 && b.damage === 0, `[scoreboard] the victim has 1 death, 0 shots, 0 damage (${b.deaths}, ${b.shots}, ${b.damage})`);
+  check(
+    state(r1).tick > state(r1).startTick && state(r1).endTick === 0,
+    `[scoreboard] the match start tick is synced (started ${state(r1).startTick}, now ${state(r1).tick})`,
+  );
+  await waitFor(() => me(r1)!.ping > 0, 5000);
+  check(me(r1)!.ping >= 100 && me(r1)!.ping < 1000, `[scoreboard] ping is measured by the server (${me(r1)!.ping} ms for a 120 ms late answer)`);
+  check(me(r2)!.ping === 0, "[scoreboard] a client that never answers keeps ping 0");
+
+  // Finish the match through the room's own damage path, then wait for the rematch.
+  const room = localRoom(r1.roomId) as unknown as {
+    damage(a: string, t: string, target: unknown, n: number): void;
+    state: { players: Map<string, { alive: boolean; kills: number }> };
+  };
+  while ((room.state.players.get(r1.sessionId)?.kills ?? 0) < KILLS_TO_WIN) {
+    await waitFor(() => !!room.state.players.get(r2.sessionId)?.alive, 4000);
+    room.damage(r1.sessionId, r2.sessionId, room.state.players.get(r2.sessionId), MAX_HP);
+  }
+  await waitFor(() => state(r1).phase === "ended", 2000);
+  check(state(r1).endTick > state(r1).startTick, "[scoreboard] the match end tick is synced");
+  await waitFor(() => state(r1).phase === "playing", (MATCH_END_DELAY + 2) * 1000);
+  await sleep(100);
+  const z = [me(r1)!, me(r2)!];
+  check(
+    z.every((p) => p.kills === 0 && p.deaths === 0 && p.shots === 0 && p.hits === 0 && p.damage === 0),
+    "[scoreboard] every counter resets on the rematch",
+  );
+  d1.stop();
+  d2.stop();
+  await Promise.all([r1.leave(), r2.leave()]);
+}
+
 // ---------------------------------------------------------------------------
 
 const accounts = await setupTestAccounts();
@@ -888,6 +1044,11 @@ try {
       check(false, `scenario crashed: ${r.reason instanceof Error ? r.reason.message : r.reason}`);
     }
   }
+
+  console.log("\n-- game pages: private rooms, open games, join by id --");
+  await lobbyChecks();
+  console.log("\n-- scoreboard --");
+  await scoreboardChecks();
 
   // Last and alone: it flips NODE_ENV for the whole process.
   console.log("\n-- dev ?map= option --");

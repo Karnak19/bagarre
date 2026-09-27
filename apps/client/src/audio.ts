@@ -372,3 +372,10 @@ export function loadedDurations(): Record<string, number[]> {
   for (const [name, list] of buffers) out[name] = list.map((b) => b.duration);
   return out;
 }
+
+/** Sounds playing or scheduled right now (for the dev leak check). */
+export function activeVoiceCount(): number {
+  let n = 0;
+  for (const list of active.values()) n += list.length;
+  return n;
+}

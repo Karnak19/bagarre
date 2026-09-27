@@ -273,6 +273,21 @@ export class Character {
     return Math.hypot(this.vx, this.vz);
   }
 
+  /**
+   * Frees what this instance owns: its material copies, its skeletons' bone
+   * textures and the mixer's cached actions. The geometry is shared with the
+   * loaded file and stays.
+   */
+  dispose() {
+    this.mixer.stopAllAction();
+    this.mixer.uncacheRoot(this.model);
+    for (const m of this.materials) m.dispose();
+    this.model.traverse((o) => {
+      const sk = (o as THREE.SkinnedMesh).skeleton;
+      if ((o as THREE.SkinnedMesh).isSkinnedMesh && sk) sk.dispose();
+    });
+  }
+
   update(now: number, dt: number, s: CharacterState) {
     const p = s;
     this.setWeapon(s.weapon);

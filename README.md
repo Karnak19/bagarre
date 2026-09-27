@@ -10,6 +10,16 @@ bun install
 bun run dev      # server on ws://localhost:2567, client on http://localhost:5173, plus convex dev
 ```
 
+http://localhost:5173 opens the menu: the game's own scene slowly circling
+two soldiers, with Play (quick match), Private game, the open games list, your
+account, How to play and Settings. Nothing connects to the game server until
+you pick a game.
+
+In dev, add `?play` to skip the menu and quick-match at once, like the page
+used to do (handy for test scripts and quick testing):
+http://localhost:5173/?play. It combines with the other dev switches
+(`?play&map=nest&lag=150`) and is ignored in production builds.
+
 The repo is a Turborepo monorepo on Bun workspaces. Every root script goes
 through `turbo`, which runs the matching script in each package and caches
 what it can (a second `bun run build` with nothing changed is instant).
@@ -57,7 +67,11 @@ bun run push        # one-off push of the functions (convex dev --once)
 - At the end of a match the server sends each account player's kills, deaths
   and result to `matches.record`, which only accepts calls carrying
   `GAME_SERVER_SECRET` and ignores a match id it has already seen.
-- Signing in or out takes effect on the next join (the page reloads).
+- Signing in and out happen from the menu's account panel (Clerk's modal
+  and user button), and apply to the next game you join, with no reload: each
+  join reads a fresh token. A guest keeps the `Guest-4821` name the menu
+  shows (drawn once per browser; the server only accepts names in that exact
+  format, and draws another if the opponent has the same one).
 
 Code: `packages/backend/convex/` (schema, `users.ts`, `matches.ts`,
 `auth.config.ts`), `apps/server/src/accounts.ts`, `apps/client/src/auth.ts` and
@@ -68,11 +82,58 @@ API from the `@bagarre/backend` package (`@bagarre/backend/api`,
 ## Play against yourself
 
 1. Run `bun run dev`.
-2. Open http://localhost:5173 in a first tab. It shows "Waiting for opponent".
-3. Open the same URL in a second tab or window. The match starts.
+2. Open http://localhost:5173 in a first tab and press **Play**. It shows
+   "Looking for an opponent…" and the game's own page, `/game/<code>`.
+3. Open http://localhost:5173 in a second tab: the first tab's game is in the
+   open games list. Click it, or press Play (quick match joins it too), or
+   paste the first tab's invite link. The match starts.
+
+Or skip the menu in both tabs with http://localhost:5173/?play.
 
 Put the two windows side by side: a tab in the background stops sending input
 (browsers pause `requestAnimationFrame` there), so that player just stands still.
+
+## Games, pages and the menu
+
+Every game is its own room with its own page: `/` is the menu, `/game/<code>`
+is one game (the code is the Colyseus room id). Many games run at once on one
+server, and a game's link can be shared.
+
+- **Play** (quick match) joins a public game waiting for a second player, or
+  opens a new one, then goes to its page.
+- **Private game** creates a room that is never listed and never
+  quick-matched; the waiting card shows its invite link with a copy button.
+- **Open games** lists the public games waiting for an opponent (host name,
+  map, age), refreshed every 3 seconds while the menu is up. It reads
+  `GET /games` on the game server, built from each room's matchmaking
+  metadata (host, map, phase, players, creation time), which the room keeps up
+  to date on every join, leave, phase and map change.
+- Opening a `/game/<code>` link joins that room by id. A full room shows
+  "This game is full", a missing or finished one "This game doesn't exist
+  anymore", both with a way back to the menu.
+- In a game: the waiting card (players, invite link, weapon pick, Cancel),
+  then the match; at the end the result with the scoreboard, **Rematch** (stay:
+  it counts down to the server's automatic restart, same room, same URL) and
+  **Main menu**. **Esc** opens the match menu (Resume, Settings, Leave match).
+  It is not a pause: the match keeps running underneath, and the card says so.
+- Leaving (Cancel, Leave match, Main menu, or the browser's Back button)
+  really leaves the room and frees everything the game made; Forward returns
+  to the game's page and joins it again if there is a seat.
+- `?lag=`, `?map=` and `?server=` work on game pages too. The invite link
+  carries `?server=` only.
+- While the menu, a card or a panel is up, the game gets no input at all
+  (keys, mouse, firing), and keys typed in a text field never reach it.
+- On a phone or a small window the menu says the game needs a keyboard and a
+  mouse; the menu itself works at phone width.
+
+Production hosting needs an SPA rewrite: every path (`/game/...` included)
+must serve `index.html`. Vite's dev server and `vite preview` already do.
+
+The flow (screens, routes, joining and leaving, the per-game flags) lives in
+`apps/client/src/app.ts` and the open games data in `lobby.ts`, both plain
+TypeScript stores with `getState()` / `subscribe()`; the DOM views
+(`menu.ts`, `overlays.ts`, `accountUi.ts`, `scoreboard.ts`'s table) only read
+them and call their actions.
 
 ## Controls
 
@@ -86,7 +147,9 @@ Put the two windows side by side: a tab in the background stops sending input
 | **Q**              | Grenade: lobbed at the cursor, max 10 m, flies over cover     |
 | **E**              | Shield: a bubble that soaks damage before your HP             |
 | **1**-**4**        | Pick a weapon, while dead or between matches (see below)      |
+| **Tab** (hold)     | Scoreboard                                                    |
 | **M**              | Mute / unmute sound (remembered between visits)               |
+| **Esc**            | Match menu: resume, settings, leave (the match keeps running) |
 
 Keys are read by physical position, so on AZERTY it's ZQSD to move and the
 key labelled **A** throws a grenade. First to 5 kills wins; the match restarts
@@ -96,7 +159,21 @@ A grenade lands, then explodes 0.6 s later: the red circle on the ground is
 its blast radius, so get out of it. It hurts its thrower too, at half rate.
 The dash has no invulnerability, you dodge by getting out of the bullet's path.
 
-Sound starts after your first click or key press (browser autoplay rules).
+Sound starts after your first click or key press (browser autoplay rules):
+any menu button counts. Settings (on the menu, or from Esc in a game) has the
+master volume and mute; both are remembered.
+
+### Scoreboard
+
+Hold **Tab** in a match to see it; it's also on the match result. It shows
+the map, the score (first to 5), the match time, and per player: kills,
+deaths, damage dealt, accuracy (bullets that hit / bullets fired, each
+shotgun pellet counts), the weapon in hand and the ping. The leader is
+highlighted. Everything on it is counted by the server and synced in the room
+state (`deaths`, `shots`, `hits`, `damage`, reset when a match starts). The
+ping is measured by the server too: every 2 seconds it sends each client a
+probe that the client echoes at once, and the round trip becomes the
+player's `ping`.
 Your own actions are heard instantly, from the prediction. The opponent's are
 delayed by the interpolation delay (100 ms) so they match what you see, and
 are panned and softened by distance.
@@ -177,11 +254,15 @@ give only one player the lag.
 apps/
   client/             @bagarre/client: Vite + Three.js
     src/              scene, input, prediction, predicted bullets, interpolation, HUD,
-                      animated characters (character.ts), arena props (arenaView.ts), particles (vfx.ts)
+                      animated characters (character.ts), arena props (arenaView.ts), particles (vfx.ts),
+                      one game (match.ts), the menu's background scene (attract.ts);
+                      flow and data stores: app.ts (screens, joins, routes via router.ts), lobby.ts;
+                      DOM views: menu.ts, overlays.ts, scoreboard.ts, accountUi.ts, ui.ts
     public/           models (glTF, meshopt-compressed), particle atlas and sounds, see ASSETS.md
     scripts/          asset rebuild scripts (assets/, sfx/)
   server/             @bagarre/server: Colyseus on Bun
     src/              Colyseus room (DuelRoom), synced state schema, accounts, bootstrap
+                      and the GET /games route (app.ts)
     smoke.ts          headless end-to-end test (smoke-accounts.ts: its account part)
 packages/
   shared/             @bagarre/shared: TypeScript source, no build step

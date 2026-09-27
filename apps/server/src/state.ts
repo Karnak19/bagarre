@@ -39,6 +39,16 @@ export const Player = schema(
 
     /** Display name (username or "Guest-1234"), set by the server at join. */
     name: t.string().default(""),
+    /** Signed in with a username. */
+    account: t.boolean().default(false),
+
+    // Scoreboard, per match (see PlayerView). Counted here, never by clients.
+    deaths: t.uint8().default(0),
+    shots: t.uint16().default(0),
+    hits: t.uint16().default(0),
+    damage: t.uint16().default(0),
+    /** Round trip in ms, measured by the server. */
+    ping: t.uint16().default(0),
   },
   "Player",
 );
@@ -79,6 +89,9 @@ export const DuelState = schema(
      * the same tick that puts the players on the new map's spawns.
      */
     mapId: t.string().default(DEFAULT_MAP_ID),
+    /** Tick the current match started on, and ended on (0 while it runs). */
+    startTick: t.uint32().default(0),
+    endTick: t.uint32().default(0),
     players: t.map(Player),
     bullets: t.map(Bullet),
     grenades: t.map(Grenade),

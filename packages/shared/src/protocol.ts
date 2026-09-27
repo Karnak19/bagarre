@@ -3,6 +3,19 @@
 export const MSG_INPUT = "input";
 /** Weapon choice. Only accepted while dead or between matches. */
 export const MSG_PICK = "pick";
+/**
+ * Latency probe: the server sends `{ n }` every couple of seconds, the client
+ * echoes it back at once, and the server stores the round trip as the
+ * player's `ping` (so everyone's ping is measured by the server).
+ */
+// The "__" prefix keeps clients that don't answer (the smoke test's) quiet:
+// the Colyseus SDK only warns about unhandled types without it.
+export const MSG_PING = "__latency";
+export const MSG_PONG = "latency:ack";
+
+export interface PingMessage {
+  n: number;
+}
 
 /**
  * One input per simulation tick. `mx`/`mz` is the WORLD-space move direction
@@ -108,6 +121,20 @@ export interface PlayerView extends PlayerSim {
    * generated "Guest-1234". Never taken from the client.
    */
   name: string;
+  /** Signed in with a username (false: a guest). */
+  account: boolean;
+  /**
+   * Scoreboard counters for the current match, all counted by the server and
+   * reset when a match starts: deaths, bullets fired (each shotgun pellet
+   * counts), bullets that hit the opponent, and damage dealt to the opponent
+   * (shield included, grenades included, never your own).
+   */
+  deaths: number;
+  shots: number;
+  hits: number;
+  damage: number;
+  /** Round-trip time to the server in ms, measured by the server (MSG_PING). */
+  ping: number;
 }
 
 export const PLAYER_VIEW_KEYS = [
@@ -124,6 +151,12 @@ export const PLAYER_VIEW_KEYS = [
   "shieldTicks",
   "shieldHp",
   "name",
+  "account",
+  "deaths",
+  "shots",
+  "hits",
+  "damage",
+  "ping",
 ] as const satisfies readonly (keyof PlayerView)[];
 
 /**
@@ -163,7 +196,46 @@ export interface RoomStateView {
   tick: number;
   /** The map being played (a `MapDef.id`, see `mapById`). Only changes between matches. */
   mapId: string;
+  /** Server tick the current match started on, and the one it ended on (0 while it runs). */
+  startTick: number;
+  endTick: number;
   players: MapLike<PlayerView>;
   bullets: MapLike<BulletView>;
   grenades: MapLike<GrenadeView>;
+}
+
+/**
+ * Matchmaking metadata of a duel room (Colyseus `room.metadata`), kept up to
+ * date by the server on every join, leave, phase and map change. The open
+ * games list on the menu is built from it.
+ */
+export interface RoomMeta {
+  /** Name of the player who has been in the room the longest ("" when empty). */
+  hostName: string;
+  mapId: string;
+  phase: Phase;
+  players: number;
+  /** Date.now() when the room was created. */
+  createdAt: number;
+}
+
+/** Options the client sends when it joins or creates a room. */
+export interface JoinOptions {
+  /** Only read by `create`: a private room, never listed nor quick-matched, joined by its link only. */
+  private?: boolean;
+  /** Dev-only map choice (`?map=`), ignored in production. */
+  map?: string;
+  /** The guest name the menu shows (`Guest-` and four digits, anything else is ignored). Accounts use their username. */
+  guestName?: string;
+}
+
+/** HTTP route of the game server listing the public games waiting for a second player. */
+export const GAMES_ROUTE = "/games";
+
+/** One entry of GET /games. */
+export interface OpenGame {
+  roomId: string;
+  hostName: string;
+  mapId: string;
+  createdAt: number;
 }

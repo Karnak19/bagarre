@@ -1,13 +1,14 @@
 # Assets
 
 Every third-party asset in the game, where it comes from and its license.
-All of them are CC0 (public domain): no attribution required, credit given
-here anyway.
+The art is CC0 (public domain): no attribution required, credit given here
+anyway. The one font is under the SIL Open Font License.
 
 | Pack | Author | URL | License | Used for |
 | --- | --- | --- | --- | --- |
 | Toon Shooter Game Kit | Quaternius | https://quaternius.com/packs/toonshootergamekit.html | CC0 1.0 | Characters, guns, arena props |
 | Particle Pack (1.1) | Kenney | https://kenney.nl/assets/particle-pack | CC0 1.0 | Muzzle flashes, sparks, explosion, smoke, scorch marks |
+| Black Ops One | James Grieshaber (Typeset.it) | https://fonts.google.com/specimen/Black+Ops+One | SIL OFL 1.1 | The menu's title and a few display labels |
 
 ## Files in the repo
 
@@ -17,6 +18,7 @@ here anyway.
 | `apps/client/public/models/soldier.glb` | 440 KB | Quaternius "Soldier" (player slot 1, tinted blue) |
 | `apps/client/public/models/props.glb` | 128 KB | Arena props, one named node each |
 | `apps/client/public/vfx/particles.png` | 212 KB | 4 x 4 greyscale atlas of Kenney particles |
+| `apps/client/public/fonts/black-ops-one.woff2` | 23 KB | Black Ops One, Latin subset (the Google Fonts woff2) |
 
 About 1.2 MB in total.
 

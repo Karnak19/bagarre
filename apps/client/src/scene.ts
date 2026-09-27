@@ -24,7 +24,13 @@ const CAMERA_DISTANCE = 50;
  * Classic isometric view: 45 degrees of yaw, and a pitch of atan(1/sqrt(2)),
  * about 35.26 degrees. Looking along (-1, -1, -1) gives exactly both.
  */
-const CAMERA_OFFSET = new THREE.Vector3(1, 1, 1).normalize().multiplyScalar(CAMERA_DISTANCE);
+const GAME_YAW = Math.PI / 4;
+const PITCH = Math.atan(1 / Math.SQRT2);
+/** The camera's offset from the point it looks at, for a yaw around the vertical axis (GAME_YAW in game). */
+function cameraOffset(yaw: number, out = new THREE.Vector3()) {
+  const h = Math.cos(PITCH) * CAMERA_DISTANCE;
+  return out.set(Math.sin(yaw) * h, Math.sin(PITCH) * CAMERA_DISTANCE, Math.cos(yaw) * h);
+}
 const REDUCED_MOTION = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /** Set once, before any PlayerMesh is made (see main.ts). */
@@ -80,6 +86,7 @@ export class PlayerMesh {
   private shield: THREE.Mesh;
   private shieldMat: THREE.ShaderMaterial;
   private rings: THREE.Mesh[] = [];
+  private placeholderParts: THREE.Group | null = null;
   private aim = 0;
   private alive = true;
   private weapon = 0;
@@ -129,6 +136,7 @@ export class PlayerMesh {
     };
     ring(PLAYER_RADIUS + 0.02, PLAYER_RADIUS + 0.12, color, 0.75);
     if (isLocal) ring(PLAYER_RADIUS + 0.14, PLAYER_RADIUS + 0.2, 0xffffff, 0.55);
+    this.placeholderParts = this.placeholder ? this.placeholder.group : null;
 
     this.shieldMat = shieldMaterial(this.baseColor);
     this.shield = new THREE.Mesh(new THREE.SphereGeometry(1.05, 32, 20), this.shieldMat);
@@ -140,6 +148,24 @@ export class PlayerMesh {
 
   get color(): THREE.Color {
     return this.baseColor;
+  }
+
+  /** Frees everything this player owns on the GPU. Call after `GameScene.removePlayer`. */
+  dispose() {
+    this.character?.dispose();
+    this.character = null;
+    for (const r of this.rings) {
+      r.geometry.dispose();
+      (r.material as THREE.Material).dispose();
+    }
+    this.shield.geometry.dispose();
+    this.shieldMat.dispose();
+    this.placeholderParts?.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      m.geometry.dispose();
+      (m.material as THREE.Material).dispose();
+    });
   }
 
   /** `fraction` = shield strength left (0 hides the bubble). */
@@ -242,6 +268,10 @@ export class GameScene {
   private props: Map<string, THREE.Object3D> | null;
   private hemi!: THREE.HemisphereLight;
   private sun!: THREE.DirectionalLight;
+  /** Camera offset (from the yaw), view height and horizontal frustum shift: the game's iso view unless the menu orbits it. */
+  private viewHeight = VIEW_HEIGHT;
+  private shiftX = 0;
+  private offset = cameraOffset(GAME_YAW);
 
   constructor(canvas: HTMLCanvasElement, loaded: Assets | null = assets) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -251,7 +281,7 @@ export class GameScene {
     this.scene.background = new THREE.Color(0x1a1d24);
 
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
-    this.camera.position.copy(CAMERA_OFFSET);
+    this.camera.position.copy(this.offset);
     this.camera.lookAt(0, 0, 0);
 
     this.buildLights();
@@ -320,12 +350,34 @@ export class GameScene {
     const w = window.innerWidth;
     const h = window.innerHeight;
     const aspect = w / h;
-    this.camera.left = (-VIEW_HEIGHT * aspect) / 2;
-    this.camera.right = (VIEW_HEIGHT * aspect) / 2;
-    this.camera.top = VIEW_HEIGHT / 2;
-    this.camera.bottom = -VIEW_HEIGHT / 2;
+    const vh = this.viewHeight;
+    const shift = this.shiftX * vh * aspect;
+    this.camera.left = (-vh * aspect) / 2 - shift;
+    this.camera.right = (vh * aspect) / 2 - shift;
+    this.camera.top = vh / 2;
+    this.camera.bottom = -vh / 2;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);
+  }
+
+  /**
+   * Camera framing. `yaw` turns the view around the vertical axis (the game
+   * always plays at the iso yaw, see `resetView`), `viewHeight` is the
+   * visible height in metres, and `shiftX` moves the looked-at point sideways
+   * on screen, as a fraction of the width (0.15 puts it at 65 % across).
+   */
+  setView(yaw: number, viewHeight = this.viewHeight, shiftX = this.shiftX) {
+    const reframe = viewHeight !== this.viewHeight || shiftX !== this.shiftX;
+    cameraOffset(yaw, this.offset);
+    this.viewHeight = viewHeight;
+    this.shiftX = shiftX;
+    if (reframe) this.resize();
+  }
+
+  /** Back to the game's iso camera (the move keys and sound panning assume it). */
+  resetView() {
+    this.setView(GAME_YAW, VIEW_HEIGHT, 0);
+    this.trauma = 0;
   }
 
   /** Small screen shake, 0-1. Off with prefers-reduced-motion. */
@@ -349,7 +401,7 @@ export class GameScene {
         .set(Math.sin(t * 71) * a, Math.sin(t * 57 + 1.3) * a, 0)
         .applyQuaternion(this.camera.quaternion);
     }
-    this.camera.position.copy(this.cameraTarget).add(CAMERA_OFFSET).add(this.shakeOffset);
+    this.camera.position.copy(this.cameraTarget).add(this.offset).add(this.shakeOffset);
     this.camera.lookAt(this.tmp.copy(this.cameraTarget).add(this.shakeOffset));
     this.camera.updateMatrixWorld();
   }

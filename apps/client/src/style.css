@@ -6,6 +6,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
 html, body {
   margin: 0;
@@ -75,20 +76,6 @@ html, body {
   font-size: 14px;
 }
 #hud-status:empty { display: none; }
-
-#hud-banner {
-  position: absolute;
-  top: 38%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  text-align: center;
-  background: var(--panel);
-  padding: 20px 36px;
-  border-radius: 12px;
-}
-#hud-banner[hidden] { display: none; }
-#hud-banner .title { font-size: 40px; font-weight: 800; }
-#hud-banner .sub { margin-top: 6px; font-size: 14px; opacity: 0.8; }
 
 /* Map name at match start: smaller than the end-of-match banner, higher up. */
 #hud-map {

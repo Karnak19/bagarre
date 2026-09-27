@@ -60,13 +60,38 @@ export interface AccountState {
 
 type Listener = (s: AccountState) => void;
 
+const GUEST_KEY = "bagarre.guestName";
+
+/**
+ * This browser's guest name, `Guest-` and four digits, drawn once and kept.
+ * The menu shows it, and joins ask the server for it (the server only takes
+ * names in this format, and draws another if the opponent has the same one).
+ */
+function loadGuestName(): string {
+  try {
+    const saved = localStorage.getItem(GUEST_KEY);
+    if (saved && /^Guest-\d{4}$/.test(saved)) return saved;
+  } catch {
+    // Storage blocked: a new name per visit.
+  }
+  const name = `Guest-${1000 + Math.floor(Math.random() * 9000)}`;
+  try {
+    localStorage.setItem(GUEST_KEY, name);
+  } catch {
+    // Ignore.
+  }
+  return name;
+}
+
+export const guestName = loadGuestName();
+
 class Account {
   state: AccountState = {
     status: PUBLISHABLE_KEY ? "loading" : "disabled",
     profileLoaded: false,
     profile: null,
     backendError: "",
-    playingAs: "",
+    playingAs: guestName,
     notice: "",
   };
   clerk: Clerk | null = null;
@@ -98,7 +123,12 @@ class Account {
       // come from @clerk/ui, bundled here (lazily, like clerk-js itself).
       const [{ Clerk }, { ui }] = await Promise.all([import("@clerk/clerk-js"), import("@clerk/ui")]);
       const clerk = new Clerk(key);
-      await clerk.load({ ui });
+      // Sign-in and sign-out happen in Clerk's modal and apply to the next
+      // game, so Clerk never needs to navigate: its redirects after a modal
+      // flow go nowhere (a full-page OAuth flow still comes back to
+      // `forceRedirectUrl`, below).
+      const stay = async () => {};
+      await clerk.load({ ui, routerPush: stay, routerReplace: stay });
       this.clerk = clerk;
       clerk.addListener(() => this.onClerkChange());
       this.onClerkChange();
@@ -179,12 +209,19 @@ class Account {
   }
 
   openSignIn() {
-    // Coming back from the sign-in reloads the page, so the next join uses the account.
+    // Email and password flows finish in the modal, with no reload; the next
+    // join reads the new session's token. OAuth providers leave the page and
+    // come back here.
     this.clerk?.openSignIn({ forceRedirectUrl: location.href, signUpForceRedirectUrl: location.href });
   }
 
   mountUserButton(el: HTMLDivElement) {
     this.clerk?.mountUserButton(el, { afterSwitchSessionUrl: location.href });
+  }
+
+  /** The name the menu shows: the username when signed in with one, else this browser's guest name. */
+  get displayName(): string {
+    return this.state.profile?.username ?? guestName;
   }
 
   unmountUserButton(el: HTMLDivElement) {
