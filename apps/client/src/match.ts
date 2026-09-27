@@ -327,7 +327,8 @@ export class Match {
       // one server tick, so one snapshot may hold more than one shot.
       if (mine || !prev.alive || !p.alive) return;
       const shots = p.weapon === prev.weapon ? prev.ammo - p.ammo : 0;
-      const gap = weaponDef(p.weapon).fireInterval;
+      const def = weaponDef(p.weapon);
+      const gap = def.burst ? (def.burstInterval ?? def.fireInterval) : def.fireInterval;
       for (let i = 0; i < shots; i++) {
         this.sfx(WEAPON_SFX[p.weapon] ?? "rifle", { ...at, delay: REMOTE_DELAY + i * gap });
         this.remoteShots.push({ at: now + INTERP_DELAY_MS + i * gap * 1000, id });
@@ -469,7 +470,7 @@ export class Match {
     if (net.status === "disconnected") status = `Disconnected${net.error ? `: ${net.error}` : ""}.`;
     else if (away) status = `${away.name || "Your opponent"} lost their connection. Waiting for them to come back…`;
     else if (meServer && !meServer.alive && latest?.phase === "playing")
-      status = `Respawning in ${(meServer.respawnTicks / TICK_RATE).toFixed(1)}s (1-4 to change weapon)`;
+      status = `Respawning in ${(meServer.respawnTicks / TICK_RATE).toFixed(1)}s (1-7 to change weapon)`;
 
     const map = scene.map;
     let mapCard: HudModel["mapCard"] = null;

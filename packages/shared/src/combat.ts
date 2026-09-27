@@ -56,6 +56,7 @@ export function spawnSim(x: number, z: number, weapon: number, seen?: PlayerSim)
     grenadeSeen: seen?.grenadeSeen ?? 0,
     shieldSeen: seen?.shieldSeen ?? 0,
     reloadSeen: seen?.reloadSeen ?? 0,
+    burstLeft: 0,
   };
 }
 
@@ -72,7 +73,10 @@ export function writeSim(dst: PlayerSim, sim: PlayerSim) {
 
 export interface StepResult {
   sim: PlayerSim;
-  /** This input fired a shot (spawn `shotPellets`). */
+  /**
+   * This input fired a shot (spawn `shotPellets`). With a burst weapon each
+   * round is its own shot, fired by its own input, so bullet ids stay unique.
+   */
   fired: boolean;
   /** This input threw a grenade at this (already range-clamped) point. */
   grenade: Vec2 | null;
@@ -114,6 +118,7 @@ export function stepPlayer(arena: Arena, prev: PlayerSim, input: InputMessage, w
 
   if (!canAct) {
     s.dashTicks = 0;
+    s.burstLeft = 0;
     return res;
   }
 
@@ -145,11 +150,21 @@ export function stepPlayer(arena: Arena, prev: PlayerSim, input: InputMessage, w
   s.x = p.x;
   s.z = p.z;
 
-  if (input.fire && s.fireCd === 0 && s.reloadTicks === 0 && s.ammo > 0) {
-    s.ammo--;
+  if (s.burstLeft > 0) {
+    // A burst in progress: the next round is due once fireCd (set at the
+    // burst's first round) has run down by one more burst interval. It needs
+    // no button: a started burst finishes. A reload or an empty magazine ends it.
+    const burst = w.burst ?? 1;
+    const due = ticks(w.fireInterval) - (burst - s.burstLeft) * ticks(w.burstInterval ?? 0);
+    if (s.reloadTicks > 0 || s.ammo === 0) s.burstLeft = 0;
+    else if (s.fireCd <= due) {
+      s.burstLeft--;
+      fireRound(s, w, res);
+    }
+  } else if (input.fire && s.fireCd === 0 && s.reloadTicks === 0 && s.ammo > 0) {
     s.fireCd = ticks(w.fireInterval);
-    res.fired = true;
-    if (s.ammo === 0) s.reloadTicks = ticks(w.reloadTime); // auto-reload on empty
+    s.burstLeft = (w.burst ?? 1) - 1;
+    fireRound(s, w, res);
   }
 
   if (pressGrenade && s.grenadeCd === 0) {
@@ -163,6 +178,16 @@ export function stepPlayer(arena: Arena, prev: PlayerSim, input: InputMessage, w
   }
 
   return res;
+}
+
+/** One round leaves the gun: ammo, and the auto-reload on empty (which ends a burst). */
+function fireRound(s: PlayerSim, w: WeaponDef, res: StepResult) {
+  s.ammo--;
+  res.fired = true;
+  if (s.ammo === 0) {
+    s.reloadTicks = ticks(w.reloadTime); // auto-reload on empty
+    s.burstLeft = 0;
+  }
 }
 
 // --- Shots -------------------------------------------------------------------

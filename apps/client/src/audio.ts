@@ -19,6 +19,9 @@ export type SfxName =
   | "shotgun"
   | "sniper"
   | "smg"
+  | "revolver"
+  | "burst"
+  | "dmr"
   | "reload"
   | "empty_click"
   | "dash"
@@ -50,7 +53,7 @@ export interface PlayOptions {
 }
 
 /** Weapon id (index in WEAPONS) -> shot sound. */
-export const WEAPON_SFX: readonly SfxName[] = ["rifle", "shotgun", "sniper", "smg"];
+export const WEAPON_SFX: readonly SfxName[] = ["rifle", "shotgun", "sniper", "smg", "revolver", "burst", "dmr"];
 
 interface SfxDef {
   /** File basenames in /sfx/, one per variant. Empty for synthesized sounds. */
@@ -59,6 +62,8 @@ interface SfxDef {
   gain: number;
   /** Copies of this sound allowed at once; the oldest is cut when exceeded. */
   voices: number;
+  /** Playback rate (pitch and speed), for sounds that reuse another's files. Default 1. */
+  rate?: number;
 }
 
 const variants = (base: string, n: number) => Array.from({ length: n }, (_, i) => `${base}_${i + 1}`);
@@ -68,6 +73,12 @@ const DEFS: Record<SfxName, SfxDef> = {
   shotgun: { files: variants("shotgun", 2), gain: 0.95, voices: 3 },
   sniper: { files: variants("sniper", 2), gain: 1, voices: 2 },
   smg: { files: variants("smg", 3), gain: 0.75, voices: 4 },
+  // The three later guns reuse those files, pitched: a sharper sniper crack
+  // for the revolver, a light snappy rifle for the burst pistol, a deeper
+  // rifle for the DMR.
+  revolver: { files: variants("sniper", 2), gain: 0.85, voices: 2, rate: 1.3 },
+  burst: { files: variants("rifle", 3), gain: 0.6, voices: 4, rate: 1.35 },
+  dmr: { files: variants("rifle", 3), gain: 1, voices: 3, rate: 0.8 },
   reload: { files: ["reload"], gain: 0.8, voices: 2 },
   empty_click: { files: ["empty_click"], gain: 0.7, voices: 2 },
   dash: { files: [], gain: 0.55, voices: 2 },
@@ -341,7 +352,7 @@ export function play(name: SfxName, opts?: PlayOptions) {
 
     const src = ctx.createBufferSource();
     src.buffer = list[pickVariant(name, list.length)];
-    src.playbackRate.value = 1 + (Math.random() * 2 - 1) * PITCH_JITTER;
+    src.playbackRate.value = (def.rate ?? 1) * (1 + (Math.random() * 2 - 1) * PITCH_JITTER);
     const gain = ctx.createGain();
     gain.gain.value = level;
     src.connect(gain);

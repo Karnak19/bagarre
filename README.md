@@ -156,7 +156,7 @@ TypeScript: React never runs per frame and there is no React Three Fiber.
   to the DOM from a store subscription (`useStoreEffect`), outside React. An
   idle HUD does not re-render at all; in dev, `window.__bagarre.renders`
   counts renders per widget.
-- `src/keys.ts` holds the app keys (Esc, Tab, M and 1-4 on cards) and the
+- `src/keys.ts` holds the app keys (Esc, Tab, M and 1-7 on cards) and the
   input isolation rules; `src/uiState.ts` says which panel is open, so the
   loop keeps the game's input off meanwhile.
 - `src/ui/`: `Shell.tsx` (root layout: theme, cards, Tab scoreboard, panels,
@@ -203,7 +203,7 @@ Astryx conventions (the agent cheat sheet `astryx init` wrote is
 | **Space**          | Dash: a short burst in the move direction (facing if still)   |
 | **Q**              | Grenade: lobbed at the cursor, max 10 m, flies over cover     |
 | **E**              | Shield: a bubble that soaks damage before your HP             |
-| **1**-**4**        | Pick a weapon, while dead or between matches (see below)      |
+| **1**-**7**        | Pick a weapon, while dead or between matches (see below)      |
 | **Tab** (hold)     | Scoreboard                                                    |
 | **M**              | Mute / unmute sound (remembered between visits)               |
 | **Esc**            | Match menu: resume, settings, leave (the match keeps running) |
@@ -246,6 +246,16 @@ The pick is shown above the ability bar. It only goes in your hand when you
 | 2   | Shotgun | 6 × 12   | 0.7 s         | 36 m/s       | 7 m   | 23°    | 5        | 2.0 s  | Close range, 2 blasts (0.7 s)|
 | 3   | Sniper  | 70       | 1.2 s         | 90 m/s       | 30 m  | 0°     | 4        | 2.5 s  | Long range, 2 hits (1.2 s)   |
 | 4   | SMG     | 11       | 0.1 s         | 40 m/s       | 12 m  | 9°     | 30       | 1.8 s  | Mid range, 10 hits (0.9 s)   |
+| 5   | Revolver | 34      | 0.45 s        | 70 m/s       | 20 m  | 0°     | 6        | 2.2 s  | Precise mid range, 3 hits (0.93 s) |
+| 6   | Burst pistol | 3 × 12 | 0.45 s per burst, 0.06 s per round | 42 m/s | 15 m | 2.9° | 15 | 1.2 s | One click = 3 rounds, 3 bursts (1.07 s) |
+| 7   | DMR     | 40       | 0.5 s         | 80 m/s       | 26 m  | 0.6°   | 8        | 2.0 s  | Semi-auto marksman, 3 hits (1.0 s) |
+
+The burst pistol fires 3 rounds per click. A started burst finishes even if
+you let go of the button, unless the magazine runs dry, a reload starts or
+you die; holding the button fires a burst every 0.45 s. It lives in the
+shared step (`stepPlayer`, the `burstLeft` sim field), so the client predicts
+each round exactly; every round comes from its own input, so bullet ids
+(`slot:seq:pellet`) stay unique.
 
 | Ability | Numbers                                                                 |
 | ------- | ----------------------------------------------------------------------- |

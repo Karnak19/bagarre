@@ -13,7 +13,7 @@ function isEditable(e: Event) {
  * Off (`enabled = false`) while the menu or any overlay is up: keys, clicks
  * and presses are ignored and nothing is held, so the player stands still and
  * doesn't fire. Keys typed in a text field are always ignored, so typing a
- * username never moves, fires, mutes (M) or picks a weapon (1-4).
+ * username never moves, fires, mutes (M) or picks a weapon (1-7).
  */
 export class Input {
   private keys = new Set<string>();
@@ -27,7 +27,7 @@ export class Input {
    * key-down only, so auto-repeat while holding the key doesn't count.
    */
   readonly presses = { dash: 0, grenade: 0, shield: 0, reload: 0 };
-  /** Called with 0-3 when a weapon key (1-4) is pressed. */
+  /** Called with 0-6 when a weapon key (1-7) is pressed. */
   onPick: (weapon: number) => void = () => {};
   /** Called when M (mute toggle) is pressed. */
   onMute: () => void = () => {};
@@ -54,7 +54,7 @@ export class Input {
       else if (e.code === "KeyE") this.presses.shield++;
       else if (e.code === "KeyR") this.presses.reload++;
       else if (e.code === "KeyM") this.onMute();
-      else if (/^Digit[1-4]$/.test(e.code)) this.onPick(Number(e.code.slice(5)) - 1);
+      else if (/^Digit[1-7]$/.test(e.code)) this.onPick(Number(e.code.slice(5)) - 1);
     });
     window.addEventListener("keyup", (e) => this.keys.delete(e.code));
     window.addEventListener("blur", () => {

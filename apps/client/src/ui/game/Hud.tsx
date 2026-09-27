@@ -301,7 +301,7 @@ function Picker() {
     (m) => ({ pick: m?.me?.pick ?? 0, weapon: m?.me?.weapon ?? 0, canPick: !!m?.canPick }),
     shallowEqual,
   );
-  const hint = p.canPick ? (p.pick !== p.weapon ? "applies on respawn" : "press 1-4 to pick") : "pick while dead";
+  const hint = p.canPick ? (p.pick !== p.weapon ? "applies on respawn" : "press 1-7 to pick") : "pick while dead";
   return (
     <HStack gap={1.5} align="center" xstyle={styles.picker} data-testid="hud-picker">
       {WEAPONS.map((w, i) => (

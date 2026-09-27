@@ -68,7 +68,7 @@ import { createServer, openGames } from "./src/app.ts";
 import { DuelRoom } from "./src/DuelRoom.ts";
 import { accountChecks, liveConvexChecks, setupTestAccounts } from "./smoke-accounts.ts";
 
-const PORT = 2599;
+const PORT = Number(process.env.SMOKE_PORT) || 2599; // SMOKE_PORT: run next to another smoke
 const URL = `http://localhost:${PORT}`;
 const failures: string[] = [];
 /** The main server pins every room to Yard: the duel checks depend on its geometry. */
@@ -243,6 +243,20 @@ async function duel(label: string, pick: number | null) {
   return { r1, r2, d1: driver(r1), d2: driver(r2) };
 }
 
+/** Splits shot seqs into bursts: rounds closer than the burst interval allows belong to one burst. Non-burst weapons: one shot each. */
+function bursts(seqs: number[], w: (typeof WEAPONS)[number]): number[][] {
+  const inner = w.burst ? ticks(w.burstInterval ?? 0) : 0;
+  const out: number[][] = [];
+  for (const sq of seqs) {
+    const last = out[out.length - 1];
+    if (last && sq - last[last.length - 1] <= inner) last.push(sq);
+    else out.push([sq]);
+  }
+  return out;
+}
+
+const BURST_ID = WEAPONS.findIndex((w) => (w.burst ?? 1) > 1);
+
 function angleDiff(a: number, b: number) {
   let d = a - b;
   while (d > Math.PI) d -= 2 * Math.PI;
@@ -275,6 +289,36 @@ function pureChecks() {
       new Set(dirs.map((x) => x.toFixed(6))).size === WEAPONS[1].pellets,
     "shotgun pellets: same seq gives identical pellets, another seq a different pattern",
   );
+
+  // Burst fire in the shared step: which inputs fire, from a fresh sim.
+  const bw = WEAPONS[BURST_ID];
+  const run = (sim: PlayerSim, fire: (i: number) => boolean, n: number, canAct: (i: number) => boolean = () => true) => {
+    const fired: number[] = [];
+    for (let i = 0; i < n; i++) {
+      const r = stepPlayer(YARD, sim, { ...base, dash: 0, seq: i + 1, fire: fire(i) }, BURST_ID, canAct(i));
+      sim = r.sim;
+      if (r.fired) fired.push(i);
+    }
+    return { fired, sim };
+  };
+  const inner = ticks(bw.burstInterval ?? 0);
+  const one = run(spawnSim(0, 0, BURST_ID), (i) => i === 0, 40);
+  check(
+    JSON.stringify(one.fired) === JSON.stringify([0, inner, 2 * inner]) && one.sim.ammo === bw.magazine - 3,
+    `burst: one click fires ${bw.burst} rounds at inputs [${one.fired}] (every ${inner}), even with the button released`,
+  );
+  const held = run(spawnSim(0, 0, BURST_ID), () => true, ticks(bw.fireInterval) * 2 + 1);
+  check(
+    JSON.stringify(held.fired) === JSON.stringify([0, inner, 2 * inner, ticks(bw.fireInterval), ticks(bw.fireInterval) + inner, ticks(bw.fireInterval) + 2 * inner, 2 * ticks(bw.fireInterval)]),
+    `burst: holding fires a burst every ${ticks(bw.fireInterval)} inputs (rounds at [${held.fired}])`,
+  );
+  const dry = run({ ...spawnSim(0, 0, BURST_ID), ammo: 2 }, (i) => i === 0, 20);
+  check(
+    dry.fired.length === 2 && dry.sim.ammo === 0 && dry.sim.burstLeft === 0 && dry.sim.reloadTicks > 0,
+    `burst: stops at an empty magazine (2 rounds left: fired ${dry.fired.length}, then reloading)`,
+  );
+  const dead = run(spawnSim(0, 0, BURST_ID), (i) => i === 0, 20, (i) => i === 0);
+  check(dead.fired.length === 1 && dead.sim.burstLeft === 0, `burst: dying mid-burst ends it (fired ${dead.fired.length})`);
 }
 
 // ---------------------------------------------------------------------------
@@ -455,10 +499,24 @@ async function weaponDuel(wid: number) {
     const interval = ticks(w.fireInterval);
     const reload = ticks(w.reloadTime);
     const gaps = seqs.slice(1).map((s, i) => s - seqs[i]);
-    ok(
-      seqs.length >= 2 && Math.min(...gaps) === interval,
-      `fire interval: ${seqs.length} shots, closest two ${Math.min(...gaps)} ticks apart (interval ${interval})`,
-    );
+    if (w.burst) {
+      const groups = bursts(seqs, w);
+      const startGaps = groups.slice(1).map((g, i) => g[0] - groups[i][0]);
+      const inner = ticks(w.burstInterval ?? 0);
+      ok(
+        groups.length >= 2 && groups.every((g) => g.length === w.burst && g.every((sq, i) => i === 0 || sq - g[i - 1] === inner)),
+        `bursts of ${w.burst}, ${inner} ticks apart: sizes [${groups.map((g) => g.length).join(", ")}]`,
+      );
+      ok(
+        Math.min(...startGaps) === interval,
+        `burst interval: ${groups.length} bursts, closest two starts ${Math.min(...startGaps)} ticks apart (interval ${interval})`,
+      );
+    } else {
+      ok(
+        seqs.length >= 2 && Math.min(...gaps) === interval,
+        `fire interval: ${seqs.length} shots, closest two ${Math.min(...gaps)} ticks apart (interval ${interval})`,
+      );
+    }
     const reloadGaps = gaps.filter((_, i) => (i + 1) % w.magazine === 0);
     ok(
       reloadGaps.every((g) => g >= reload),
@@ -499,12 +557,106 @@ async function weaponDuel(wid: number) {
     d1.spam = 1;
     await sleep(700);
     b.stop();
-    const bTicks = [...b.shots.values()].map((s) => s.tick).sort((x, y) => x - y);
+    // Burst weapons: the cadence applies to the start of each burst. Bursts
+    // are always whole here (the magazine holds whole bursts), so every
+    // burst-th round starts one. (Not by seq gaps: the server drops some of
+    // the spammed inputs.)
+    const bTicks = [...b.shots.keys()]
+      .sort((x, y) => x - y)
+      .filter((_, i) => i % (w.burst ?? 1) === 0)
+      .map((sq) => b.shots.get(sq)!.tick)
+      .sort((x, y) => x - y);
     const span = bTicks[bTicks.length - 1] - bTicks[0];
     ok(
       bTicks.length >= 2 && (bTicks.length - 1) * interval <= span + INPUT_BURST,
-      `spamming 4 inputs/tick: ${bTicks.length} shots over ${span} server ticks (cap ${Math.floor((span + INPUT_BURST) / interval) + 1})`,
+      `spamming 4 inputs/tick: ${bTicks.length} ${w.burst ? "bursts" : "shots"} over ${span} server ticks (cap ${Math.floor((span + INPUT_BURST) / interval) + 1})`,
     );
+  } finally {
+    d1.stop();
+    d2.stop();
+    await r2.leave();
+    await r1.leave();
+  }
+  return lines;
+}
+
+// ---------------------------------------------------------------------------
+// Part 2a': the new weapon ids and the burst pistol end to end: pick ids,
+// one click = one burst, and the client's prediction matching the server.
+// ---------------------------------------------------------------------------
+async function burstDuel() {
+  const w = WEAPONS[BURST_ID];
+  const tag = `[burst ${w.name.toLowerCase()}]`;
+  const lines: [boolean, string][] = [];
+  const ok = (c: boolean, l: string) => lines.push([c, `${tag} ${l}`]);
+  const r1 = await new Client(URL).create(ROOM_NAME, { private: true });
+  await waitFor(() => !!me(r1), 2000);
+  const accepted: number[] = [];
+  for (const id of [4, 5, 6]) {
+    r1.send(MSG_PICK, { weapon: id });
+    if (await waitFor(() => me(r1)?.pick === id, 1000)) accepted.push(id);
+  }
+  ok(accepted.length === 3, `pick ids 4-6 accepted (${accepted.join(", ")})`);
+  for (const id of [WEAPONS.length, WEAPONS.length + 1]) r1.send(MSG_PICK, { weapon: id });
+  await sleep(200);
+  ok(me(r1)?.pick === 6, `pick ids ${WEAPONS.length}+ refused (pick stays ${me(r1)?.pick})`);
+  r1.send(MSG_PICK, { weapon: BURST_ID });
+  await waitFor(() => me(r1)?.pick === BURST_ID, 1000);
+  const r2 = await new Client(URL).joinById(r1.roomId);
+  if (!(await waitFor(() => state(r1).phase === "playing" && me(r1)?.weapon === BURST_ID && !!me(r2), 3000))) {
+    await r2.leave();
+    await r1.leave();
+    throw new Error(`${tag} match did not start`);
+  }
+  const d1 = driver(r1);
+  const d2 = driver(r2);
+  try {
+    // Shoot at the wall, away from the opponent: nobody dies, the sim stays comparable.
+    await Promise.all([d1.goTo(4, -12), d2.goTo(12, 8)]);
+    await caughtUp(r1, d1);
+    const slot = me(r1)!.slot;
+
+    // Every snapshot: the server's sim equals what the client predicted for the same input.
+    let compared = 0;
+    const mismatches: string[] = [];
+    const cmp = () => {
+      const p = me(r1);
+      if (!p) return;
+      const predicted = d1.history.get(p.lastSeq);
+      if (!predicted) return;
+      compared++;
+      const server = readSim(p);
+      if (JSON.stringify(server) !== JSON.stringify(predicted) && mismatches.length < 3)
+        mismatches.push(`seq ${p.lastSeq}: server ${JSON.stringify(server)} vs client ${JSON.stringify(predicted)}`);
+    };
+    r1.onStateChange(cmp);
+
+    // One click: exactly one burst.
+    const one = watchShots(r1, slot);
+    d1.set({ aim: Math.PI });
+    d1.fireOnce();
+    await sleep(ticks(w.fireInterval) * TICK_MS + 400);
+    one.stop();
+    const seqs = [...one.shots.keys()].sort((x, y) => x - y);
+    const inner = ticks(w.burstInterval ?? 0);
+    ok(
+      seqs.length === w.burst && seqs.every((sq, i) => i === 0 || sq - seqs[i - 1] === inner),
+      `one click: ${seqs.length} rounds, seqs [${seqs.join(", ")}] (${inner} inputs apart, unique ids)`,
+    );
+    const predictedFired = [...d1.history.keys()].filter((sq) => (d1.history.get(sq - 1)?.ammo ?? Infinity) > d1.history.get(sq)!.ammo);
+    ok(
+      JSON.stringify(predictedFired.filter((sq) => sq >= seqs[0] - 1)) === JSON.stringify(seqs),
+      `the client predicted the same rounds, with the same ids [${predictedFired.slice(-3).join(", ")}]`,
+    );
+
+    // Held through two magazines: bursts, reloads, and still an exact prediction.
+    d1.set({ fire: true });
+    await sleep(4000);
+    d1.set({ fire: false });
+    await sleep(300);
+    await caughtUp(r1, d1);
+    r1.onStateChange.remove(cmp);
+    ok(compared > 50 && mismatches.length === 0, `prediction matches the server exactly (${compared} snapshots) ${mismatches.join("; ")}`);
   } finally {
     d1.stop();
     d2.stop();
@@ -1299,7 +1451,7 @@ async function messageFlood() {
 // ---------------------------------------------------------------------------
 async function shutdownCheck() {
   const tag = "[shutdown]";
-  const port = 2598;
+  const port = PORT - 1;
   const url = `http://localhost:${port}`;
   const child = spawn(process.execPath, ["src/index.ts"], {
     cwd: dirname(fileURLToPath(import.meta.url)),
@@ -1360,6 +1512,7 @@ try {
     accountChecks(URL, accounts, (c, l) => accountLines.push([c, `[accounts] ${l}`])).then(() => accountLines),
     liveConvexChecks((c, l) => accountLines.push([c, `[accounts] ${l}`])).then(() => [] as [boolean, string][]),
     ...WEAPONS.map((_, i) => weaponDuel(i)),
+    burstDuel(),
     grenadeDuel(),
     shieldDuel(),
     ...WALL_CASES.map((c) => mapDuel(c)),

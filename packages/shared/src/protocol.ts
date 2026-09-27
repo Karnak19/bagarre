@@ -78,6 +78,8 @@ export interface PlayerSim {
   grenadeSeen: number;
   shieldSeen: number;
   reloadSeen: number;
+  /** Rounds still to come in the burst being fired (burst weapons only, else 0). */
+  burstLeft: number;
 }
 
 export const PLAYER_SIM_KEYS = [
@@ -96,6 +98,7 @@ export const PLAYER_SIM_KEYS = [
   "grenadeSeen",
   "shieldSeen",
   "reloadSeen",
+  "burstLeft",
 ] as const satisfies readonly (keyof PlayerSim)[];
 
 /** What the client reads from a player in the synced room state. */
