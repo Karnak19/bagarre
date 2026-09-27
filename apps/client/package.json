@@ -1,0 +1,32 @@
+{
+  "name": "@bagarre/client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p .",
+    "lint": "oxlint src scripts vite.config.ts",
+    "assets:models": "bun scripts/assets/build-models.ts",
+    "assets:atlas": "python3 scripts/assets/build-atlas.py",
+    "sfx:build": "bash scripts/sfx/build.sh"
+  },
+  "dependencies": {
+    "@bagarre/backend": "workspace:*",
+    "@bagarre/shared": "workspace:*",
+    "@clerk/clerk-js": "^6.34.1",
+    "@clerk/ui": "^1.36.0",
+    "@colyseus/sdk": "^0.18.4",
+    "convex": "^1.46.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.186.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1"
+  }
+}

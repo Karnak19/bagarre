@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    /* Options Convex requires for its functions (see convex/tsconfig.json). */
+    "target": "ESNext",
+    "lib": ["ES2023", "DOM"],
+    /* TypeScript 7 no longer picks up @types automatically (process.env). */
+    "types": ["node"]
+  },
+  "include": ["convex", "scripts", "testing.ts"],
+  "exclude": ["convex/_generated"]
+}

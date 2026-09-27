@@ -1,0 +1,21 @@
+{
+  "name": "@bagarre/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p scripts",
+    "lint": "oxlint src scripts",
+    "maps:validate": "bun scripts/validate.ts",
+    "maps:preview": "bun scripts/preview.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "typescript": "^7.0.2"
+  }
+}

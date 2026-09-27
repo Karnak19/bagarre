@@ -1,6 +1,6 @@
 # Maps
 
-Seven maps live in `shared/src/maps/`: the original arena (Yard) plus six new
+Seven maps live in `packages/shared/src/maps/`: the original arena (Yard) plus six new
 ones. They are plain data, not wired into the game yet. A match will pick one
 at random; the wiring plan at the end of this file lists every change needed.
 
@@ -17,10 +17,12 @@ at random; the wiring plan at the end of this file lists every change needed.
 ## Tools
 
 ```sh
-bun scripts/maps/validate.ts            # check every map, print the table, exit 1 on error
-bun scripts/maps/validate.ts runway     # just one
-bun scripts/maps/preview.ts [outDir] [mapId...]   # PNG plans + iso views (+ all-maps.png)
-bunx tsc --noEmit -p scripts/maps       # type-check the tools (the maps are checked with -p shared)
+bun run maps:validate                   # from the root, through turbo: check every map, print the table, exit 1 on error
+
+# From packages/shared:
+bun run maps:validate runway            # just one
+bun run maps:preview [outDir] [mapId...]   # PNG plans + iso views (+ all-maps.png)
+bun run typecheck                       # type-checks the maps (src/) and the tools (scripts/)
 ```
 
 `preview.ts` writes SVG and converts it with `sips` (macOS). Default output is
@@ -76,7 +78,7 @@ match start, is at 3.4 s).
 
 ## The MapDef format
 
-`shared/src/maps/types.ts`:
+`packages/shared/src/maps/types.ts`:
 
 ```ts
 interface MapDef {
@@ -287,7 +289,7 @@ purpose: no straight lanes, piles of different sizes.
 
 Order matters: shared first (the compiler then points at every caller).
 
-### 1. `shared/src/arena.ts`
+### 1. `packages/shared/src/arena.ts`
 
 Add an `Arena` shape that both the legacy constants and `MapDef` satisfy:
 
@@ -306,7 +308,7 @@ delete `ARENA_HALF`, `OBSTACLES` and `SPAWN_POINTS` (Yard now lives in
 `MapDef` is structurally an `Arena` (its obstacles are `Box`es with an extra
 `kind`), so maps can be passed directly.
 
-### 2. `shared/src/index.ts`
+### 2. `packages/shared/src/index.ts`
 
 Add `export * from "./maps/index.ts";`. No name clashes: the maps module
 exports `MapDef`, `Obstacle`, `ObstacleKind`, `Decor`, `DecorProp`,
@@ -314,7 +316,7 @@ exports `MapDef`, `Obstacle`, `ObstacleKind`, `Decor`, `DecorProp`,
 `Spawn`, `Reskin`, `AsciiLegend`, `MAPS`, `DEFAULT_MAP_ID`, `mapById`, `box`,
 `symmetric`, `spawnPairs`, `mirrorPoint`, `mirrorBox`, `asciiPoint`.
 
-### 3. `shared/src/physics.ts`
+### 3. `packages/shared/src/physics.ts`
 
 Take the arena as an explicit first parameter, with no default. A default
 would silently collide against Yard on another map and desync prediction; no
@@ -330,7 +332,7 @@ either: the server can run several rooms in one process.
 - `stepBullet(arena, b, onSubstep?, dt = TICK_DT)`.
 - Drop the `ARENA_HALF, OBSTACLES` import.
 
-### 4. `shared/src/combat.ts`
+### 4. `packages/shared/src/combat.ts`
 
 - `stepPlayer(arena, prev, input, weaponId, canAct)`: pass `arena` to both
   `movePlayer` calls (dash and walk) and to `grenadeTarget`.
@@ -338,11 +340,11 @@ either: the server can run several rooms in one process.
   `arena.halfX - BULLET_RADIUS`, z to `arena.halfZ - BULLET_RADIUS`.
 - Drop the `ARENA_HALF` import.
 
-### 5. `server/src/state.ts`
+### 5. `apps/server/src/state.ts`
 
 Add to `DuelState`: `mapId: t.string().default(DEFAULT_MAP_ID)`.
 
-### 6. `server/src/DuelRoom.ts`
+### 6. `apps/server/src/DuelRoom.ts`
 
 - Field `private map: MapDef = mapById(DEFAULT_MAP_ID);` and
   `private fixedMap = false;`.
@@ -364,7 +366,7 @@ Add to `DuelState`: `mapId: t.string().default(DEFAULT_MAP_ID)`.
   `startMatch` may switch maps and teleports both to the new spawns (the
   client's prediction snaps: the correction is over `SNAP_DISTANCE`).
 
-### 7. `server/src/app.ts`
+### 7. `apps/server/src/app.ts`
 
 `createServer(options: { ...; mapId?: string })` and register the room with
 `defineRoom(DuelRoom, options.mapId ? { mapId: options.mapId } : undefined)`
@@ -372,15 +374,15 @@ Add to `DuelState`: `mapId: t.string().default(DEFAULT_MAP_ID)`.
 
 ### 8. Client
 
-- `client/src/net.ts` / `main.ts`: read `state.mapId` from every snapshot;
+- `apps/client/src/net.ts` / `main.ts`: read `state.mapId` from every snapshot;
   `const map = mapById(state.mapId)`. When it differs from the current one
   (including the first snapshot), call `scene.setMap(map)` and give the map
   to the predictor and the bullet predictor. Clear predicted bullets on a
   change.
-- `client/src/prediction.ts`: `Predictor` gets a `map: MapDef` field (set by
+- `apps/client/src/prediction.ts`: `Predictor` gets a `map: MapDef` field (set by
   main.ts), used in both `stepPlayer(this.map, ...)` calls.
-- `client/src/bullets.ts`: same, `stepBullet(this.map, ...)`.
-- `client/src/scene.ts`:
+- `apps/client/src/bullets.ts`: same, `stepBullet(this.map, ...)`.
+- `apps/client/src/scene.ts`:
   - build the arena into its own `THREE.Group` (`this.arena`), and add
     `setMap(map)`: remove the old group from the scene, dispose its merged
     geometries (the materials belong to the loaded props, don't dispose
@@ -398,7 +400,7 @@ Add to `DuelState`: `mapId: t.string().default(DEFAULT_MAP_ID)`.
     `halfZ + WALL_THICKNESS`) and `map.halfZ` for the walls at
     z = +-(halfZ + WALL_THICKNESS / 2) (half-length along x
     `halfX + WALL_THICKNESS`).
-- `client/src/arenaView.ts`: `buildArena(group, props, map)` instead of the
+- `apps/client/src/arenaView.ts`: `buildArena(group, props, map)` instead of the
   globals.
   - `buildFloor`: `PlaneGeometry(2 * halfX, 2 * halfZ)` with `t.floor`; outer
     plane `t.outerFloor`. `GridHelper` is square only: draw the 2 m grid as a
@@ -426,7 +428,7 @@ Add to `DuelState`: `mapId: t.string().default(DEFAULT_MAP_ID)`.
 - HUD (optional): show `map.name` and `map.blurb` for a few seconds when a
   match starts.
 
-### 9. Smoke test (`server/smoke.ts`)
+### 9. Smoke test (`apps/server/smoke.ts`)
 
 - Boot with the map forced: `createServer({ gracefullyShutdown: false,
   mapId: "yard" })`. The duel checks depend on Yard's geometry (the dash into
@@ -445,8 +447,8 @@ Add to `DuelState`: `mapId: t.string().default(DEFAULT_MAP_ID)`.
     x up to 19.9, z up to 13.9);
   - optionally a second server without `mapId` that runs two matches and
     checks that `mapId` is a valid id and players spawn on that map's spawns.
-- Add `"maps": "bun scripts/maps/validate.ts"` to the root `package.json`
-  scripts and run it next to `smoke`.
+- Run `bun run maps:validate` next to `smoke` (it is a root script, through
+  turbo).
 
 ## Limits of the current mechanics
 

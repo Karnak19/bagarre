@@ -1,0 +1,29 @@
+{
+  "name": "@bagarre/backend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./api": {
+      "types": "./convex/_generated/api.d.ts",
+      "default": "./convex/_generated/api.js"
+    },
+    "./schema": "./convex/schema.ts",
+    "./username": "./convex/username.ts",
+    "./testing": "./testing.ts"
+  },
+  "scripts": {
+    "dev": "bun scripts/link-env.ts && convex dev",
+    "push": "bun scripts/link-env.ts && convex dev --once",
+    "convex": "bun scripts/link-env.ts && convex",
+    "typecheck": "tsc --noEmit -p .",
+    "lint": "oxlint --ignore-pattern convex/_generated convex scripts testing.ts"
+  },
+  "dependencies": {
+    "convex": "^1.46.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "typescript": "^7.0.2"
+  }
+}

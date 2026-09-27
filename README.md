@@ -7,16 +7,25 @@ an authoritative Colyseus server, Bun everywhere.
 
 ```sh
 bun install
-bun run dev      # server on ws://localhost:2567, client on http://localhost:5173
+bun run dev      # server on ws://localhost:2567, client on http://localhost:5173, plus convex dev
 ```
 
-Other scripts:
+The repo is a Turborepo monorepo on Bun workspaces. Every root script goes
+through `turbo`, which runs the matching script in each package and caches
+what it can (a second `bun run build` with nothing changed is instant).
 
-| Command         | What it does                                                      |
-| --------------- | ----------------------------------------------------------------- |
-| `bun run build` | Type-checks shared, convex/ and server, then type-checks and builds the client |
-| `bun run smoke` | Boots a real server, connects headless clients, checks the game loop and accounts |
-| `bun run start` | Runs the server alone (no watch)                                  |
+| Command                 | What it does                                                        |
+| ----------------------- | ------------------------------------------------------------------- |
+| `bun run dev`           | Client (Vite), game server (watch mode) and `convex dev` together, output prefixed per package |
+| `bun run build`         | Type-checks every package, then builds the client into `apps/client/dist` |
+| `bun run typecheck`     | Type-checks every package                                          |
+| `bun run lint`          | oxlint on every package                                             |
+| `bun run smoke`         | Boots a real server, connects headless clients, checks the game loop and accounts |
+| `bun run maps:validate` | Checks every map and prints its stats (see [docs/maps.md](docs/maps.md)) |
+| `bun run start`         | Runs the server alone (no watch)                                    |
+
+To run one package's task only: `bunx turbo run dev --filter=@bagarre/client`,
+or `bun run <script>` inside the package's folder.
 
 ## Accounts (optional)
 
@@ -25,6 +34,21 @@ keeps a username and stats (Convex). Copy `.env.example` to `.env.local` at the
 repo root and fill it in; with no keys at all the game stays guest-only and the
 corner widget says sign-in isn't configured. `bun run dev` also runs
 `convex dev`.
+
+That one root `.env.local` is read by everything: Vite (`envDir` points at the
+root, only `VITE_*` reach the browser), the game server
+(`bun --env-file=../../.env.local`) and the Convex CLI, which runs from
+`packages/backend`. The Convex CLI only ever reads and writes `.env.local` in
+the folder it runs from, so `packages/backend/.env.local` is a symlink to the
+root file, created automatically by `packages/backend/scripts/link-env.ts`
+before each of that package's Convex scripts. Other Convex commands go through
+the same script, for example:
+
+```sh
+cd packages/backend
+bun run convex env set GAME_SERVER_SECRET=<value>
+bun run push        # one-off push of the functions (convex dev --once)
+```
 
 - The client sends its Clerk token when joining (`client.auth.token`). The
   server checks it in `DuelRoom.onAuth` (networkless, against `CLERK_JWT_KEY`),
@@ -35,8 +59,11 @@ corner widget says sign-in isn't configured. `bun run dev` also runs
   `GAME_SERVER_SECRET` and ignores a match id it has already seen.
 - Signing in or out takes effect on the next join (the page reloads).
 
-Code: `convex/` (schema, `users.ts`, `matches.ts`, `auth.config.ts`),
-`server/src/accounts.ts`, `client/src/auth.ts` and `client/src/accountUi.ts`.
+Code: `packages/backend/convex/` (schema, `users.ts`, `matches.ts`,
+`auth.config.ts`), `apps/server/src/accounts.ts`, `apps/client/src/auth.ts` and
+`apps/client/src/accountUi.ts`. The client and the server import the Convex
+API from the `@bagarre/backend` package (`@bagarre/backend/api`,
+`@bagarre/backend/username`), never by relative path.
 
 ## Play against yourself
 
@@ -92,7 +119,7 @@ The pick is shown above the ability bar. It only goes in your hand when you
 | Grenade | 10 m max range, 0.6 s fuse after landing, 3.5 m radius, 60 → 15 damage (half on yourself), 8 s cooldown |
 | Shield  | 2.5 s, absorbs up to 40 damage, 10 s cooldown                             |
 
-All of these live in `shared/src/constants.ts`, one table per weapon and
+All of these live in `packages/shared/src/constants.ts`, one table per weapon and
 ability, so balancing is a one-file change.
 
 ## Testing with latency: `?lag=`
@@ -118,15 +145,31 @@ give only one player the lag.
 ## Layout
 
 ```
-shared/src/     constants and balance tables, arena layout, message types,
-                the pure step functions (physics.ts: movement/bullets,
-                combat.ts: the player step with dash, weapons, abilities)
-server/src/     Colyseus room (DuelRoom), synced state schema, bootstrap
-server/smoke.ts headless end-to-end test
-client/src/     Three.js scene, input, prediction, predicted bullets, interpolation, HUD,
-                animated characters (character.ts), arena props (arenaView.ts), particles (vfx.ts)
-client/public/  models (glTF, meshopt-compressed) and the particle atlas, see ASSETS.md
+apps/
+  client/             @bagarre/client: Vite + Three.js
+    src/              scene, input, prediction, predicted bullets, interpolation, HUD,
+                      animated characters (character.ts), arena props (arenaView.ts), particles (vfx.ts)
+    public/           models (glTF, meshopt-compressed), particle atlas and sounds, see ASSETS.md
+    scripts/          asset rebuild scripts (assets/, sfx/)
+  server/             @bagarre/server: Colyseus on Bun
+    src/              Colyseus room (DuelRoom), synced state schema, accounts, bootstrap
+    smoke.ts          headless end-to-end test (smoke-accounts.ts: its account part)
+packages/
+  shared/             @bagarre/shared: TypeScript source, no build step
+    src/              constants and balance tables, maps and arena layout, message types,
+                      the pure step functions (physics.ts: movement/bullets,
+                      combat.ts: the player step with dash, weapons, abilities)
+    scripts/          map validator and preview renderer
+  backend/            @bagarre/backend: the Convex functions
+    convex/           schema, users, matches, Clerk auth config, _generated/
+    testing.ts        the functions as a module map, for convex-test in the smoke test
+docs/                 design notes (maps.md)
+turbo.json            task graph and caching
 ```
+
+`@bagarre/shared` and `@bagarre/backend` are "internal packages": their
+`exports` point straight at TypeScript source, and Vite, Bun and `tsc` read it
+as is. Only the client has a build output.
 
 The characters, props and particles are CC0 packs by Quaternius and Kenney;
 [ASSETS.md](ASSETS.md) lists them and how the files were built. They load
@@ -139,7 +182,7 @@ The server is the only source of truth. It runs a fixed 30 Hz loop, and the
 client sends it exactly one input per tick: a sequence number, a move direction,
 an aim angle, a "firing" flag, the cursor point (for grenades) and the ability
 press counters. It never sends a position. The movement and
-collision code lives in `shared/` as a pure function, `stepPlayer`, which the
+collision code lives in `packages/shared/` as a pure function, `stepPlayer`, which the
 server calls once per input it receives. The client calls the very same function
 the moment it sends an input, so your player moves right away instead of waiting
 a round trip (prediction). Every server snapshot carries, for each player, the
@@ -155,7 +198,7 @@ updates per second.
 
 ### Abilities, weapons and your own bullets
 
-The player step (`stepPlayer` in `shared/src/combat.ts`) covers more than
+The player step (`stepPlayer` in `packages/shared/src/combat.ts`) covers more than
 walking: dash, fire interval, magazine and reload, and the grenade and shield
 cooldowns. All of its state is synced, so reconciliation restarts from the
 server's exact values and replaying the inputs lands on the same result.

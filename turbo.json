@@ -1,0 +1,38 @@
+{
+  "$schema": "./node_modules/turbo/schema.json",
+  "ui": "stream",
+  "globalDependencies": ["tsconfig.base.json"],
+  "tasks": {
+    "dev": {
+      "cache": false,
+      "persistent": true,
+      "passThroughEnv": ["CLERK_*", "CONVEX_*", "GAME_SERVER_SECRET", "PORT", "VITE_*"]
+    },
+    "build": {
+      "dependsOn": ["^build"],
+      "env": ["VITE_*"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/.env",
+        "$TURBO_ROOT$/.env.local",
+        "$TURBO_ROOT$/.env.production",
+        "$TURBO_ROOT$/.env.production.local"
+      ],
+      "outputs": ["dist/**"]
+    },
+    "typecheck": {
+      "dependsOn": ["^typecheck"],
+      "outputs": []
+    },
+    "lint": {
+      "outputs": []
+    },
+    "smoke": {
+      "cache": false,
+      "passThroughEnv": ["CLERK_*", "CONVEX_*", "GAME_SERVER_SECRET", "NODE_ENV", "PORT"]
+    },
+    "maps:validate": {
+      "outputs": []
+    }
+  }
+}

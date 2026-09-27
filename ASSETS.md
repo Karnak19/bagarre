@@ -13,10 +13,10 @@ here anyway.
 
 | File | Size | What's in it |
 | --- | --- | --- |
-| `client/public/models/enemy.glb` | 428 KB | Quaternius "Enemy" (player slot 0, tinted orange) |
-| `client/public/models/soldier.glb` | 440 KB | Quaternius "Soldier" (player slot 1, tinted blue) |
-| `client/public/models/props.glb` | 128 KB | Arena props, one named node each |
-| `client/public/vfx/particles.png` | 212 KB | 4 x 4 greyscale atlas of Kenney particles |
+| `apps/client/public/models/enemy.glb` | 428 KB | Quaternius "Enemy" (player slot 0, tinted orange) |
+| `apps/client/public/models/soldier.glb` | 440 KB | Quaternius "Soldier" (player slot 1, tinted blue) |
+| `apps/client/public/models/props.glb` | 128 KB | Arena props, one named node each |
+| `apps/client/public/vfx/particles.png` | 212 KB | 4 x 4 greyscale atlas of Kenney particles |
 
 About 1.2 MB in total.
 
@@ -47,8 +47,9 @@ downscaled to 256 px.
 
 The raw packs are not in the repo. To rebuild the files above:
 
-- Models: `scripts/assets/build-models.ts` (gltf-transform: strip unused guns
+- Models: `apps/client/scripts/assets/build-models.ts` (gltf-transform: strip unused guns
   and clips, prune, dedup, resample, meshopt compression). Instructions at the
   top of the file. The client decodes meshopt with three's `MeshoptDecoder`.
-- Particle atlas: `scripts/assets/build-atlas.py` (Pillow). The cell order
-  must match `Cell` in `client/src/vfx.ts`.
+- Particle atlas: `apps/client/scripts/assets/build-atlas.py` (Pillow), or
+  `bun run assets:atlas <pack dir> public/vfx/particles.png` from `apps/client`.
+  The cell order must match `Cell` in `apps/client/src/vfx.ts`.
