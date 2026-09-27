@@ -62,11 +62,12 @@ The first run may need the browser: `bunx playwright install chromium` in
   client on 5610, built in development mode (the `__bagarre` dev handle stays
   in) and served by `vite preview`. Guests only: no Clerk key, no `.env.local`.
 - `server.ts` is the real `createServer()` with shorter rules (a duel is won
-  at 2 kills, the FFA countdown is 2 s) and a test-only control API on 2611:
+  at 2 kills, the FFA and team countdowns are 2 s) and a test-only control API on 2611:
   `POST /kill` kills a player through the room's own damage path, so a test
-  reaches a match end without aiming.
+  reaches a match end without aiming. It is the real damage path, so it does
+  nothing between teammates (the team spec checks that).
 - `tests/fixtures.ts` holds the fixtures. `players.open()` is a new player
-  (its own browser context); `players.duel()` and `players.host()` /
+  (its own browser context); `players.duel()`, `players.teams(n)` and `players.host()` /
   `players.join()` open a private game by its link, so tests running in
   parallel never meet. `Player.state()` reads the dev handle into one plain
   object (screen, card, phase, room, players, spectator...), and `kill()`,
@@ -223,7 +224,13 @@ TypeScript: React never runs per frame and there is no React Three Fiber.
   all adds `play-ffa`, `private-ffa`, `ffa-countdown`, `ffa-players`,
   `placement-row`, `result-winner`, `scoreboard-time`, `hud-ffa`,
   `hud-ffa-rank`, `hud-ffa-top`, `hud-ffa-time`, `hud-killfeed`,
-  `hud-killfeed-row` and `hud-minimap`. Spectating adds `spectate-bar`,
+  `hud-killfeed-row` and `hud-minimap`. The team deathmatch adds `play-tdm`,
+  `private-tdm`, `team-seats` (with `data-team`), `switch-team`,
+  `switch-team-hint`, `team-countdown`, `team-players`, `hud-team` (with
+  `data-red`, `data-blue`, `data-you`), `hud-team-red`, `hud-team-blue`,
+  `hud-team-you`, `hud-team-time`, `scoreboard-team` (with `data-team`,
+  `data-score`, `data-you`, `data-won`), `scoreboard-team-heading` and
+  `result-teams`. Spectating adds `spectate-bar`,
   `spectate-watching`, `spectate-mode` (and `spectate-mode-{follow,overview,free}`),
   `spectate-hints`, `spectate-count`, `spectate-join`, `spectate-leave`,
   `spectate-players`, `spectate-player`, `spectate-status` and the players'
@@ -300,13 +307,84 @@ On the menu, **Free for all** quick-matches an FFA (joins an open one or
 opens a new one), and **Private FFA** makes a private one. In dev,
 `?play=ffa` skips the menu and quick-matches an FFA.
 
+## Team deathmatch
+
+Red against blue, up to 4v4 (8 players), on the three FFA maps, each split
+into a red side and a blue side. The rules are `TEAM_RULES` in
+`packages/shared/src/modes.ts` (constants `TEAM_*` in `constants.ts`).
+
+- **Winning**: the first team to 25 kills (`TEAM_KILLS_TO_WIN`), or the team
+  ahead after 8 minutes (`TEAM_TIME_LIMIT`). A tie at the limit goes to
+  sudden death: the next team kill wins. It is capped like FFA's
+  (`FFA_SUDDEN_DEATH_MAX`, 60 s); if nobody breaks the tie by then the match
+  is a draw.
+- **Start**: a 10 s countdown (`TEAM_COUNTDOWN`) once each team has 2
+  connected players (2v2, `TEAM_MIN_PER_TEAM`). Players drop in mid-match up
+  to 4v4; a 9th is refused like any full room.
+- **Teams**: a joining player goes to the smaller team. On a tie, to the
+  one with fewer players connected, then (mid-match) the one behind on kills,
+  then red (`pickTeam`). While waiting, **Switch to Blue / Red** on the
+  waiting card sends `MSG_TEAM` (`{ team }`, checked by `parseTeam`); the
+  server allows it only if the sizes differ by at most one afterwards (so
+  from the bigger team of an odd count: 3v2 becomes 2v3; never in a 2v2).
+  Leaves that leave the teams lopsided (3v1) are evened out before the next
+  match, moving the latest joiner. A reconnect keeps the team.
+- **No friendly fire**: bullets fly through teammates, and grenades hurt
+  neither teammates nor the thrower. One rule, `canDamage(attackerTeam,
+  victimTeam, self)` in `packages/shared/src/combat.ts`, used by the server's
+  bullets, blasts and `damage`, and by the client's predicted bullets (which
+  only stop on players they can hurt), so a predicted bullet never "hits" a
+  teammate. In a duel or FFA every player is `NO_TEAM`, for which it is
+  always true (your own grenade included), so those modes play as before.
+- **Kills** count for the killer and for their team (`redScore` /
+  `blueScore` in the synced state); `winningTeam` is set at the end (`NO_TEAM`
+  for a draw). If every player of a team leaves mid-match, the other team
+  wins.
+- **Spawns**: each team starts and respawns on its own side, out of every
+  enemy's sight first (`ffaRespawnPoint` on the side's spawns, against the
+  living enemies; `ffaStartSpawns` per side at the start). The sides are
+  additive map data: `teams` on an `FfaMapDef`, two `{ name, spawns }` whose
+  `spawns` are indices into the map's own 16 FFA spawns (Crossroads and
+  Bastion: West / East, Freight: North Quay / South Quay). `TEAM_MAPS` is the
+  FFA maps that have them, `teamSpawns(map, team)` a side's spawns.
+  `bun scripts/ffa/validate.ts` (in `packages/shared`) checks them next to
+  the FFA checks: valid and disjoint indices, at least 6 spawns a side, the
+  same mean and closest distance to the hub (within 1 m), and no spawn within
+  10 m of an enemy one.
+- **Stats**: `matches.record` gets `mode: "tdm"` and each account player's
+  `team`: a win for every player on the winning team, a loss for the others
+  (a draw is a loss for everyone). The winning team is placed 1st, the other
+  2nd. The Convex fields are optional, so older rows and the other modes are
+  untouched.
+
+In a game, the team colours (theme `--bagarre-p6` red and `--bagarre-p7`
+blue, paint 6 and 7 in `apps/client/src/paint.ts`) replace the seat colours
+everywhere: the characters (red wears the soldier, blue the other model),
+the HP bar, the kill feed, the scoreboard, the minimap. Names tell teammates
+apart. The HUD shows the team score ("RED 12 – 9 BLUE", your team outlined,
+"You're on Red"), the time left and the kill feed; the minimap always shows
+your teammates, and enemies only when they fire, as in FFA. The waiting card
+lists both teams side by side with the switch button, then counts down. Tab
+and the result card group the players by team under each team's score, with
+the team's deaths; the result reads "Your team wins!", "Your team lost" or
+"Draw". Spectators get the team colours in the player list and the team score
+in the phase line.
+
+On the menu, **Team deathmatch** quick-matches one and **Private teams**
+makes a private one. The open games list shows the mode and the team counts
+("Team deathmatch · 3v2 (5/8)"). In dev, `?play=tdm` skips the menu.
+
+The e2e spec is `apps/e2e/tests/teams.spec.ts`, the smoke checks
+`apps/server/smoke-teams.ts`.
+
 ### Rooms and modes
 
-One room class plays both modes: `GameRoom` (`apps/server/src/GameRoom.ts`),
+One room class plays every mode: `GameRoom` (`apps/server/src/GameRoom.ts`),
 driven by the mode's rules (`ModeRules` in `packages/shared/src/modes.ts`:
-seats, start threshold, kill target, time limit, countdown, respawn delay,
-result delay, drop-in, map pool). `DuelRoom` and `FfaRoom` only pick the
-rules, and are registered as the `duel` and `ffa` room types. The simulation
+seats, start threshold, teams, kill target, time limit, countdown, respawn
+delay, result delay, drop-in, map pool). `DuelRoom`, `FfaRoom` and `TeamRoom`
+only pick the rules, and are registered as the `duel`, `ffa` and `tdm` room
+types. The simulation
 (inputs, bullets, grenades, damage) is shared; the mode shows up in a few
 places only: spawns, respawns, what a leave does, and the end conditions.
 `GameRoom.pinnedTo(mapId)` pins a room class to one map of its own pool
@@ -328,7 +406,8 @@ players leave).
 
 A client is not a player. A **seat** is a player: an entry in
 `state.players` plus its server-side bookkeeping, and the seat number is the
-player's `slot` (its colour, 0-5, and its bullet ids). A seat is taken in
+player's `slot` (its colour outside a team mode, 0-5, and its bullet ids; 0-7
+in a team deathmatch). A seat is taken in
 `onJoin`, kept through a dropped connection (`onDrop` / `onReconnect`, 20 s)
 and freed in `onLeave`.
 

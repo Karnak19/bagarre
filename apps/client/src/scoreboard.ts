@@ -3,8 +3,9 @@
 // from the synced room state (the server counts shots, hits, damage and
 // measures ping). Pure: no DOM.
 
-import { TICK_RATE, WEAPONS, findMap, ordinal, placements, type GameMode, type PlayerView } from "@bagarre/shared";
+import { NO_TEAM, TEAM_BLUE, TEAM_NAMES, TEAM_RED, TICK_RATE, WEAPONS, findMap, ordinal, placements, type GameMode, type PlayerView } from "@bagarre/shared";
 import type { Snapshot } from "./net.ts";
+import { TEAM_PAINT, paintOf } from "./paint.ts";
 
 export const COLUMNS = [
   { key: "kills", label: "Kills", short: "K" },
@@ -31,7 +32,10 @@ export function secondsLeft(s: Snapshot | null): number | null {
 export interface ScoreboardRow {
   id: string;
   name: string;
+  /** Paint index (paint.ts): the seat's colour, or the team's with teams. */
   slot: number;
+  /** TEAM_RED / TEAM_BLUE, NO_TEAM outside a team mode. */
+  team: number;
   you: boolean;
   /** Final place so far (kills, then deaths; equal players share it), and as "1st". */
   place: number;
@@ -66,6 +70,31 @@ export interface ScoreboardModel {
   suddenDeath: boolean;
   /** By place: most kills first, then fewest deaths. */
   rows: ScoreboardRow[];
+  /**
+   * Team deathmatch: the two teams, red then blue, each with its score (the
+   * team's kills), its rows by place within the team, and whether it won.
+   * Null in the other modes.
+   */
+  teams: ScoreboardTeam[] | null;
+  /** Our team (NO_TEAM: none, or watching). */
+  youTeam: number;
+  /** The winning team once the match ended (NO_TEAM: a draw, not over, or no teams). */
+  winningTeam: number;
+}
+
+export interface ScoreboardTeam {
+  team: number;
+  /** "Red" / "Blue". */
+  name: string;
+  /** Paint index of the team colour. */
+  slot: number;
+  score: number;
+  /** Kills and deaths of the players on it right now. */
+  kills: number;
+  deaths: number;
+  you: boolean;
+  won: boolean;
+  rows: ScoreboardRow[];
 }
 
 /** The scoreboard's content, from a snapshot (pure: no DOM). `you` is our session id. */
@@ -81,6 +110,47 @@ export function scoreboardModel(s: Snapshot | null, you: string): ScoreboardMode
   const alone = players.filter((p) => p.kills === top).length === 1;
   const running = !!s && s.phase !== "waiting";
   const left = secondsLeft(s);
+  const row = ({ player: p, place }: { player: PlayerView & { id: string }; place: number }): ScoreboardRow => ({
+    id: p.id,
+    name: p.name,
+    slot: paintOf(p),
+    team: p.team,
+    you: p.id === you,
+    place,
+    placeLabel: ordinal(place),
+    leader: top > 0 && alone && p.kills === top,
+    account: p.account,
+    away: !p.connected,
+    kills: p.kills,
+    deaths: p.deaths,
+    damage: p.damage,
+    shots: p.shots,
+    hits: p.hits,
+    accuracy: p.shots > 0 ? `${Math.round((100 * p.hits) / p.shots)}%` : "–",
+    weapon: WEAPONS[p.weapon]?.name ?? "",
+    ping: p.ping > 0 ? `${p.ping} ms` : "–",
+  });
+  const ended = s?.phase === "ended";
+  const winningTeam = ended ? (s?.winningTeam ?? NO_TEAM) : NO_TEAM;
+  const youTeam = mine?.team ?? NO_TEAM;
+  const teams =
+    s?.mode === "tdm"
+      ? [TEAM_RED, TEAM_BLUE].map((team): ScoreboardTeam => {
+          const on = players.filter((p) => p.team === team);
+          return {
+            team,
+            name: TEAM_NAMES[team],
+            slot: TEAM_PAINT[team],
+            score: team === TEAM_RED ? s.redScore : s.blueScore,
+            kills: on.reduce((n, p) => n + p.kills, 0),
+            deaths: on.reduce((n, p) => n + p.deaths, 0),
+            you: youTeam === team,
+            won: winningTeam === team,
+            // The leader mark is the team's best player here, not the whole room's.
+            rows: placements(on).map((pl) => ({ ...row(pl), leader: false })),
+          };
+        })
+      : null;
   return {
     mode: s?.mode ?? "duel",
     mapName: s ? (findMap(s.mapId)?.name ?? "") : "",
@@ -89,24 +159,9 @@ export function scoreboardModel(s: Snapshot | null, you: string): ScoreboardMode
     time: running ? clock(((s.endTick || s.tick) - s.startTick) / TICK_RATE) : "0:00",
     timeLeft: left === null ? "" : clock(Math.ceil(left)),
     suddenDeath: !!s?.suddenDeath,
-    rows: placed.map(({ player: p, place }) => ({
-      id: p.id,
-      name: p.name,
-      slot: p.slot,
-      you: p.id === you,
-      place,
-      placeLabel: ordinal(place),
-      leader: top > 0 && alone && p.kills === top,
-      account: p.account,
-      away: !p.connected,
-      kills: p.kills,
-      deaths: p.deaths,
-      damage: p.damage,
-      shots: p.shots,
-      hits: p.hits,
-      accuracy: p.shots > 0 ? `${Math.round((100 * p.hits) / p.shots)}%` : "–",
-      weapon: WEAPONS[p.weapon]?.name ?? "",
-      ping: p.ping > 0 ? `${p.ping} ms` : "–",
-    })),
+    rows: placed.map(row),
+    teams,
+    youTeam,
+    winningTeam,
   };
 }

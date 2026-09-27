@@ -95,6 +95,13 @@ export const CROSSROADS: FfaMapDef = {
     }),
   ),
   hub: { x: 0, z: 0 },
+  // Team deathmatch: the west half (Chapel and Market quarters, spawns of
+  // rotations 0 and 3) against the east half (Depot and Barracks, rotations 1
+  // and 2). Each is the other turned half a turn.
+  teams: [
+    { name: "West", spawns: [0, 1, 2, 3, 12, 13, 14, 15] },
+    { name: "East", spawns: [4, 5, 6, 7, 8, 9, 10, 11] },
+  ],
   zones: [
     { id: "square", name: "Square", x0: -12, z0: -12, x1: 12, z1: 12, tint: 0xd8c9a8 },
     { id: "chapel", name: "Chapel", x0: -30, z0: -30, x1: -4.5, z1: -4.5, tint: 0xa2503c },

@@ -155,11 +155,14 @@ function joinLabels(req: JoinRequest): { title: string; sub: string } {
   if (req.kind === "quick")
     return req.mode === "ffa"
       ? { title: "Finding a free for all…", sub: "Joining an open free for all, or opening a new one." }
-      : { title: "Finding a game…", sub: "Joining an open game, or opening a new one." };
+      : req.mode === "tdm"
+        ? { title: "Finding a team game…", sub: "Joining an open team deathmatch, or opening a new one." }
+        : { title: "Finding a game…", sub: "Joining an open game, or opening a new one." };
   if (req.kind === "private")
     return {
-      title: req.mode === "ffa" ? "Creating your private free for all…" : "Creating your private game…",
-      sub: req.mode === "ffa" ? "You'll get a link to send your friends." : "You'll get a link to send a friend.",
+      title:
+        req.mode === "ffa" ? "Creating your private free for all…" : req.mode === "tdm" ? "Creating your private team game…" : "Creating your private game…",
+      sub: req.mode === "duel" ? "You'll get a link to send a friend." : "You'll get a link to send your friends.",
     };
   if (req.kind === "watch") return { title: "Opening the game…", sub: `Watching game ${req.roomId}` };
   return { title: "Joining the game…", sub: `Game ${req.roomId}` };
@@ -298,6 +301,11 @@ export class App {
   /** Watch a game from the open games list: its watch page, whose route then joins as a spectator. */
   watchListed(roomId: string) {
     this.config.nav.toWatch(roomId);
+  }
+
+  /** Team deathmatch, while waiting: ask to move to the other team (refused by the server if it would unbalance them). */
+  switchTeam(team: number) {
+    this.current?.net.sendTeam(team);
   }
 
   /** "Join the game" while watching: take the free seat, on the same connection. */

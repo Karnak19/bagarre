@@ -102,6 +102,11 @@ export const bagarreTheme = defineTheme({
     "--bagarre-p3": "#b07cff",
     "--bagarre-p4": "#ff5fae",
     "--bagarre-p5": "#3fd9c6",
+    // Team deathmatch (paint 6 and 7): team red and team blue, every player's colour there.
+    "--bagarre-p6": "#ff4a4a",
+    "--bagarre-p6-hover": "#ff7070",
+    "--bagarre-p7": "#3f8cff",
+    "--bagarre-p7-hover": "#6ea8ff",
     /** The leader on the scoreboard, and the title's face. */
     "--bagarre-gold": "#ffd24a",
     "--bagarre-sand": "#ffd98a",

@@ -1,7 +1,7 @@
 // The open games list on the menu: public games with a free seat first
-// (duels waiting for a second player, free-for-alls waiting or in progress:
-// FFA takes players mid-match), then the ones to watch (full, or a duel
-// under way). lobby.ts polls them while the menu is up. A click joins
+// (duels waiting for a second player, free-for-alls and team deathmatches
+// waiting or in progress: they take players mid-match), then the ones to
+// watch (full, or a duel under way). lobby.ts polls them while the menu is up. A click joins
 // through the game's page, or watches through its watch page.
 
 import { Heading } from "@astryxdesign/core/Heading";
@@ -55,9 +55,9 @@ export function OpenGames() {
           {games.map((g) => {
             const map = findMap(g.mapId)?.name ?? "";
             const when = age(g.createdAt);
-            const ffa = g.mode === "ffa";
-            const mode = ffa ? "Free for all" : "Duel";
-            const seats = `${g.players}/${g.maxPlayers} players`;
+            const mode = g.mode === "ffa" ? "Free for all" : g.mode === "tdm" ? "Team deathmatch" : "Duel";
+            // Teams: "3v2 (5/8)".
+            const seats = g.teams ? `${g.teams[0]}v${g.teams[1]} (${g.players}/${g.maxPlayers})` : `${g.players}/${g.maxPlayers} players`;
             // A free-for-all takes players mid-match; a duel under way is full.
             const live = g.phase !== "waiting";
             const watching = (g.spectators ?? 0) > 0 ? `${g.spectators} watching` : "";

@@ -9,7 +9,8 @@ export const statsValidator = v.object({
   matches: v.number(),
 });
 
-export const modeValidator = v.union(v.literal("duel"), v.literal("ffa"));
+/** A match's mode. "tdm" (team deathmatch) came after "ffa"; older rows have no mode at all. */
+export const modeValidator = v.union(v.literal("duel"), v.literal("ffa"), v.literal("tdm"));
 
 export default defineSchema({
   users: defineTable({
@@ -28,14 +29,17 @@ export default defineSchema({
   /**
    * One row per match already recorded, so a retried `matches.record` is a
    * no-op. Also keeps the mode and each account player's final place (older
-   * rows, from before FFA, have neither).
+   * rows, from before FFA, have neither), and in a team deathmatch their team
+   * (0 red, 1 blue; absent in the other modes and on older rows).
    */
   recordedMatches: defineTable({
     matchId: v.string(),
     recordedAt: v.number(),
     mode: v.optional(modeValidator),
     placements: v.optional(
-      v.array(v.object({ clerkId: v.string(), place: v.number(), kills: v.number(), deaths: v.number() })),
+      v.array(
+        v.object({ clerkId: v.string(), place: v.number(), kills: v.number(), deaths: v.number(), team: v.optional(v.number()) }),
+      ),
     ),
   }).index("by_matchId", ["matchId"]),
 });

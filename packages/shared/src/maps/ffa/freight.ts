@@ -99,6 +99,12 @@ export const FREIGHT: FfaMapDef = {
     { x: -17.5, z: 9.5 },
   ],
   hub: { x: 0, z: 0 },
+  // Team deathmatch: the north half (North Quay, Yard, Warehouse: the even
+  // spawns) against the south half (the odd ones, their mirrors).
+  teams: [
+    { name: "North Quay", spawns: [0, 2, 4, 6, 8, 10, 12, 14] },
+    { name: "South Quay", spawns: [1, 3, 5, 7, 9, 11, 13, 15] },
+  ],
   zones: [
     { id: "crane", name: "Crane", x0: -8, z0: -7, x1: 8, z1: 7, tint: 0xf0c040 },
     { id: "northquay", name: "North Quay", x0: -31, z0: -26, x1: 31, z1: -19, tint: 0x4a7a9a },

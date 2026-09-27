@@ -14,6 +14,7 @@ import {
   DEFAULT_WEAPON,
   GRENADE,
   GRENADE_COOLDOWN_TICKS,
+  NO_TEAM,
   PLAYER_SPEED,
   SHIELD_COOLDOWN_TICKS,
   TICK_DT,
@@ -270,4 +271,25 @@ export function grenadeDamage(distance: number, self: boolean): number | null {
   const t = Math.max(0, distance) / GRENADE.radius;
   const dmg = GRENADE.maxDamage - (GRENADE.maxDamage - GRENADE.minDamage) * t;
   return Math.round(self ? dmg * GRENADE.selfDamageScale : dmg);
+}
+
+// --- Teams -------------------------------------------------------------------
+
+/** Two players on the same team (never true outside a team mode: everyone is NO_TEAM there). */
+export function sameTeam(a: number, b: number): boolean {
+  return a !== NO_TEAM && a === b;
+}
+
+/**
+ * Whether a hit from a player on `attackerTeam` hurts a player on
+ * `victimTeam`; `self` when it is the attacker's own grenade. The one rule
+ * for friendly fire, used by the server's bullets, grenades and damage, and by
+ * the client's predicted bullets (which fly through whoever this spares, like
+ * the server's do). Outside a team mode both teams are NO_TEAM, so everything
+ * hurts, your own grenade included, exactly as before. In a team mode nothing
+ * hurts a teammate, and your own grenade doesn't hurt you.
+ */
+export function canDamage(attackerTeam: number, victimTeam: number, self: boolean): boolean {
+  if (self) return victimTeam === NO_TEAM;
+  return !sameTeam(attackerTeam, victimTeam);
 }

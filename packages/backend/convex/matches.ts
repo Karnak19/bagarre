@@ -17,8 +17,9 @@ function constantTimeEqual(a: string, b: string): boolean {
 
 const count = v.number();
 
-/** Most players a match can have (a free-for-all seats six). */
-const MAX_MATCH_PLAYERS = 6;
+/** Most players a match of each mode can have. */
+const MAX_PLAYERS = { duel: 2, ffa: 6, tdm: 8 } as const;
+const MAX_MATCH_PLAYERS = MAX_PLAYERS.tdm;
 
 /**
  * Called by the game server, once per finished match, with the account
@@ -26,8 +27,10 @@ const MAX_MATCH_PLAYERS = 6;
  * call it over HTTP, but it only accepts calls carrying GAME_SERVER_SECRET.
  * Idempotent per `matchId`: a retry after a lost response changes nothing.
  *
- * Duel and free-for-all alike: `won` is first place, anything else is a
- * loss. The places (`place`, 1 = first) are kept on the match's row.
+ * Every mode alike: `won` is a win, anything else a loss. In a duel and a
+ * free-for-all a win is first place; in a team deathmatch it is being on
+ * the winning team (a draw is a loss for everyone). The places (`place`, 1 =
+ * first) and, with teams, each player's `team` are kept on the match's row.
  */
 export const record = mutation({
   args: {
@@ -41,6 +44,8 @@ export const record = mutation({
         deaths: count,
         won: v.boolean(),
         place: v.optional(v.number()),
+        /** Team deathmatch: 0 red, 1 blue. */
+        team: v.optional(v.number()),
       }),
     ),
   },
@@ -55,7 +60,7 @@ export const record = mutation({
       throw new ConvexError("Unauthorized");
     }
     if (matchId.length === 0 || matchId.length > 128) throw new ConvexError("Bad matchId");
-    const most = mode === "ffa" ? MAX_MATCH_PLAYERS : 2;
+    const most = MAX_PLAYERS[mode ?? "duel"];
     if (players.length > most) throw new ConvexError(`A ${mode ?? "duel"} has at most ${most} players`);
     for (const p of players) {
       for (const n of [p.kills, p.deaths]) {
@@ -63,6 +68,7 @@ export const record = mutation({
       }
       if (p.place !== undefined && (!Number.isInteger(p.place) || p.place < 1 || p.place > MAX_MATCH_PLAYERS))
         throw new ConvexError("Bad place");
+      if (p.team !== undefined && p.team !== 0 && p.team !== 1) throw new ConvexError("Bad team");
     }
 
     const seen = await ctx.db
@@ -74,7 +80,13 @@ export const record = mutation({
       matchId,
       recordedAt: Date.now(),
       mode: mode ?? "duel",
-      placements: players.map((p) => ({ clerkId: p.clerkId, place: p.place ?? (p.won ? 1 : 2), kills: p.kills, deaths: p.deaths })),
+      placements: players.map((p) => ({
+        clerkId: p.clerkId,
+        place: p.place ?? (p.won ? 1 : 2),
+        kills: p.kills,
+        deaths: p.deaths,
+        ...(p.team !== undefined ? { team: p.team } : {}),
+      })),
     });
 
     let updated = 0;

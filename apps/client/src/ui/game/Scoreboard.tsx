@@ -9,9 +9,9 @@ import { Text } from "@astryxdesign/core/Text";
 import { KILLS_TO_WIN } from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
 import { countRender } from "../../renders.ts";
-import { COLUMNS, scoreboardModel, type ScoreboardModel, type ScoreboardRow } from "../../scoreboard.ts";
+import { COLUMNS, scoreboardModel, type ScoreboardModel, type ScoreboardRow, type ScoreboardTeam } from "../../scoreboard.ts";
 import { jsonEqual, useEngine, useSelector } from "../hooks.ts";
-import { shared, slotDot } from "../styles.ts";
+import { shared, slotDot, slotText } from "../styles.ts";
 
 const NARROW = "@media (max-width: 640px)";
 
@@ -84,6 +84,11 @@ const styles = stylex.create({
   long: { display: { default: "inline", [NARROW]: "none" }, font: "inherit", letterSpacing: "inherit", color: "inherit" },
   short: { display: { default: "none", [NARROW]: "inline" }, textDecoration: "none" },
   hideNarrow: { display: { default: "table-cell", [NARROW]: "none" } },
+  teamCell: { paddingBlock: "10px 0", paddingInline: "4px" },
+  teamName: { fontSize: "16px", letterSpacing: "0.04em" },
+  teamScore: { marginInlineStart: "var(--spacing-3)", fontSize: "16px", fontWeight: 800 },
+  teamMeta: { marginInlineStart: "var(--spacing-3)", color: "var(--color-text-secondary)", fontSize: "12px", fontWeight: 600 },
+  teamWon: { marginInlineStart: "var(--spacing-3)", color: "var(--bagarre-gold)", fontSize: "12px", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em" },
   layer: {
     position: "fixed",
     inset: 0,
@@ -156,7 +161,9 @@ export function Scoreboard({
 }) {
   countRender("scoreboard");
   // A free-for-all: a place column, and the clock counts down instead of the duel score.
+  // A team deathmatch: the players grouped by team, each group under its team's score.
   const ffa = model.mode === "ffa";
+  const teams = model.teams;
   return (
     <VStack as="section" aria-label={label} xstyle={[styles.board, flat && styles.flat]} data-testid="scoreboard">
       <HStack justify="between" align="end" gap={3} xstyle={styles.head}>
@@ -165,10 +172,33 @@ export function Scoreboard({
             {model.mapName}
           </Text>
           <Text type="supporting" color="secondary">
-            First to {ffa ? model.killsToWin : KILLS_TO_WIN}
+            First to {ffa || teams ? model.killsToWin : KILLS_TO_WIN}
           </Text>
         </HStack>
-        {ffa ? (
+        {teams ? (
+          <HStack gap={3} xstyle={styles.baseline}>
+            <Text xstyle={styles.score} data-testid="scoreboard-score">
+              <Text as="span" color="inherit" xstyle={slotText(teams[0].slot)}>
+                {teams[0].name} {teams[0].score}
+              </Text>{" "}
+              –{" "}
+              <Text as="span" color="inherit" xstyle={slotText(teams[1].slot)}>
+                {teams[1].score} {teams[1].name}
+              </Text>
+            </Text>
+            {model.suddenDeath ? (
+              <Text xstyle={styles.sudden} data-testid="scoreboard-time">
+                Sudden death
+              </Text>
+            ) : (
+              model.timeLeft && (
+                <Text color="secondary" xstyle={styles.time} aria-label="Time left" data-testid="scoreboard-time">
+                  {model.timeLeft}
+                </Text>
+              )
+            )}
+          </HStack>
+        ) : ffa ? (
           <HStack gap={3} xstyle={styles.baseline}>
             {model.suddenDeath ? (
               <Text xstyle={styles.sudden} data-testid="scoreboard-time">
@@ -193,38 +223,85 @@ export function Scoreboard({
           </HStack>
         )}
       </HStack>
-      <Table density="compact" dividers="none" textOverflow="wrap" xstyle={styles.table}>
-        <TableHeader>
-          <TableRow isHeaderRow>
-            {ffa && (
-              <TableHeaderCell scope="col" xstyle={[styles.th, styles.thPlace]}>
-                Place
-              </TableHeaderCell>
-            )}
-            <TableHeaderCell scope="col" xstyle={[styles.th, styles.thPlayer]}>
-              Player
-            </TableHeaderCell>
-            {COLUMNS.map((c) => (
-              <TableHeaderCell key={c.key} scope="col" xstyle={[styles.th, c.key === "weapon" && styles.hideNarrow]}>
-                <Text as="span" color="inherit" xstyle={styles.long}>
-                  {c.label}
-                </Text>
-                <abbr title={c.label} {...stylex.props(styles.short)}>
-                  {c.short}
-                </abbr>
-              </TableHeaderCell>
-            ))}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {model.rows.map((r) => (
-            <Row key={r.id} row={r} you={r.you} placed={ffa} testId={rowTestId} />
-          ))}
-          {/* An empty seat while waiting for an opponent. */}
-          {!ffa && model.rows.length < 2 && <Row row={null} placed={false} testId={rowTestId} />}
-        </TableBody>
-      </Table>
+      {teams ? (
+        teams.map((t) => (
+          <VStack
+            key={t.team}
+            as="section"
+            aria-label={`${t.name} team`}
+            data-testid="scoreboard-team"
+            data-team={t.team}
+            data-score={t.score}
+            data-you={t.you ? "" : undefined}
+            data-won={t.won ? "" : undefined}
+          >
+            <TeamHeading team={t} />
+            <Board rows={t.rows} placed={false} rowTestId={rowTestId} />
+          </VStack>
+        ))
+      ) : (
+        <Board rows={model.rows} placed={ffa} rowTestId={rowTestId} openSeat={!ffa && model.rows.length < 2} />
+      )}
     </VStack>
+  );
+}
+
+/** The table of players: the column headings, then a row each (`openSeat`: an empty row for the duel's missing opponent). */
+function Board({ rows, placed, rowTestId, openSeat = false }: { rows: ScoreboardRow[]; placed: boolean; rowTestId: string; openSeat?: boolean }) {
+  return (
+    <Table density="compact" dividers="none" textOverflow="wrap" xstyle={styles.table}>
+      <TableHeader>
+        <TableRow isHeaderRow>
+          {placed && (
+            <TableHeaderCell scope="col" xstyle={[styles.th, styles.thPlace]}>
+              Place
+            </TableHeaderCell>
+          )}
+          <TableHeaderCell scope="col" xstyle={[styles.th, styles.thPlayer]}>
+            Player
+          </TableHeaderCell>
+          {COLUMNS.map((c) => (
+            <TableHeaderCell key={c.key} scope="col" xstyle={[styles.th, c.key === "weapon" && styles.hideNarrow]}>
+              <Text as="span" color="inherit" xstyle={styles.long}>
+                {c.label}
+              </Text>
+              <abbr title={c.label} {...stylex.props(styles.short)}>
+                {c.short}
+              </abbr>
+            </TableHeaderCell>
+          ))}
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((r) => (
+          <Row key={r.id} row={r} you={r.you} placed={placed} testId={rowTestId} />
+        ))}
+        {openSeat && <Row row={null} placed={false} testId={rowTestId} />}
+      </TableBody>
+    </Table>
+  );
+}
+
+/** A team's heading: its colour, name, score (the team's kills), players and deaths, and "your team" / "won". */
+function TeamHeading({ team: t }: { team: ScoreboardTeam }) {
+  return (
+    <HStack align="center" xstyle={styles.teamCell} data-testid="scoreboard-team-heading">
+      <HStack as="span" xstyle={[shared.dot, styles.dot, slotDot(t.slot)]} aria-hidden="true" />
+      <Text as="span" color="inherit" xstyle={[shared.display, styles.teamName, slotText(t.slot)]}>
+        {t.name}
+      </Text>
+      <Text as="span" xstyle={[styles.teamScore, shared.tabular]} aria-label={`${t.score} kills`}>
+        {t.score}
+      </Text>
+      <Text as="span" xstyle={[styles.teamMeta, shared.tabular]}>
+        {t.rows.length} {t.rows.length === 1 ? "player" : "players"} · {t.deaths} deaths{t.you ? " · your team" : ""}
+      </Text>
+      {t.won && (
+        <Text as="span" xstyle={styles.teamWon}>
+          Won
+        </Text>
+      )}
+    </HStack>
   );
 }
 

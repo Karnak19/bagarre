@@ -1,4 +1,4 @@
-// The menu screen (`/`): title, Play (quick duel), Free for all, Private game (duel or FFA), How to play
+// The menu screen (`/`): title, Play (quick duel), Free for all, Team deathmatch, Private game (duel, FFA or teams), How to play
 // and Settings, the account chip and the open games list. The live 3D scene
 // behind it is attract.ts. Shown while the flow is on the menu; during a
 // quick match's join the joining card takes over (ui/game/Cards.tsx).
@@ -8,7 +8,7 @@ import { Heading } from "@astryxdesign/core/Heading";
 import { Icon } from "@astryxdesign/core/Icon";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { Text } from "@astryxdesign/core/Text";
-import { FFA_MAX_PLAYERS, FFA_MIN_PLAYERS, KILLS_TO_WIN, MAPS, type GameMode } from "@bagarre/shared";
+import { FFA_MAX_PLAYERS, FFA_MIN_PLAYERS, KILLS_TO_WIN, MAPS, TEAM_SIZE, type GameMode } from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { openPanel } from "../../uiState.ts";
@@ -99,6 +99,16 @@ const styles = stylex.create({
       ":hover": { default: null, "@media (hover: hover)": "var(--bagarre-p1-hover)" },
     },
   },
+  // Team deathmatch: the red team's colour, a size down again.
+  tdm: {
+    color: "var(--color-on-accent)",
+    padding: "10px 18px 12px",
+    backgroundColor: {
+      default: "var(--bagarre-p6)",
+      ":hover": { default: null, "@media (hover: hover)": "var(--bagarre-p6-hover)" },
+    },
+  },
+  tdmLabel: { fontSize: "22px", lineHeight: 1, whiteSpace: "normal", textAlign: "start", overflow: "visible" },
   // Wraps to two lines ("Free for / all") rather than being cut off in the narrow button.
   ffaLabel: { fontSize: "24px", lineHeight: 1, whiteSpace: "normal", textAlign: "start", overflow: "visible" },
   playSub: {
@@ -186,7 +196,8 @@ function Menu({ focusPlay }: { focusPlay: boolean }) {
             Bagarre
           </Heading>
           <Text color="secondary" xstyle={styles.tagline}>
-            Isometric 1v1 duels, first to {KILLS_TO_WIN} kills. Or a free for all, up to {FFA_MAX_PLAYERS} players.
+            Isometric 1v1 duels, first to {KILLS_TO_WIN} kills. Or a free for all, up to {FFA_MAX_PLAYERS} players, or red
+            against blue, up to {TEAM_SIZE}v{TEAM_SIZE}.
           </Text>
         </VStack>
 
@@ -242,6 +253,29 @@ function Menu({ focusPlay }: { focusPlay: boolean }) {
               </VStack>
             </Button>
           </VStack>
+          <VStack xstyle={styles.row}>
+            <Button
+              label={`Team deathmatch: quick match, up to ${TEAM_SIZE}v${TEAM_SIZE}`}
+              variant="primary"
+              size="lg"
+              xstyle={[styles.play, styles.tdm, styles.fill]}
+              data-testid="play-tdm"
+              onClick={() => {
+                gesture();
+                app.quickMatch("tdm");
+              }}
+            >
+              <VStack as="span" gap={1} align="start">
+                <Text xstyle={[shared.display, styles.tdmLabel]} color="inherit">
+                  Team deathmatch
+                </Text>
+                <Text xstyle={styles.playSub}>
+                  Up to {TEAM_SIZE}v{TEAM_SIZE}
+                </Text>
+              </VStack>
+            </Button>
+            <PrivateButton mode="tdm" />
+          </VStack>
           <VStack xstyle={[styles.row, styles.rowEven]}>
             <PrivateButton mode="duel" />
             <PrivateButton mode="ffa" />
@@ -273,18 +307,23 @@ function Menu({ focusPlay }: { focusPlay: boolean }) {
   );
 }
 
+const PRIVATE = {
+  duel: { title: "Private game", short: "Private game", sub: "Duel a friend with a link", testId: "private-game" },
+  ffa: { title: "Private free for all", short: "Private FFA", sub: `Up to ${FFA_MAX_PLAYERS}, with a link`, testId: "private-ffa" },
+  tdm: { title: "Private team deathmatch", short: "Private teams", sub: `Up to ${TEAM_SIZE}v${TEAM_SIZE}, with a link`, testId: "private-tdm" },
+} as const;
+
 /** Private game of a mode: a room joined by its link only. */
 function PrivateButton({ mode }: { mode: GameMode }) {
   const { app, gesture } = useEngine();
-  const duel = mode === "duel";
-  const title = duel ? "Private game" : "Private free for all";
+  const p = PRIVATE[mode];
   return (
     <Button
-      label={title}
+      label={p.title}
       variant="secondary"
       size="lg"
       xstyle={[styles.wide, styles.fill]}
-      data-testid={duel ? "private-game" : "private-ffa"}
+      data-testid={p.testId}
       icon={<Icon icon={LockIcon} size="sm" />}
       onClick={() => {
         gesture();
@@ -293,10 +332,10 @@ function PrivateButton({ mode }: { mode: GameMode }) {
     >
       <VStack as="span" gap={0.5} align="start">
         <Text weight="semibold" color="inherit">
-          {duel ? "Private game" : "Private FFA"}
+          {p.short}
         </Text>
         <Text type="supporting" color="secondary">
-          {duel ? "Duel a friend with a link" : `Up to ${FFA_MAX_PLAYERS}, with a link`}
+          {p.sub}
         </Text>
       </VStack>
     </Button>

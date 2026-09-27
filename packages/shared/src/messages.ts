@@ -9,7 +9,8 @@
 // the message and keep the player in the match.
 
 import { isWeaponId } from "./combat.ts";
-import type { InputMessage, PickMessage, PingMessage } from "./protocol.ts";
+import { TEAM_BLUE, TEAM_RED } from "./constants.ts";
+import type { InputMessage, PickMessage, PingMessage, TeamMessage } from "./protocol.ts";
 
 /** Largest press counter or input seq (they are synced as uint32). */
 export const MAX_COUNTER = 0xffffffff;
@@ -58,4 +59,10 @@ export function parsePong(raw: unknown): PingMessage | null {
 /** MSG_TAKE_SEAT: a plain object; its fields are ignored. */
 export function parseTakeSeat(raw: unknown): Record<string, never> | null {
   return record(raw) ? {} : null;
+}
+
+/** MSG_TEAM: TEAM_RED or TEAM_BLUE, nothing else. */
+export function parseTeam(raw: unknown): TeamMessage | null {
+  const m = record(raw);
+  return m && (m.team === TEAM_RED || m.team === TEAM_BLUE) ? { team: m.team } : null;
 }

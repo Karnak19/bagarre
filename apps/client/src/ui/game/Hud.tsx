@@ -2,7 +2,8 @@
 // card, the weapon and ammo, the ability cooldowns, the sound toggle, the
 // weapon picker line and the netcode debug line. In a free-for-all the score
 // and the opponent's bar give way to the rank panel, the kill feed and the
-// minimap (HudFfa.tsx).
+// minimap (HudFfa.tsx); in a team deathmatch to the team score (HudTeam.tsx),
+// the same kill feed and minimap, in team colours.
 //
 // match.ts writes a HudModel every frame (hud.ts). Nothing here re-renders
 // per frame: each widget selects the few fields it shows and re-renders only
@@ -28,9 +29,11 @@ import * as stylex from "@stylexjs/stylex";
 import { useRef } from "react";
 import type { HudModel } from "../../hud.ts";
 import { countRender } from "../../renders.ts";
+import { paintOf } from "../../paint.ts";
 import { shallowEqual, useEngine, useSelector, useStoreEffect } from "../hooks.ts";
 import { shared, slotFill } from "../styles.ts";
 import { FfaPanel, KillFeed, MinimapBox } from "./HudFfa.tsx";
+import { TeamPanel } from "./HudTeam.tsx";
 
 const styles = stylex.create({
   root: { position: "fixed", inset: 0, pointerEvents: "none", zIndex: 10 },
@@ -112,15 +115,17 @@ export function Hud() {
   countRender("hud");
   const { hud } = useEngine();
   // A free-for-all swaps the duel's score and opponent bar for its rank panel,
-  // the kill feed and the minimap.
-  const ffa = useSelector(hud, (m) => !!m?.ffa);
+  // the kill feed and the minimap; a team deathmatch for the team score, the
+  // kill feed and the minimap.
+  const layout = useSelector(hud, (m) => (m?.team ? "team" : m?.ffa ? "ffa" : "duel"));
+  const big = layout !== "duel";
   return (
     <VStack xstyle={styles.root} data-testid="hud" aria-hidden="false">
-      {ffa ? (
+      {big ? (
         <HStack justify="between" align="start" gap={4} xstyle={styles.top}>
           <PlayerBar mine />
           <VStack gap={2} align="end">
-            <FfaPanel />
+            {layout === "team" ? <TeamPanel /> : <FfaPanel />}
             <KillFeed />
           </VStack>
         </HStack>
@@ -131,7 +136,7 @@ export function Hud() {
           <PlayerBar mine={false} />
         </HStack>
       )}
-      {ffa && <MinimapBox />}
+      {big && <MinimapBox />}
       <Status />
       <MapCard />
       <Picker />
@@ -168,7 +173,7 @@ function PlayerBar({ mine }: { mine: boolean }) {
     hud,
     (m) => {
       const v = mine ? m?.me : m?.opponent;
-      return { name: v?.name ?? "", hp: v?.hp ?? 0, slot: v ? v.slot : null, present: !!v, away: !!v && !v.connected };
+      return { name: v?.name ?? "", hp: v?.hp ?? 0, slot: v ? paintOf(v) : null, present: !!v, away: !!v && !v.connected };
     },
     shallowEqual,
   );

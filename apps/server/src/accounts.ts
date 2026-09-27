@@ -28,8 +28,10 @@ export interface MatchResult {
   deaths: number;
   /** First place (a shared first counts). */
   won: boolean;
-  /** Final place, 1 = first (see `placements` in @bagarre/shared). */
+  /** Final place, 1 = first (see `placements` in @bagarre/shared). With teams: 1 for the winning team, 2 for the other, 1 for both on a draw. */
   place: number;
+  /** Team deathmatch: the player's team (TEAM_RED or TEAM_BLUE). Absent in the other modes. */
+  team?: number;
 }
 
 export interface AccountsConfig {

@@ -1,6 +1,7 @@
-// The free-for-all minimap: a small canvas in a corner, drawn by the frame
-// loop (never by React). It shows the map's zones (tinted), the cover, the
-// landmarks, your position and facing, and enemies only when they fire: a
+// The minimap of the big maps (free for all and team deathmatch): a small
+// canvas in a corner, drawn by the frame loop (never by React). It shows the
+// map's zones (tinted), the cover, the landmarks, your position and facing,
+// your teammates always (team deathmatch), and enemies only when they fire: a
 // dot where the shot came from, fading over PING_MS. Staying quiet keeps you
 // hidden (see docs/ffa-maps.md, "Finding each other").
 //
@@ -20,7 +21,10 @@ const FRAME_MS = 1000 / 30;
 export interface MinimapPing {
   x: number;
   z: number;
+  /** Paint index (paint.ts). */
   slot: number;
+  /** Who fired: one dot per shooter. */
+  who: string;
   /** performance.now() of the shot. */
   at: number;
 }
@@ -61,20 +65,28 @@ export class Minimap {
     this.baseKey = "";
   }
 
-  /** An enemy fired from (x, z). */
-  ping(x: number, z: number, slot: number, at: number) {
+  /** An enemy fired from (x, z). `slot` is their paint index; `who` tells shooters of one colour apart (teams). */
+  ping(x: number, z: number, slot: number, at: number, who = String(slot)) {
     // One dot per shooter: a new shot replaces the older one.
-    const i = this.pings.findIndex((p) => p.slot === slot);
+    const i = this.pings.findIndex((p) => p.who === who);
     if (i >= 0) this.pings.splice(i, 1);
-    this.pings.push({ x, z, slot, at });
+    this.pings.push({ x, z, slot, at, who });
   }
 
   clear() {
     this.pings.length = 0;
   }
 
-  /** Per frame, from the match. `me` is our drawn position and aim (null: dead or not spawned). */
-  draw(now: number, me: { x: number; z: number; aim: number; slot: number; alive: boolean } | null) {
+  /**
+   * Per frame, from the match. `me` is our drawn position and aim (null: dead
+   * or not spawned), `slot` our paint index. `allies`: our living teammates,
+   * always shown (team deathmatch; empty otherwise).
+   */
+  draw(
+    now: number,
+    me: { x: number; z: number; aim: number; slot: number; alive: boolean } | null,
+    allies: readonly { x: number; z: number; slot: number }[] = [],
+  ) {
     const { canvas, ctx, map } = this;
     if (!canvas || !ctx || !map) return;
     if (now - this.lastDraw < FRAME_MS) return;
@@ -112,6 +124,18 @@ export class Minimap {
       ctx.stroke();
     }
     ctx.globalAlpha = 1;
+
+    // Teammates: always there, a smaller dot in the team colour.
+    for (const a of allies) {
+      const [px, py] = toPx(a.x, a.z);
+      ctx.fillStyle = PLAYER_CSS_COLORS[a.slot % PLAYER_CSS_COLORS.length];
+      ctx.strokeStyle = "rgba(0,0,0,0.7)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(px, py, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
 
     // You: a dot in your colour with a facing wedge.
     if (me) {

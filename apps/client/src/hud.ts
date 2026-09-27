@@ -14,6 +14,7 @@ export interface KillFeedLine {
   n: number;
   /** "" for a self-kill (own grenade): the line reads "victim [grenade]". */
   killer: string;
+  /** Paint indices (paint.ts): the seat colours, or the team colours in a team deathmatch. */
   killerSlot: number;
   victim: string;
   victimSlot: number;
@@ -44,6 +45,22 @@ export interface FfaHud {
   suddenDeath: boolean;
 }
 
+/** A team deathmatch's own HUD: the team score, the clock, and which team is ours. */
+export interface TeamHud {
+  /** Our team (TEAM_RED / TEAM_BLUE). */
+  you: number;
+  red: number;
+  blue: number;
+  killsToWin: number;
+  /** Players on each team. */
+  redPlayers: number;
+  bluePlayers: number;
+  /** Time left as "m:ss" ("" when not running). */
+  timeLeft: string;
+  lowTime: boolean;
+  suddenDeath: boolean;
+}
+
 export interface HudModel {
   status: string;
   me: PlayerView | null;
@@ -51,6 +68,8 @@ export interface HudModel {
   opponent: PlayerView | null;
   /** Free-for-all rank, top 3 and clock; null in a duel. */
   ffa: FfaHud | null;
+  /** Team deathmatch score and clock; null in the other modes. */
+  team: TeamHud | null;
   /** Recent deaths, oldest first (both modes; the HUD shows it in FFA). */
   feed: KillFeedLine[];
   /** Predicted local state (cooldowns, ammo), fresher than `me`. */

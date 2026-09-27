@@ -15,12 +15,15 @@ import { Character } from "./character.ts";
 import { Vfx, shieldMaterial } from "./vfx.ts";
 
 /**
- * One colour per seat (slot): orange and blue for the duel's two, then lime,
- * violet, pink and teal for the free-for-all's seats 2-5. The same values are
- * the theme's `--bagarre-p0`..`--bagarre-p5` (ui/theme/bagarre.source.ts), so
- * the HUD, the scoreboard and the minimap match the characters.
+ * The player palette, by paint index (see paint.ts). 0-5 are one colour per
+ * seat (slot): orange and blue for the duel's two, then lime, violet, pink
+ * and teal for the free-for-all's seats 2-5. 6 and 7 are the team colours,
+ * red and blue, never a seat's: in a team deathmatch every player is painted
+ * in their team's. The same values are the theme's `--bagarre-p0`..
+ * `--bagarre-p7` (ui/theme/bagarre.source.ts), so the HUD, the scoreboard and
+ * the minimap match the characters.
  */
-export const PLAYER_CSS_COLORS = ["#ff6b4a", "#4ab8ff", "#a6e04a", "#b07cff", "#ff5fae", "#3fd9c6"];
+export const PLAYER_CSS_COLORS = ["#ff6b4a", "#4ab8ff", "#a6e04a", "#b07cff", "#ff5fae", "#3fd9c6", "#ff4a4a", "#3f8cff"];
 export const PLAYER_COLORS = PLAYER_CSS_COLORS.map((c) => parseInt(c.slice(1), 16));
 /** The colour of a seat (slots past the palette wrap round). */
 export const playerColor = (slot: number) => PLAYER_COLORS[((slot % PLAYER_COLORS.length) + PLAYER_COLORS.length) % PLAYER_COLORS.length];

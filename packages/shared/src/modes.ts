@@ -1,6 +1,7 @@
-// Game modes. One room class on the server (GameRoom) plays both; everything
-// that differs between a duel and a free-for-all is in the mode's rules
-// below, so the room itself has no `if (ffa)` for the numbers.
+// Game modes. One room class on the server (GameRoom) plays all three;
+// everything that differs between a duel, a free-for-all and a team
+// deathmatch is in the mode's rules below, so the room itself has no
+// `if (ffa)` for the numbers.
 
 import {
   FFA_COUNTDOWN,
@@ -17,11 +18,20 @@ import {
   MAX_PLAYERS,
   RESPAWN_DELAY,
   ROOM_NAME,
+  TEAM_COUNTDOWN,
+  TEAM_END_DELAY,
+  TEAM_KILLS_TO_WIN,
+  TEAM_MAX_PLAYERS,
+  TEAM_MIN_PER_TEAM,
+  TEAM_MIN_PLAYERS,
+  TEAM_RESPAWN_DELAY,
+  TEAM_ROOM_NAME,
+  TEAM_TIME_LIMIT,
 } from "./constants.ts";
-import { FFA_MAPS } from "./maps/ffa/index.ts";
+import { FFA_MAPS, TEAM_MAPS } from "./maps/ffa/index.ts";
 import { MAPS, type MapDef } from "./maps/index.ts";
 
-export type GameMode = "duel" | "ffa";
+export type GameMode = "duel" | "ffa" | "tdm";
 
 export interface ModeRules {
   mode: GameMode;
@@ -35,7 +45,15 @@ export interface ModeRules {
   minToContinue: number;
   /** A duel only starts (and rematches) when every seat is connected; an FFA starts on the connected ones. */
   startNeedsAll: boolean;
-  /** Kills that win the match at once. */
+  /**
+   * Red against blue (team deathmatch): every seat is on a team, the kills
+   * count for the team, teammates can't hurt each other. False: every player
+   * for themselves.
+   */
+  teams: boolean;
+  /** With teams: connected players each team needs for a match to start (0 without teams). */
+  minPerTeam: number;
+  /** Kills that win the match at once (a team's kills, with teams). */
   killsToWin: number;
   /** Seconds before the most kills wins (0: no time limit). */
   timeLimit: number;
@@ -57,6 +75,8 @@ export const DUEL_RULES: ModeRules = {
   maxPlayers: MAX_PLAYERS,
   minToContinue: MAX_PLAYERS,
   startNeedsAll: true,
+  teams: false,
+  minPerTeam: 0,
   killsToWin: KILLS_TO_WIN,
   timeLimit: 0,
   countdown: 0,
@@ -73,6 +93,8 @@ export const FFA_RULES: ModeRules = {
   maxPlayers: FFA_MAX_PLAYERS,
   minToContinue: FFA_MIN_TO_CONTINUE,
   startNeedsAll: false,
+  teams: false,
+  minPerTeam: 0,
   killsToWin: FFA_KILLS_TO_WIN,
   timeLimit: FFA_TIME_LIMIT,
   countdown: FFA_COUNTDOWN,
@@ -82,10 +104,33 @@ export const FFA_RULES: ModeRules = {
   maps: FFA_MAPS,
 };
 
-export const MODES: Record<GameMode, ModeRules> = { duel: DUEL_RULES, ffa: FFA_RULES };
+/**
+ * Team deathmatch: red against blue, up to 4v4 on the FFA maps that have team
+ * sides. First team to 25 kills, or the most after 8 minutes (a tie goes to
+ * sudden death). The countdown starts at 2v2 and players drop in up to 4v4.
+ */
+export const TEAM_RULES: ModeRules = {
+  mode: "tdm",
+  roomName: TEAM_ROOM_NAME,
+  minPlayers: TEAM_MIN_PLAYERS,
+  maxPlayers: TEAM_MAX_PLAYERS,
+  minToContinue: 2,
+  startNeedsAll: false,
+  teams: true,
+  minPerTeam: TEAM_MIN_PER_TEAM,
+  killsToWin: TEAM_KILLS_TO_WIN,
+  timeLimit: TEAM_TIME_LIMIT,
+  countdown: TEAM_COUNTDOWN,
+  respawnDelay: TEAM_RESPAWN_DELAY,
+  endDelay: TEAM_END_DELAY,
+  dropIn: true,
+  maps: TEAM_MAPS,
+};
+
+export const MODES: Record<GameMode, ModeRules> = { duel: DUEL_RULES, ffa: FFA_RULES, tdm: TEAM_RULES };
 
 export function isGameMode(v: unknown): v is GameMode {
-  return v === "duel" || v === "ffa";
+  return v === "duel" || v === "ffa" || v === "tdm";
 }
 
 /** The rules of a synced `mode` string; an unknown one reads as a duel. */

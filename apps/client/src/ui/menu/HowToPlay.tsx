@@ -7,7 +7,7 @@ import { Kbd } from "@astryxdesign/core/Kbd";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { List, ListItem } from "@astryxdesign/core/List";
 import { Text } from "@astryxdesign/core/Text";
-import { DASH, GRENADE, KILLS_TO_WIN, SHIELD, WEAPONS } from "@bagarre/shared";
+import { DASH, GRENADE, KILLS_TO_WIN, SHIELD, TEAM_KILLS_TO_WIN, TEAM_SIZE, TEAM_TIME_LIMIT, WEAPONS } from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
 import type { ReactNode } from "react";
 import { shared } from "../styles.ts";
@@ -66,6 +66,10 @@ export function HowToPlay() {
     <VStack gap={0} data-testid="howto">
       <Text>
         A 1v1 duel. First to {KILLS_TO_WIN} kills wins, and the next match starts a few seconds later on another map.
+      </Text>
+      <Text>
+        Team deathmatch: red against blue, up to {TEAM_SIZE}v{TEAM_SIZE}. The first team to {TEAM_KILLS_TO_WIN} kills wins, or
+        the team ahead after {TEAM_TIME_LIMIT / 60} minutes. Your bullets and grenades never hurt a teammate, nor you.
       </Text>
 
       <Section>Controls</Section>

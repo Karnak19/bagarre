@@ -45,13 +45,49 @@ export interface FfaMapDef extends MapDef {
    * centre. The validator's first-contact model walks everyone toward it.
    */
   hub: Spawn;
+  /**
+   * Team deathmatch: the red side and the blue side (TEAM_RED, TEAM_BLUE).
+   * Optional, additive data: the FFA rules never read it, and a map without
+   * it is simply not in the team pool (TEAM_MAPS).
+   */
+  teams?: readonly [FfaTeamSide, FfaTeamSide];
 }
+
+/**
+ * One team's half of an FFA map: where that team starts and respawns. Its
+ * spawns are indices into the map's own `spawns` (the ones the FFA validator
+ * checks), so a team side is a subset of the FFA spawns, never new points.
+ * The two sides are disjoint and mirror each other (the validator's team
+ * check: enough spawns each, balanced in distance to the hub).
+ */
+export interface FfaTeamSide {
+  /** The side's name on this map ("West", "North Quay"), for callouts. */
+  name: string;
+  /** Indices into `spawns`. */
+  spawns: readonly number[];
+}
+
+/** An FFA map with team sides. */
+export type TeamMapDef = FfaMapDef & { teams: readonly [FfaTeamSide, FfaTeamSide] };
 
 // `spawns` on an FfaMapDef are not mirrored pairs (the MapDef comment is about
 // duel maps); there are 16 or more, spread all over, and any of them may be
 // used for the first spawn or a respawn (ffaRespawnPoint below).
 
 export const FFA_MAPS: readonly FfaMapDef[] = [CROSSROADS, FREIGHT, BASTION];
+
+/** The team deathmatch pool: the FFA maps with team sides. */
+export const TEAM_MAPS: readonly TeamMapDef[] = FFA_MAPS.filter((m): m is TeamMapDef => !!m.teams);
+
+/**
+ * A team's own spawns on a map (TEAM_RED or TEAM_BLUE). Every spawn of the
+ * map for a map without sides, or for no team.
+ */
+export function teamSpawns(map: MapDef, team: number): readonly Spawn[] {
+  const side = (map as Partial<FfaMapDef>).teams?.[team];
+  if (!side) return map.spawns;
+  return side.spawns.map((i) => map.spawns[i]).filter((s): s is Spawn => !!s);
+}
 
 /** The FFA map with this id, or the first one for an unknown id. */
 export function ffaMapById(id: string): FfaMapDef {

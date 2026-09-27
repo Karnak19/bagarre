@@ -1,5 +1,5 @@
 import { schema, t, type SchemaType } from "@colyseus/schema";
-import { DEFAULT_MAP_ID, DEFAULT_WEAPON, MAX_HP, WEAPONS } from "@bagarre/shared";
+import { DEFAULT_MAP_ID, DEFAULT_WEAPON, MAX_HP, NO_TEAM, WEAPONS } from "@bagarre/shared";
 
 // Positions and the dash direction are float64 on purpose: the client re-runs
 // the shared step function from these exact values during reconciliation. A
@@ -15,6 +15,8 @@ export const Player = schema(
     alive: t.boolean().default(true),
     lastSeq: t.uint32().default(0),
     slot: t.uint8().default(0),
+    /** TEAM_RED / TEAM_BLUE in a team deathmatch, NO_TEAM otherwise. */
+    team: t.uint8().default(NO_TEAM),
     respawnTicks: t.uint16().default(0),
 
     // Simulation state (see PlayerSim in packages/shared/src/protocol.ts).
@@ -93,19 +95,25 @@ export const KillEvent = schema(
     victim: t.string().default(""),
     victimName: t.string().default(""),
     victimSlot: t.uint8().default(0),
+    killerTeam: t.uint8().default(NO_TEAM),
+    victimTeam: t.uint8().default(NO_TEAM),
     weapon: t.uint8().default(0),
   },
   "KillEvent",
 );
 export type KillEvent = SchemaType<typeof KillEvent>;
 
-/** The room state of both modes (RoomStateView in @bagarre/shared). */
+/** The room state of every mode (RoomStateView in @bagarre/shared). */
 export const GameState = schema(
   {
-    /** "duel" or "ffa", from the room's rules. Never changes. */
+    /** "duel", "ffa" or "tdm", from the room's rules. Never changes. */
     mode: t.string().default("duel"),
     phase: t.string().default("waiting"),
     winner: t.string().default(""),
+    /** Team deathmatch: each team's kills this match, and the winner once it ended (NO_TEAM: a draw). */
+    redScore: t.uint16().default(0),
+    blueScore: t.uint16().default(0),
+    winningTeam: t.uint8().default(NO_TEAM),
     tick: t.uint32().default(0),
     /**
      * The map being played (a `MapDef.id`). Only changes between matches, in

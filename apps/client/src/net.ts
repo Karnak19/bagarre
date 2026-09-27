@@ -1,14 +1,16 @@
 import { Client, CloseCode, ErrorCode, type Room } from "@colyseus/sdk";
 import {
-  FFA_ROOM_NAME,
   GAMES_ROUTE,
+  MODES,
   MSG_INPUT,
   MSG_PICK,
   MSG_PING,
   MSG_PONG,
   MSG_TAKE_SEAT,
+  MSG_TEAM,
+  NO_TEAM,
   PLAYER_VIEW_KEYS,
-  ROOM_NAME,
+  isGameMode,
   rulesOf,
   watchPath,
   type OpenGame,
@@ -33,10 +35,14 @@ export interface Snapshot {
    */
   epoch: number;
   tick: number;
-  /** "duel" or "ffa" (never changes in a room). */
+  /** "duel", "ffa" or "tdm" (never changes in a room). */
   mode: GameMode;
   phase: Phase;
   winner: string;
+  /** Team deathmatch: each team's kills, and the winning team once ended (NO_TEAM: a draw, or no teams). */
+  redScore: number;
+  blueScore: number;
+  winningTeam: number;
   /** The map this snapshot is on. A change is a hard boundary, see match.ts. */
   mapId: string;
   /** Tick the current match started on, and ended on (0 while it runs). */
@@ -92,14 +98,19 @@ function capture(state: RoomStateView): Omit<Snapshot, "t" | "epoch"> {
       victim: k.victim,
       victimName: k.victimName,
       victimSlot: k.victimSlot,
+      killerTeam: k.killerTeam,
+      victimTeam: k.victimTeam,
       weapon: k.weapon,
     }),
   );
   return {
     tick: state.tick,
-    mode: state.mode === "ffa" ? "ffa" : "duel",
+    mode: isGameMode(state.mode) ? state.mode : "duel",
     phase: state.phase,
     winner: state.winner,
+    redScore: state.redScore ?? 0,
+    blueScore: state.blueScore ?? 0,
+    winningTeam: state.winningTeam ?? NO_TEAM,
     mapId: state.mapId,
     startTick: state.startTick,
     endTick: state.endTick,
@@ -183,7 +194,7 @@ export type JoinRequest =
 export type NetRole = "player" | "spectator";
 
 /** The matchmaking room name of a mode. */
-const roomName = (mode: GameMode) => (mode === "ffa" ? FFA_ROOM_NAME : ROOM_NAME);
+const roomName = (mode: GameMode) => MODES[mode].roomName;
 
 export type JoinFailure =
   /** The room exists but every player seat is taken. */
@@ -418,6 +429,12 @@ export class Net {
   sendPick(weapon: number) {
     if (this.status !== "connected" || this.role === "spectator") return;
     this.delay(() => this.send(MSG_PICK, { weapon }));
+  }
+
+  /** Team deathmatch, while waiting: ask to move to `team` (the server refuses it if it would unbalance the teams). */
+  sendTeam(team: number) {
+    if (this.status !== "connected" || this.role === "spectator") return;
+    this.delay(() => this.send(MSG_TEAM, { team }));
   }
 
   /** Spectator: take the free seat (the role flips on the snapshot that has us in `players`). */

@@ -7,10 +7,10 @@ import { SERVER_PORT, type GameMode } from "@bagarre/shared";
 export interface DevSearch {
   /**
    * Dev-only: skip the menu and quick-match at once (test scripts, quick
-   * testing); `?play=ffa` quick-matches a free for all. One-shot, dropped
-   * after use.
+   * testing); `?play=ffa` quick-matches a free for all, `?play=tdm` a team
+   * deathmatch. One-shot, dropped after use.
    */
-  play?: true | "ffa";
+  play?: true | "ffa" | "tdm";
   /** Ask for this map (dev servers only; the server ignores it in production). */
   map?: string;
   /** Extra round-trip latency in ms, split half each way. */
@@ -31,7 +31,7 @@ const str = (v: unknown) => (typeof v === "string" && v !== "" ? v : typeof v ==
 export function validateDevSearch(raw: Record<string, unknown>): DevSearch {
   const out: DevSearch = {};
   // `?play` arrives as "" (URLSearchParams) or true / "" (the router's JSON-ish parser).
-  if ("play" in raw && raw.play !== false && raw.play !== undefined) out.play = raw.play === "ffa" ? "ffa" : true;
+  if ("play" in raw && raw.play !== false && raw.play !== undefined) out.play = raw.play === "ffa" || raw.play === "tdm" ? raw.play : true;
   const map = str(raw.map);
   if (map) out.map = map;
   const lag = Number(raw.lag);
@@ -69,7 +69,7 @@ export function bootConfig(search = location.search): BootConfig {
     serverUrl,
     lagMs: s.lag ?? 0,
     mapParam: s.map ?? null,
-    playNow: import.meta.env.DEV && s.play ? (s.play === "ffa" ? "ffa" : "duel") : null,
+    playNow: import.meta.env.DEV && s.play ? (s.play === true ? "duel" : s.play) : null,
     maxFps: import.meta.env.DEV ? (s.fps ?? 0) : 0,
   };
 }
