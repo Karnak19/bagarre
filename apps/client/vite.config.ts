@@ -16,7 +16,7 @@ export default defineConfig({
     stylex({ devMode: "full", debug: false }),
     react(),
   ],
-  // .env.local lives at the repo root, shared with the server and Convex.
+  // .env.local lives at the repo root, shared with the game server.
   // Only VITE_* variables reach the browser.
   envDir: "../..",
   server: { port: 5173, strictPort: true },

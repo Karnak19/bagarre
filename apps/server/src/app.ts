@@ -1,6 +1,9 @@
 import { createAuthContext, createEndpoint, createRouter, defineRoom, defineServer, matchMaker } from "@colyseus/core";
 import { WebSocketTransport } from "@colyseus/ws-transport";
 import { FFA_ROOM_NAME, GAMES_ROUTE, ROOM_NAME, TEAM_ROOM_NAME, WATCH_ROUTE, type ModeRules, type OpenGame, type RoomMeta } from "@bagarre/shared";
+import { useDatabase } from "./accounts.ts";
+import { configureAuth, databaseService, type AuthConfig } from "./auth.ts";
+import { createDatabase, type DatabaseLocation } from "./db.ts";
 import { DuelRoom, FfaRoom, GameRoom, TeamRoom } from "./GameRoom.ts";
 
 /**
@@ -70,8 +73,8 @@ function watchEndpoint(allowRoom: (name: string) => boolean) {
       return await matchMaker.reserveSeatFor(listing, options, identity);
     } catch (e) {
       const err = e as { code?: number; message?: string };
-      // The status carries the Colyseus code when it is an HTTP one (AUTH_FAILED
-      // is 401, see AUTH_REJECTED_CODE); a full room (no client slot left) is 409.
+      // The status carries the Colyseus code when it is an HTTP one; a full
+      // room (no client slot left) is 409.
       const status = (typeof err.code === "number" && err.code >= 400 && err.code < 600 ? err.code : 409) as 409;
       throw ctx.error(status, { message: err.message ?? String(e) });
     }
@@ -85,7 +88,10 @@ function watchEndpoint(allowRoom: (name: string) => boolean) {
  * map of its mode's pool. `watchAnyRoom` opens the watch
  * route to every room type (the smoke test's own), not just "duel" and "ffa".
  * `duelRules` / `ffaRules` / `teamRules` tweak each mode's rules (the e2e
- * server's short kill target and countdown).
+ * server's short kill target and countdown). `database` is where the
+ * accounts live: "memory" for the smoke and e2e servers, else DATABASE_URL
+ * (see db.ts). `auth` overrides the public URLs, Discord and mail settings
+ * read from the environment (see auth.ts).
  */
 export function createServer(
   options: {
@@ -98,8 +104,13 @@ export function createServer(
     duelRules?: Partial<ModeRules>;
     ffaRules?: Partial<ModeRules>;
     teamRules?: Partial<ModeRules>;
+    database?: DatabaseLocation;
+    auth?: Partial<AuthConfig>;
   } = {},
 ) {
+  configureAuth(options.auth);
+  const db = createDatabase(options.database);
+  useDatabase(db);
   const watchGame = watchEndpoint((name) => options.watchAnyRoom === true || GAME_ROOM_NAMES.has(name));
   const duel = options.duelRules ? DuelRoom.withRules(options.duelRules) : DuelRoom;
   const ffa = options.ffaRules ? FfaRoom.withRules(options.ffaRules) : FfaRoom;
@@ -113,6 +124,8 @@ export function createServer(
       [FFA_ROOM_NAME]: defineRoom(options.ffaMapId ? ffa.pinnedTo(options.ffaMapId) : ffa),
       [TEAM_ROOM_NAME]: defineRoom(options.teamMapId ? tdm.pinnedTo(options.teamMapId) : tdm),
     },
+    // Booted before the server listens; adds the auth and account routes.
+    database: databaseService(db),
     routes: createRouter({ listGames, watchGame }),
   });
 }

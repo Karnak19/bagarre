@@ -1,11 +1,8 @@
 # Build, typecheck, lint, smoke and the Playwright e2e suite.
 #
-# No secrets: the repo is public and this workflow needs none. Without a
-# .env.local the game runs guest-only, which is all the checks need:
-# - smoke: the live Convex checks in smoke-accounts.ts (CONVEX_URL +
-#   GAME_SERVER_SECRET) print SKIP; the account logic is still checked
-#   against convex-test and locally signed tokens.
-# - e2e: always guests (no Clerk key); its game server reads no env file.
+# No secrets: the repo is public and this workflow needs none. The smoke and
+# e2e servers keep their accounts in an in-memory database (PGlite) and sign
+# tokens with the dev-only JWT secret, so no Postgres, Docker or env file.
 name: CI
 
 on:

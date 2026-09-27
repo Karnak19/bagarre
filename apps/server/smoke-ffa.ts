@@ -33,7 +33,6 @@ import {
   type PlayerView,
   type RoomStateView,
 } from "@bagarre/shared";
-import { api } from "@bagarre/backend/api";
 import { FfaRoom } from "./src/GameRoom.ts";
 import type { AccountsHarness } from "./smoke-accounts.ts";
 
@@ -384,18 +383,18 @@ async function timeLimit(url: string): Promise<Lines> {
   return lines;
 }
 
-/** First to 15 with three account players: the placements reach matches.record and Convex. */
+/** First to 15 with three account players: the placements are recorded, with the stats. */
 async function firstTo15(url: string, h: AccountsHarness): Promise<Lines> {
   const tag = "[ffa accounts]";
   const lines: Lines = [];
   const ok = (c: boolean, l: string) => lines.push([c, `${tag} ${l}`]);
-  const ids = ["user_ffa_1", "user_ffa_2", "user_ffa_3"];
-  for (const [i, sub] of ids.entries()) await h.t.withIdentity({ subject: sub }).mutation(api.users.claimUsername, { username: `FfaPlayer${i + 1}` });
-  const clients = await Promise.all(ids.map(async (sub) => {
+  const accounts = await Promise.all([1, 2, 3].map((i) => h.account(`FfaPlayer${i}`)));
+  const ids = accounts.map((a) => a.id);
+  const clients = accounts.map(({ token }) => {
     const cl = new Client(url);
-    cl.auth.token = await h.sign(sub);
+    cl.auth.token = token;
     return cl;
-  }));
+  });
   const first = await clients[0].create("ffa_test");
   const rooms = [first, await clients[1].joinById(first.roomId), await clients[2].joinById(first.roomId)];
   const recordedBefore = h.recorded.length;
@@ -410,7 +409,7 @@ async function firstTo15(url: string, h: AccountsHarness): Promise<Lines> {
     ok(ended && state(a).winner === a.sessionId && me(a)?.kills === FFA_KILLS_TO_WIN, `first to ${FFA_KILLS_TO_WIN} ends the match (A ${me(a)?.kills})`);
     await waitFor(() => h.recorded.length > recordedBefore, 3000);
     const rec = h.recorded[recordedBefore];
-    const place = (sub: string) => rec?.players.find((p) => p.clerkId === sub);
+    const place = (id: string) => rec?.players.find((p) => p.userId === id);
     // A: 15 kills. B: 2 kills, 8 deaths. C: 1 kill, 8 deaths.
     ok(
       !!rec &&
@@ -418,21 +417,23 @@ async function firstTo15(url: string, h: AccountsHarness): Promise<Lines> {
         place(ids[0])?.place === 1 && place(ids[0])?.won === true &&
         place(ids[1])?.place === 2 && place(ids[1])?.won === false &&
         place(ids[2])?.place === 3 && place(ids[2])?.won === false,
-      `matches.record gets the places 1, 2, 3; only first place is a win (${JSON.stringify(rec?.players)})`,
+      `the recorded match has the places 1, 2, 3; only first place is a win (${JSON.stringify(rec?.players)})`,
     );
-    type Row = { matchId: string; mode?: string; placements?: { clerkId: string; place: number }[] };
-    // convex-test's handle isn't typed with the schema here: read the table and pick the row.
-    const rows = (await h.t.run(async (ctx) => (ctx.db as unknown as { query(t: string): { collect(): Promise<Row[]> } }).query("recordedMatches").collect())) as Row[];
-    const row = rows.find((r) => r.matchId === rec?.matchId);
+    // The hook fires before the write: give it a moment.
+    let row = rec ? await h.matchRow(rec.matchId) : null;
+    for (let i = 0; i < 50 && rec && !row; i++) {
+      await sleep(50);
+      row = await h.matchRow(rec.matchId);
+    }
     ok(
       row?.mode === "ffa" && row.placements?.map((p) => p.place).sort().join(",") === "1,2,3",
-      `Convex keeps the mode and the placements (${JSON.stringify({ mode: row?.mode, placements: row?.placements })})`,
+      `the match row keeps the mode and the placements (${JSON.stringify({ mode: row?.mode, placements: row?.placements })})`,
     );
-    const p1 = await h.t.query(api.users.publicProfile, { username: "FfaPlayer1" });
-    const p2 = await h.t.query(api.users.publicProfile, { username: "FfaPlayer2" });
+    const p1 = await h.stats("FfaPlayer1");
+    const p2 = await h.stats("FfaPlayer2");
     ok(
-      p1?.stats.wins === 1 && p1.stats.losses === 0 && p2?.stats.wins === 0 && p2.stats.losses === 1,
-      `stats: 1st is a win, 2nd a loss (${JSON.stringify(p1?.stats)}, ${JSON.stringify(p2?.stats)})`,
+      p1?.wins === 1 && p1.losses === 0 && p2?.wins === 0 && p2.losses === 1,
+      `stats: 1st is a win, 2nd a loss (${JSON.stringify(p1)}, ${JSON.stringify(p2)})`,
     );
     // The rematch moves to... the same map here (the room is pinned), with everyone reset.
     const again = await waitFor(() => state(a).phase === "playing", 12_000);

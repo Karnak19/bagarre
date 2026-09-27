@@ -105,15 +105,8 @@ import {
   type Standing,
   type Vec2,
 } from "@bagarre/shared";
-import { AuthRejected, guestName, recordMatch, resolveIdentity, type Identity, type MatchResult } from "./accounts.ts";
+import { guestName, recordMatch, resolveIdentity, type Identity, type MatchResult } from "./accounts.ts";
 import { Bullet, GameState, Grenade, KillEvent, Player } from "./state.ts";
-
-/**
- * Error code of a join refused for a bad Clerk token: Colyseus' own
- * AUTH_FAILED (it doubles as the HTTP status, so it must stay in 200-599).
- * The client then falls back to guest.
- */
-export const AUTH_REJECTED_CODE = ErrorCode.AUTH_FAILED;
 
 /** Server-only bookkeeping per seat. Never synced. */
 interface PlayerInternal {
@@ -310,12 +303,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     // client's join fails and it offers to try again.
     if (matchMaker.state === matchMaker.MatchMakerState.SHUTTING_DOWN)
       throw new ServerError(ErrorCode.MATCHMAKE_UNHANDLED, "The game server is restarting.");
-    try {
-      return await resolveIdentity(token || undefined);
-    } catch (err) {
-      if (err instanceof AuthRejected) throw new ServerError(AUTH_REJECTED_CODE, err.message);
-      throw err;
-    }
+    // A bad or expired token joins as a guest (see accounts.ts).
+    return await resolveIdentity(token || undefined);
   }
 
   /**
@@ -1231,7 +1220,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   }
 
   /**
-   * Sends the finished match to Convex for the account players (guests are
+   * Records the finished match for the account players (guests are
    * skipped), with the places set on the players. A win is first place (the
    * one winner); every other place is a loss.
    */
@@ -1243,12 +1232,12 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       const place = p.place;
       // Teams: a win for everyone on the winning team, a loss for the others.
       if (this.rules.teams) {
-        results.push({ clerkId: internal.identity.clerkId, kills: p.kills, deaths: internal.deaths, won: p.team === winningTeam, place, team: p.team });
+        results.push({ userId: internal.identity.userId, kills: p.kills, deaths: internal.deaths, won: p.team === winningTeam, place, team: p.team });
         return;
       }
-      results.push({ clerkId: internal.identity.clerkId, kills: p.kills, deaths: internal.deaths, won: place === 1, place });
+      results.push({ userId: internal.identity.userId, kills: p.kills, deaths: internal.deaths, won: place === 1, place });
     });
-    // Fire and forget: the game loop never waits on Convex.
+    // Fire and forget: the game loop never waits on the database.
     void recordMatch(this.matchId, results, this.rules.mode);
   }
 

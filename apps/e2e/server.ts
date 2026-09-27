@@ -1,7 +1,8 @@
 // The game server the e2e suite plays against: the real one (createServer),
 // on its own port so it never meets `bun run dev`, with shorter rules so a
-// match can be played to the end in a few seconds. Guests only: no Clerk or
-// Convex keys are read here.
+// match can be played to the end in a few seconds. Accounts live in an
+// in-memory database (PGlite), fresh on every run; reset links go to the
+// console (no mail settings).
 //
 // Next to it, on PORT + 1, a small control API for the tests (test-only,
 // never part of the product):
@@ -27,7 +28,15 @@ export const E2E_RULES = {
 const port = Number(process.env.PORT ?? 2610);
 const controlPort = port + 1;
 
-const server = createServer({ gracefullyShutdown: false, duelRules: E2E_RULES.duel, ffaRules: E2E_RULES.ffa, teamRules: E2E_RULES.tdm });
+const server = createServer({
+  gracefullyShutdown: false,
+  duelRules: E2E_RULES.duel,
+  ffaRules: E2E_RULES.ffa,
+  teamRules: E2E_RULES.tdm,
+  database: "memory",
+  // The e2e client (playwright.config.ts), where reset links would land.
+  auth: { publicUrl: "http://localhost:5610", backendUrl: `http://localhost:${port}`, discord: null, mail: null },
+});
 await server.listen(port);
 
 /**

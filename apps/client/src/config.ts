@@ -53,20 +53,28 @@ export interface BootConfig {
   maxFps: number;
 }
 
+/**
+ * The game server's base URL, for the rooms (net.ts) and the accounts
+ * (auth.ts) alike: `?server=`, else `VITE_SERVER_URL`, else this host on the
+ * game server's port. `VITE_SERVER_URL` may be a path such as `/colyseus`: in
+ * production the client's own web server proxies it to the game server, on
+ * the same origin.
+ */
+export function resolveServerUrl(search = location.search): string {
+  const s = validateDevSearch(Object.fromEntries(new URLSearchParams(search)));
+  const configured = import.meta.env.VITE_SERVER_URL as string | undefined;
+  return (
+    s.server ??
+    (configured?.startsWith("/") ? new URL(configured, location.origin).href.replace(/\/$/, "") : configured) ??
+    `${location.protocol}//${location.hostname}:${SERVER_PORT}`
+  );
+}
+
 /** Read once at boot: the lag, map and server hold for the whole visit (like before the router). */
 export function bootConfig(search = location.search): BootConfig {
   const s = validateDevSearch(Object.fromEntries(new URLSearchParams(search)));
-  /**
-   * `VITE_SERVER_URL` may be a path such as `/colyseus`: in production the
-   * client's own web server proxies it to the game server, on the same origin.
-   */
-  const configured = import.meta.env.VITE_SERVER_URL as string | undefined;
-  const serverUrl =
-    s.server ??
-    (configured?.startsWith("/") ? new URL(configured, location.origin).href.replace(/\/$/, "") : configured) ??
-    `${location.protocol}//${location.hostname}:${SERVER_PORT}`;
   return {
-    serverUrl,
+    serverUrl: resolveServerUrl(search),
     lagMs: s.lag ?? 0,
     mapParam: s.map ?? null,
     playNow: import.meta.env.DEV && s.play ? (s.play === true ? "duel" : s.play) : null,

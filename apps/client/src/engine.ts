@@ -20,7 +20,7 @@ import { GameScene, setAssets } from "./scene.ts";
 import { installSpectatorControls } from "./spectate/controls.ts";
 import { devRenders } from "./renders.ts";
 import { Store } from "./store.ts";
-import { clerkOpen, ui } from "./uiState.ts";
+import { ui, type PanelName } from "./uiState.ts";
 
 export interface Engine {
   app: App;
@@ -81,7 +81,7 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
         match.onDispose = installSpectatorControls({
           canvas,
           actions: match.spectateActions,
-          enabled: () => match.spectating && !ui.getState().panel && !app.getState().paused && !clerkOpen(),
+          enabled: () => match.spectating && !ui.getState().panel && !app.getState().paused,
         });
         return match;
       },
@@ -101,9 +101,19 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
   let askedForUsername = false;
   account.subscribe(() => {
     const s = account.state;
-    if (askedForUsername || s.status !== "signedIn" || !s.profileLoaded || s.profile || s.backendError) return;
+    if (s.status === "signedOut") askedForUsername = false;
+    if (askedForUsername || s.status !== "signedIn" || !s.account || s.account.username) return;
     askedForUsername = true;
     if (app.getState().screen === "menu" && !ui.getState().panel) ui.patch({ panel: "account" });
+  });
+
+  // Back on the menu after a game: read the account again (the match may have counted).
+  let lastScreen = app.getState().screen;
+  app.subscribe(() => {
+    const screen = app.getState().screen;
+    if (screen === lastScreen) return;
+    if (screen === "menu" && lastScreen !== "joining" && account.state.status !== "signedOut") void account.refresh();
+    lastScreen = screen;
   });
 
   // --- The one frame loop (menu and game) --------------------------------------
@@ -160,7 +170,7 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
           get current() {
             return ui.getState().panel;
           },
-          open: (name: "howto" | "settings" | "account") => ui.patch({ panel: name }),
+          open: (name: PanelName) => ui.patch({ panel: name }),
           close: () => ui.patch({ panel: null }),
         },
         get scene() {

@@ -23,6 +23,7 @@ for (const [open, panel] of [
   ["open-howto", "panel-howto"],
   ["open-settings", "panel-settings"],
   ["account-chip", "panel-account"],
+  ["open-leaderboard", "panel-leaderboard"],
 ] as const) {
   test(`${panel} opens, closes with Esc and with the close button, and gives focus back`, async ({ players }) => {
     const a = await players.open("A");

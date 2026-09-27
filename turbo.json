@@ -6,7 +6,7 @@
     "dev": {
       "cache": false,
       "persistent": true,
-      "passThroughEnv": ["CLERK_*", "CONVEX_*", "GAME_SERVER_SECRET", "PORT", "VITE_*"]
+      "passThroughEnv": ["DATABASE_URL", "DISCORD_*", "JWT_SECRET", "MAIL_FROM", "PORT", "PUBLIC_*", "RESEND_API_KEY", "SESSION_SECRET", "VITE_*"]
     },
     "build": {
       "dependsOn": ["^build"],
@@ -33,7 +33,7 @@
     },
     "smoke": {
       "cache": false,
-      "passThroughEnv": ["CLERK_*", "CONVEX_*", "GAME_SERVER_SECRET", "NODE_ENV", "PORT"]
+      "passThroughEnv": ["NODE_ENV", "PORT", "SMOKE_PORT"]
     },
     "e2e": {
       "cache": false,

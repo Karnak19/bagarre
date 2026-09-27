@@ -38,8 +38,7 @@ import {
   type PlayerView,
   type RoomStateView,
 } from "@bagarre/shared";
-import { api } from "@bagarre/backend/api";
-import { ConvexHttpClient } from "convex/browser";
+import { writeMatch, type MatchResult } from "./src/accounts.ts";
 import { TeamRoom } from "./src/GameRoom.ts";
 import type { AccountsHarness } from "./smoke-accounts.ts";
 
@@ -451,20 +450,18 @@ async function listing(url: string): Promise<Lines> {
   return lines;
 }
 
-/** First to 25 with four account players: the winners reach matches.record (convex-test), with the teams. */
+/** First to 25 with four account players: the winners are recorded, with the teams. */
 async function firstTo25(url: string, h: AccountsHarness): Promise<Lines> {
   const tag = "[tdm accounts]";
   const lines: Lines = [];
   const ok = (c: boolean, l: string) => lines.push([c, `${tag} ${l}`]);
-  const ids = ["user_tdm_1", "user_tdm_2", "user_tdm_3", "user_tdm_4"];
-  for (const [i, sub] of ids.entries()) await h.t.withIdentity({ subject: sub }).mutation(api.users.claimUsername, { username: `TdmPlayer${i + 1}` });
-  const clients = await Promise.all(
-    ids.map(async (sub) => {
-      const cl = new Client(url);
-      cl.auth.token = await h.sign(sub);
-      return cl;
-    }),
-  );
+  const accounts = await Promise.all([1, 2, 3, 4].map((i) => h.account(`TdmPlayer${i}`)));
+  const ids = accounts.map((a) => a.id);
+  const clients = accounts.map(({ token }) => {
+    const cl = new Client(url);
+    cl.auth.token = token;
+    return cl;
+  });
   const first = await clients[0].create("tdm_test");
   const rooms = [first];
   for (const cl of clients.slice(1)) rooms.push(await cl.joinById(first.roomId));
@@ -483,60 +480,48 @@ async function firstTo25(url: string, h: AccountsHarness): Promise<Lines> {
     await waitFor(() => h.recorded.length > recordedBefore, 3000);
     const rec = h.recorded[recordedBefore];
     const sub = (r: Room) => ids[rooms.indexOf(r)];
-    const res = (r: Room) => rec?.players.find((p) => p.clerkId === sub(r));
+    const res = (r: Room) => rec?.players.find((p) => p.userId === sub(r));
     ok(
       !!rec &&
         rec.players.length === 4 &&
         red.every((r) => res(r)?.won === true && res(r)?.team === TEAM_RED && [1, 2].includes(res(r)?.place ?? 0)) &&
         blue.every((r) => res(r)?.won === false && res(r)?.team === TEAM_BLUE && [3, 4].includes(res(r)?.place ?? 0)) &&
         new Set(rec.players.map((p) => p.place)).size === 4,
-      `matches.record: a win for each red player (1st, 2nd), a loss for each blue (3rd, 4th) (${JSON.stringify(rec?.players)})`,
+      `recorded: a win for each red player (1st, 2nd), a loss for each blue (3rd, 4th) (${JSON.stringify(rec?.players)})`,
     );
-    type Row = { matchId: string; mode?: string; placements?: { clerkId: string; place: number; team?: number }[] };
-    // The harness logs the call before convex-test has run it: give the write a moment.
-    let row: Row | undefined;
-    for (let i = 0; i < 50 && !row; i++) {
-      const rows = (await h.t.run(async (ctx) => (ctx.db as unknown as { query(t: string): { collect(): Promise<Row[]> } }).query("recordedMatches").collect())) as Row[];
-      row = rows.find((r) => r.matchId === rec?.matchId);
-      if (!row) await sleep(50);
+    // The hook fires before the write: give it a moment.
+    let row = rec ? await h.matchRow(rec.matchId) : null;
+    for (let i = 0; i < 50 && rec && !row; i++) {
+      await sleep(50);
+      row = await h.matchRow(rec.matchId);
     }
     ok(
       row?.mode === "tdm" && row.placements?.filter((p) => p.team === TEAM_RED).length === 2,
-      `Convex keeps the mode and the teams (${JSON.stringify({ mode: row?.mode, placements: row?.placements })})`,
+      `the match row keeps the mode and the teams (${JSON.stringify({ mode: row?.mode, placements: row?.placements })})`,
     );
-    const p1 = await h.t.query(api.users.publicProfile, { username: `TdmPlayer${ids.indexOf(sub(red[0])) + 1}` });
-    const p4 = await h.t.query(api.users.publicProfile, { username: `TdmPlayer${ids.indexOf(sub(blue[0])) + 1}` });
-    ok(p1?.stats.wins === 1 && p4?.stats.losses === 1, `stats: a red player won, a blue one lost (${JSON.stringify(p1?.stats)}, ${JSON.stringify(p4?.stats)})`);
+    const p1 = await h.stats(`TdmPlayer${ids.indexOf(sub(red[0])) + 1}`);
+    const p4 = await h.stats(`TdmPlayer${ids.indexOf(sub(blue[0])) + 1}`);
+    ok(p1?.wins === 1 && p4?.losses === 1, `stats: a red player won, a blue one lost (${JSON.stringify(p1)}, ${JSON.stringify(p4)})`);
   } finally {
     await leaveAll(rooms);
   }
   return lines;
 }
 
-/** matches.record on the live dev deployment accepts a team match (mode "tdm", teams) and refuses a 9th player or a bad team. */
-async function liveTeamRecord(): Promise<Lines> {
-  const tag = "[tdm live]";
+/** Recording a team match: mode "tdm" with the teams; a 9th player or a bad team is refused. */
+async function teamRecord(): Promise<Lines> {
+  const tag = "[tdm record]";
   const lines: Lines = [];
   const ok = (c: boolean, l: string) => lines.push([c, `${tag} ${l}`]);
-  const url = process.env.CONVEX_URL;
-  const secret = process.env.GAME_SERVER_SECRET;
-  if (!url || !secret || secret === "smoke-local-secret") {
-    console.log("SKIP  live Convex team check (CONVEX_URL / GAME_SERVER_SECRET not set)");
-    return lines;
-  }
-  const client = new ConvexHttpClient(url);
-  const player = (i: number, team: number) => ({ clerkId: `smoke_tdm_${i}`, kills: 3, deaths: 1, won: team === TEAM_RED, place: team === TEAM_RED ? 1 : 2, team });
+  const player = (i: number, team: number): MatchResult => ({ userId: `smoke_tdm_${i}`, kills: 3, deaths: 1, won: team === TEAM_RED, place: i + 1, team });
   const winners = [0, 1, 2, 3].map((i) => player(i, i % 2));
   const matchId = `smoke-tdm:${crypto.randomUUID()}`;
-  const first = await client.mutation(api.matches.record, { secret, matchId, mode: "tdm", players: winners });
-  ok(first.status === "recorded", `the dev deployment records a team match with the winners and teams (${first.status})`);
-  const tooMany = await client
-    .mutation(api.matches.record, { secret, matchId: `${matchId}:9`, mode: "tdm", players: Array.from({ length: 9 }, (_, i) => player(i, i % 2)) })
-    .then(() => "accepted", (e: unknown) => String((e as { data?: unknown }).data ?? e));
+  const first = await writeMatch(matchId, winners, "tdm");
+  ok(first.status === "recorded", `a team match is recorded with the winners and teams (${first.status})`);
+  const failure = (p: Promise<unknown>) => p.then(() => "accepted", (e: unknown) => (e instanceof Error ? e.message : String(e)));
+  const tooMany = await failure(writeMatch(`${matchId}:9`, Array.from({ length: 9 }, (_, i) => player(i % 8, i % 2)), "tdm"));
   ok(/at most 8/.test(tooMany), `a team match has at most 8 players (${tooMany})`);
-  const badTeam = await client
-    .mutation(api.matches.record, { secret, matchId: `${matchId}:t`, mode: "tdm", players: [{ ...player(0, 0), team: 2 }] })
-    .then(() => "accepted", (e: unknown) => String((e as { data?: unknown }).data ?? e));
+  const badTeam = await failure(writeMatch(`${matchId}:t`, [{ ...player(0, 0), team: 2 }], "tdm"));
   ok(/Bad team/.test(badTeam), `a team other than 0 or 1 is refused (${badTeam})`);
   return lines;
 }
@@ -644,7 +629,7 @@ export async function teamChecks(url: string, h: AccountsHarness): Promise<Lines
     timeLimit(url),
     listing(url),
     firstTo25(url, h),
-    liveTeamRecord(),
+    teamRecord(),
     ...tiebreaks(url),
   ]);
   return results.map((r) =>

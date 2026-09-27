@@ -53,15 +53,12 @@ export default defineConfig({
       // `__bagarre` dev handle) and served by `vite preview`: a page loads a
       // few bundled files instead of Vite dev's hundreds of modules, which a
       // dozen fresh browser contexts fetching at once made slow and flaky.
-      // Pointed at the e2e game server. No Clerk key: guests only, sign-in
-      // shows as not configured (a real sign-in can't be done headless).
+      // Pointed at the e2e game server, which also holds the accounts.
       command: `bunx vite build --mode development --outDir ${CLIENT_DIST} --emptyOutDir --logLevel error && bunx vite preview --outDir ${CLIENT_DIST} --port ${CLIENT_PORT} --strictPort`,
       cwd: "../client",
       env: {
         NODE_ENV: "development",
         VITE_SERVER_URL: `http://localhost:${SERVER_PORT}`,
-        VITE_CLERK_PUBLISHABLE_KEY: "",
-        VITE_CONVEX_URL: "",
       },
       url: `http://localhost:${CLIENT_PORT}`,
       reuseExistingServer: false,

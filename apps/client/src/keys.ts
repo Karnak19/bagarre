@@ -9,8 +9,8 @@
 //   (engine.ts' frame loop) and for the whole of a spectating session, and
 //   ignores keys typed in text fields; a spectator's keys (Q / E, arrows,
 //   1-3, WASD) are spectate/controls.ts', which reach no InputMessage;
-// - here, nothing fires while a text field has focus or Clerk's modal is
-//   open, Esc is left to an open panel (the dialog closes itself), and Tab
+// - here, nothing fires while a text field has focus, Esc is left to an
+//   open panel (the dialog closes itself), and Tab
 //   only holds the scoreboard while the game has the input, so Tab moves
 //   focus as usual everywhere else.
 
@@ -18,7 +18,7 @@ import type { App, GameView } from "./app.ts";
 import { isMuted, setMuted } from "./audio.ts";
 import type { Input } from "./input.ts";
 import type { Readable } from "./store.ts";
-import { clerkOpen, ui } from "./uiState.ts";
+import { ui } from "./uiState.ts";
 
 const isEditable = (e: Event) => {
   const t = e.composedPath()[0] ?? e.target;
@@ -32,15 +32,15 @@ export function installAppKeys({ app, input, view }: { app: App; input: Input; v
       const s = app.getState();
       const panel = ui.getState().panel;
       if (e.code === "Escape") {
-        // Clerk's modal and our panels (native dialogs) close themselves on Esc.
-        if (clerkOpen() || panel) return;
+        // Our panels (native dialogs) close themselves on Esc.
+        if (panel) return;
         if (s.screen === "game" && !e.repeat) {
           app.togglePause();
           e.preventDefault();
         }
         return;
       }
-      if (s.screen !== "game" || isEditable(e) || clerkOpen()) return;
+      if (s.screen !== "game" || isEditable(e)) return;
       // Tab holds the scoreboard, but only while the game has the input (no
       // card, no panel), or while watching with no card or panel up:
       // everywhere else Tab moves focus as usual.

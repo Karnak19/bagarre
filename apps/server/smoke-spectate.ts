@@ -7,7 +7,7 @@
 // unpinned duel with a 1 s result delay (its rematch moves to another map)
 // and a 2 s spectators-only timeout, and an FFA with a 1 s countdown.
 
-import { matchMaker } from "@colyseus/core";
+import { ClientState, matchMaker } from "@colyseus/core";
 import { Client, type Room } from "@colyseus/sdk";
 import {
   CLOSE_NO_PLAYERS,
@@ -52,7 +52,7 @@ type LocalRoom = {
     countdown: number;
     spectators: number;
   };
-  clients: { sessionId: string; ref: { terminate(): void } }[];
+  clients: { sessionId: string; state: ClientState; ref: { terminate(): void } }[];
   metadata: RoomMeta;
   locked: boolean;
 };
@@ -232,16 +232,21 @@ async function duelStory(url: string): Promise<Lines> {
 
     // Reconnection: the SDK's own retry, then a reload's client.reconnect(token).
     const s3Events = lifecycle(s3);
-    room.clients.find((c) => c.sessionId === s3.sessionId)?.ref.terminate();
-    const back = await waitFor(() => s3Events.includes("reconnect"), 8000);
+    const s3Server = () => room.clients.find((c) => c.sessionId === s3.sessionId);
+    s3Server()?.ref.terminate();
+    // The SDK fires "reconnect" before its join acknowledgement reaches the
+    // server, and until the server reads it allowReconnection refuses the
+    // client ("not joined"): a drop in between would hold no seat.
+    const back = await waitFor(() => s3Events.includes("reconnect") && s3Server()?.state === ClientState.JOINED, 8000);
     ok(
       back && !s3Events.some((e) => e.startsWith("leave")) && room.state.spectators === 1,
       `a dropped spectator is back through the SDK's retry (${s3Events.join(", ")})`,
     );
     s3.reconnection.enabled = false;
     const token = s3.reconnectionToken;
-    room.clients.find((c) => c.sessionId === s3.sessionId)?.ref.terminate();
-    await waitFor(() => s3Events.some((e) => e.startsWith("leave")), 3000);
+    s3Server()?.ref.terminate();
+    // Gone from room.clients means onDrop has run and the seat is held.
+    await waitFor(() => !s3Server() && s3Events.some((e) => e.startsWith("leave")), 3000);
     const s3b = await new Client(url).reconnect(token);
     rooms.push(s3b);
     const resumed = await waitFor(() => state(s3b).players?.size === 2, 2000);

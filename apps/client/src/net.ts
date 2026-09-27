@@ -237,11 +237,12 @@ function toJoinError(err: unknown): JoinError {
 }
 
 /**
- * Joins a game with the Clerk token when signed in (sent as the Colyseus auth
- * header, read by GameRoom.onAuth), or without one as a guest. If the server
- * refuses the token, joins again as a guest and says so. The token is read
- * fresh on every join, so signing in or out from the menu applies to the
- * next game without a reload.
+ * Joins a game with the account's session token when signed in (sent as the
+ * Colyseus auth token, read by GameRoom.onAuth), or without one as a guest.
+ * The server treats a bad or expired token as a guest too; the player
+ * state's `account` flag says what it saw (see Net's onStateChange). The
+ * token is read fresh on every join, so signing in or out from the menu
+ * applies to the next game without a reload.
  *
  * `options` carries the dev `?map=` toggle (the server ignores it in
  * production).
@@ -260,25 +261,16 @@ export async function joinGame(url: string, req: JoinRequest, options: Record<st
     }
   }
   const token = await account.getJoinToken();
-  const attempt = (client: Client) => {
-    if (req.kind === "quick") return client.joinOrCreate(roomName(req.mode), options);
-    if (req.kind === "private") return client.create(roomName(req.mode), { ...options, private: true });
-    if (req.kind === "watch") return watch(client, req.roomId, options);
-    return client.joinById(req.roomId, options);
-  };
   const client = new Client(url);
-  if (token) client.auth.token = token;
+  // A new Client picks up the stored token by itself; say exactly what to send.
+  client.http.authToken = token;
   try {
-    return await attempt(client);
+    if (req.kind === "quick") return await client.joinOrCreate(roomName(req.mode), options);
+    if (req.kind === "private") return await client.create(roomName(req.mode), { ...options, private: true });
+    if (req.kind === "watch") return await watch(client, req.roomId, options);
+    return await client.joinById(req.roomId, options);
   } catch (err) {
-    if (!token || (err as { code?: number }).code !== ErrorCode.AUTH_FAILED) throw toJoinError(err);
-    console.warn("[net] session token refused, joining as guest:", err);
-    account.setNotice("Your session couldn't be verified, so you're playing as a guest.");
-    try {
-      return await attempt(new Client(url));
-    } catch (err2) {
-      throw toJoinError(err2);
-    }
+    throw toJoinError(err);
   }
 }
 
@@ -358,7 +350,7 @@ export class Net {
       // Copy now (the live state object keeps mutating), deliver later.
       const snap = capture(state as unknown as RoomStateView);
       const mine = snap.players.get(room.sessionId);
-      if (mine?.name) account.setPlayingAs(mine.name);
+      if (mine?.name) account.setPlayingAs(mine.name, !!mine.account);
       this.role = mine ? "player" : "spectator";
       const epoch = this.epoch;
       this.delay(() => this.onSnapshot({ ...snap, epoch, t: performance.now() }));

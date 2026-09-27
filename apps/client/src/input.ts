@@ -1,6 +1,6 @@
 import * as THREE from "three";
 
-/** A text field (ours, or one inside Clerk's modal, even in a shadow root). */
+/** A text field (even one in a shadow root). */
 function isEditable(e: Event) {
   const t = e.composedPath()[0] ?? e.target;
   return t instanceof HTMLElement && (t.isContentEditable || t.matches("input, textarea, select"));
