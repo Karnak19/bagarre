@@ -74,8 +74,10 @@ bun run push        # one-off push of the functions (convex dev --once)
   format, and draws another if the opponent has the same one).
 
 Code: `packages/backend/convex/` (schema, `users.ts`, `matches.ts`,
-`auth.config.ts`), `apps/server/src/accounts.ts`, `apps/client/src/auth.ts` and
-`apps/client/src/accountUi.ts`. The client and the server import the Convex
+`auth.config.ts`), `apps/server/src/accounts.ts`, `apps/client/src/auth.ts`
+(the account store) and `apps/client/src/ui/account/` (the chip, the panel,
+and `ClerkRoot.tsx`: `@clerk/react` and `convex/react`, loaded as its own
+chunk only when `VITE_CLERK_PUBLISHABLE_KEY` is set). The client and the server import the Convex
 API from the `@bagarre/backend` package (`@bagarre/backend/api`,
 `@bagarre/backend/username`), never by relative path.
 
@@ -129,11 +131,66 @@ server, and a game's link can be shared.
 Production hosting needs an SPA rewrite: every path (`/game/...` included)
 must serve `index.html`. Vite's dev server and `vite preview` already do.
 
-The flow (screens, routes, joining and leaving, the per-game flags) lives in
+The flow (screens, joining and leaving, the per-game flags) lives in
 `apps/client/src/app.ts` and the open games data in `lobby.ts`, both plain
-TypeScript stores with `getState()` / `subscribe()`; the DOM views
-(`menu.ts`, `overlays.ts`, `accountUi.ts`, `scoreboard.ts`'s table) only read
-them and call their actions.
+TypeScript stores with `getState()` / `subscribe()`. The pages are TanStack
+Router routes (`src/routes/`): entering `/` or `/game/$code` calls the flow's
+`routeMenu()` / `routeGame(code)` (the route's `onEnter` / `onStay`), so
+Back, Forward and pasted links all go through the same join and leave. See
+[Client UI](#client-ui) below.
+
+## Client UI
+
+The UI is React, on TanStack Router (file-based, with its Vite plugin) and
+the Astryx design system. The Three.js scene and the game loop stay plain
+TypeScript: React never runs per frame and there is no React Three Fiber.
+
+- `src/engine.ts` owns the scene, the attract loop, the match frames and the
+  one `requestAnimationFrame` loop. Each frame it publishes what the views
+  need into small stores: the game view (`GameView`, which card is up, the
+  latest snapshot) and the HUD model (`hud.ts`, written by `match.ts`).
+- React reads every store through `useSelector` / `useStore`
+  (`src/ui/hooks.ts`, on `useSyncExternalStore`): a component re-renders only
+  when the few fields it picked change. Values that move every frame (ability
+  cooldowns, the reload bar, the map card's fade, the debug line) are written
+  to the DOM from a store subscription (`useStoreEffect`), outside React. An
+  idle HUD does not re-render at all; in dev, `window.__bagarre.renders`
+  counts renders per widget.
+- `src/keys.ts` holds the app keys (Esc, Tab, M and 1-4 on cards) and the
+  input isolation rules; `src/uiState.ts` says which panel is open, so the
+  loop keeps the game's input off meanwhile.
+- `src/ui/`: `Shell.tsx` (root layout: theme, cards, Tab scoreboard, panels,
+  the lazy Clerk root), `menu/`, `game/` (HUD, cards, scoreboard, weapon
+  picker), `account/`, `Panels.tsx` and `Settings.tsx`.
+- Stable `data-testid`s mark the pieces tests drive: `play`, `private-game`,
+  `open-games`, `open-game`, `invite-link`, `copy-invite`, `waiting-card`,
+  `scoreboard`, `scoreboard-row`, `esc-menu`, `esc-resume`, `esc-settings`,
+  `esc-leave`, `result-card`, `rematch`, `main-menu`, `notice`,
+  `notice-retry`, `notice-back`, `account-chip`, `account-panel`,
+  `settings-volume`, `settings-mute`, and the HUD's `hud-*`.
+
+Astryx conventions (the agent cheat sheet `astryx init` wrote is
+`apps/client/.claude/CLAUDE.md`; `bun run astryx docs <topic>` and
+`bun run astryx component <Name>` in `apps/client` print the full reference):
+
+- Astryx components first (`Button`, `Card`, `Dialog`, `Table`, `Text`,
+  `HStack` / `VStack`...), imported per component
+  (`@astryxdesign/core/Button`). No raw layout `<div>`s.
+- Anything custom is StyleX: `stylex.create()` next to the component, passed
+  as `xstyle` to Astryx components. StyleX compiles at build time
+  (`@stylexjs/unplugin` in `vite.config.ts`). Values are theme tokens:
+  `var(--color-*)`, `var(--spacing-*)`, and the game's own `var(--bagarre-*)`.
+  A conditional style needs a `default` at every level
+  (`":hover": { default: null, "@media (hover: hover)": ... }`) or it won't
+  type-check as `xstyle`.
+- The look lives in the theme, `src/ui/theme/bagarre.source.ts`: Astryx's
+  neutral theme extended with the game's palette (orange `#ff6b4a` and blue
+  `#4ab8ff` player colours, dark translucent panels, the Black Ops One
+  stencil for display text). After editing it run `bun run theme:build` in
+  `apps/client`, which regenerates `bagarre.css` / `bagarre.js` next to it
+  (both committed).
+- The only plain CSS is `src/ui/global.css`: the font face, the full-screen
+  canvas and the page background.
 
 ## Controls
 
@@ -252,12 +309,13 @@ give only one player the lag.
 
 ```
 apps/
-  client/             @bagarre/client: Vite + Three.js
-    src/              scene, input, prediction, predicted bullets, interpolation, HUD,
-                      animated characters (character.ts), arena props (arenaView.ts), particles (vfx.ts),
-                      one game (match.ts), the menu's background scene (attract.ts);
-                      flow and data stores: app.ts (screens, joins, routes via router.ts), lobby.ts;
-                      DOM views: menu.ts, overlays.ts, scoreboard.ts, accountUi.ts, ui.ts
+  client/             @bagarre/client: Vite + Three.js, React UI
+    src/              engine.ts (scene, attract loop, the frame loop), scene, input, prediction,
+                      predicted bullets, interpolation, animated characters (character.ts),
+                      arena props (arenaView.ts), particles (vfx.ts), one game (match.ts),
+                      the menu's background scene (attract.ts);
+                      stores: app.ts (flow), lobby.ts, auth.ts (account), hud.ts, scoreboard.ts (model);
+                      routes/ (TanStack Router pages), ui/ (React + Astryx views, theme/)
     public/           models (glTF, meshopt-compressed), particle atlas and sounds, see ASSETS.md
     scripts/          asset rebuild scripts (assets/, sfx/)
   server/             @bagarre/server: Colyseus on Bun

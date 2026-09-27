@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -11,36 +11,7 @@
   </head>
   <body>
     <canvas id="game"></canvas>
-    <div id="hud" hidden>
-      <div class="top">
-        <div class="player" id="hud-me">
-          <div class="name">You</div>
-          <div class="hp"><div class="fill"></div></div>
-        </div>
-        <div class="score" id="hud-score">0 - 0</div>
-        <div class="player right" id="hud-opp">
-          <div class="name">Opponent</div>
-          <div class="hp"><div class="fill"></div></div>
-        </div>
-      </div>
-      <div id="hud-status">Connecting...</div>
-      <div id="hud-map" hidden>
-        <div class="title"></div>
-        <div class="sub"></div>
-      </div>
-      <div id="hud-bottom">
-        <div id="hud-weapon">
-          <div class="wname"></div>
-          <div class="ammo"></div>
-          <div class="reload"><div class="fill"></div></div>
-        </div>
-        <div class="ability" id="ab-dash"><div class="cd"></div><div class="key">Space</div><div class="label">Dash</div><div class="t"></div></div>
-        <div class="ability" id="ab-grenade"><div class="cd"></div><div class="key">Q</div><div class="label">Grenade</div><div class="t"></div></div>
-        <div class="ability" id="ab-shield"><div class="cd"></div><div class="key">E</div><div class="label">Shield</div><div class="t"></div></div>
-      </div>
-      <div id="hud-picker"></div>
-      <div id="hud-debug"></div>
-    </div>
-    <script type="module" src="/src/main.ts"></script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

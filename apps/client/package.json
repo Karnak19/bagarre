@@ -8,24 +8,37 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p .",
-    "lint": "oxlint src scripts vite.config.ts",
+    "lint": "oxlint src scripts vite.config.ts --ignore-pattern 'src/ui/theme/bagarre.*' --ignore-pattern src/routeTree.gen.ts",
     "assets:models": "bun scripts/assets/build-models.ts",
     "assets:atlas": "python3 scripts/assets/build-atlas.py",
-    "sfx:build": "bash scripts/sfx/build.sh"
+    "sfx:build": "bash scripts/sfx/build.sh",
+    "theme:build": "astryx theme build src/ui/theme/bagarre.source.ts -o src/ui/theme/bagarre.css",
+    "astryx": "astryx"
   },
   "dependencies": {
+    "@astryxdesign/core": "^0.6.3",
+    "@astryxdesign/theme-neutral": "^0.6.3",
     "@bagarre/backend": "workspace:*",
     "@bagarre/shared": "workspace:*",
     "@clerk/clerk-js": "^6.34.1",
+    "@clerk/react": "^6.17.2",
     "@clerk/ui": "^1.36.0",
     "@colyseus/sdk": "^0.18.4",
+    "@stylexjs/stylex": "^0.19.1",
+    "@tanstack/react-router": "^1.170.39",
     "convex": "^1.46.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "three": "^0.186.1"
   },
   "devDependencies": {
+    "@astryxdesign/cli": "^0.6.3",
+    "@stylexjs/unplugin": "^0.19.1",
+    "@tanstack/router-plugin": "^1.168.40",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@types/three": "^0.186.0",
+    "@vitejs/plugin-react": "^6.1.1",
     "typescript": "^7.0.2",
     "vite": "^8.3.1"
   }

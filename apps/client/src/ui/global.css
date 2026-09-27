@@ -1,0 +1,44 @@
+/*
+ * The one global stylesheet, on top of Astryx's reset: the display font, the
+ * full-screen canvas and the page itself. Everything else is StyleX next to
+ * its component, or the theme (ui/theme/).
+ */
+
+@font-face {
+  font-family: "Black Ops One";
+  src: url("/fonts/black-ops-one.woff2") format("woff2");
+  font-display: swap;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--color-background-body, #1a1d24);
+  color: var(--color-text-primary, #f2f2f2);
+  user-select: none;
+}
+
+::selection {
+  background: rgba(74, 184, 255, 0.4);
+  color: #fff;
+}
+
+/* The scene fades in once the assets are there (the flat background before). */
+#game {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  cursor: crosshair;
+  opacity: 0;
+  transition: opacity 700ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.scene-ready #game {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  #game {
+    transition: none;
+  }
+}

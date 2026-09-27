@@ -1,0 +1,256 @@
+// The menu screen (`/`): title, Play (quick match), Private game, How to play
+// and Settings, the account chip and the open games list. The live 3D scene
+// behind it is attract.ts. Shown while the flow is on the menu; during a
+// quick match's join the joining card takes over (ui/game/Cards.tsx).
+
+import { Button } from "@astryxdesign/core/Button";
+import { Heading } from "@astryxdesign/core/Heading";
+import { Icon } from "@astryxdesign/core/Icon";
+import { HStack, VStack } from "@astryxdesign/core/Layout";
+import { Text } from "@astryxdesign/core/Text";
+import { KILLS_TO_WIN, MAPS } from "@bagarre/shared";
+import * as stylex from "@stylexjs/stylex";
+import { useEffect, useRef, useSyncExternalStore } from "react";
+import { openPanel } from "../../uiState.ts";
+import { AccountChip } from "../account/AccountChip.tsx";
+import { useEngine, useSelector, useStore } from "../hooks.ts";
+import { KeyboardIcon, LockIcon } from "../icons.tsx";
+import { shared } from "../styles.ts";
+import { OpenGames } from "./OpenGames.tsx";
+
+const PHONE = "@media (max-width: 760px)";
+
+const styles = stylex.create({
+  screen: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 20,
+    display: "grid",
+    gridTemplateColumns: {
+      default: "minmax(320px, 440px) 1fr minmax(280px, 330px)",
+      "@media (max-width: 1100px)": "minmax(300px, 400px) 1fr minmax(260px, 300px)",
+      [PHONE]: "minmax(0, 1fr)",
+    },
+    alignContent: { default: "stretch", [PHONE]: "start" },
+    gap: { default: "var(--spacing-6)", [PHONE]: "var(--spacing-5)" },
+    padding: {
+      default: "clamp(24px, 6vh, 64px) clamp(24px, 4vw, 64px) clamp(20px, 4vh, 40px)",
+      [PHONE]: "28px 16px 24px",
+    },
+    overflowY: "auto",
+    // A surface under the text, darkest behind the title and the buttons.
+    backgroundImage: {
+      default:
+        "linear-gradient(90deg, rgba(10, 11, 16, 0.78) 0%, rgba(10, 11, 16, 0.45) 30%, rgba(10, 11, 16, 0) 55%), linear-gradient(0deg, rgba(10, 11, 16, 0.5) 0%, rgba(10, 11, 16, 0) 22%)",
+      [PHONE]: "linear-gradient(180deg, rgba(10, 11, 16, 0.55) 0%, rgba(10, 11, 16, 0.78) 45%, rgba(10, 11, 16, 0.9) 100%)",
+    },
+  },
+  main: {
+    gridColumn: "1",
+    gap: { default: "28px", [PHONE]: "20px" },
+    minHeight: { default: "100%", [PHONE]: 0 },
+  },
+  side: {
+    gridColumn: { default: "3", [PHONE]: "1" },
+    alignSelf: "start",
+  },
+  title: {
+    margin: 0,
+    fontSize: { default: "clamp(60px, 8.4vw, 112px)", [PHONE]: "clamp(52px, 17vw, 84px)" },
+    lineHeight: 0.9,
+    letterSpacing: "0.01em",
+    color: "var(--bagarre-sand)",
+    // A stamped, extruded block: six steps of burnt orange, then a soft drop.
+    textShadow:
+      "0 1px 0 #e0853a, 0 2px 0 #d0702a, 0 3px 0 #bd5d1d, 0 4px 0 #a64c14, 0 5px 0 #8c3e0f, 0 6px 0 #6e300b, 0 16px 26px rgba(0, 0, 0, 0.55)",
+  },
+  tagline: {
+    fontSize: { default: "17px", [PHONE]: "15px" },
+    fontWeight: 600,
+    maxWidth: "34ch",
+  },
+  actions: { maxWidth: { default: "340px", [PHONE]: "none" } },
+  play: {
+    height: "auto",
+    minHeight: 0,
+    justifyContent: "flex-start",
+    padding: "14px 22px 16px",
+    borderRadius: "10px",
+    color: "var(--color-on-accent)",
+    backgroundColor: {
+      default: "var(--bagarre-p0)",
+      ":hover": { default: null, "@media (hover: hover)": "var(--bagarre-p0-hover)" },
+    },
+    boxShadow: {
+      default: "inset 0 -4px 0 rgba(0, 0, 0, 0.22), 0 14px 28px -14px rgba(0, 0, 0, 0.8)",
+      ":active": "inset 0 -2px 0 rgba(0, 0, 0, 0.22), 0 10px 20px -12px rgba(0, 0, 0, 0.8)",
+    },
+    transform: { default: "none", ":active": "translateY(2px)" },
+  },
+  playLabel: { fontSize: "40px", lineHeight: 1 },
+  playSub: {
+    fontSize: "13px",
+    fontWeight: 700,
+    letterSpacing: "0.06em",
+    textTransform: "uppercase",
+    opacity: 0.78,
+    color: "inherit",
+  },
+  wide: {
+    height: "auto",
+    justifyContent: "flex-start",
+    padding: "11px 16px",
+    backgroundColor: {
+      default: "var(--bagarre-hud-panel)",
+      ":hover": { default: null, "@media (hover: hover)": "var(--bagarre-hud-panel-hover)" },
+    },
+  },
+  links: { marginInlineStart: "-6px" },
+  touch: {
+    maxWidth: "380px",
+    padding: "10px 12px",
+    borderRadius: "var(--radius-element)",
+    backgroundColor: "var(--color-warning-muted)",
+    color: "var(--color-text-yellow)",
+  },
+  maps: {
+    marginBlockStart: { default: "auto", [PHONE]: 0 },
+    maxWidth: "44ch",
+    color: "rgba(242, 242, 242, 0.5)",
+  },
+  mapsCount: { color: "var(--color-text-secondary)", fontWeight: 700 },
+  loading: { color: "rgba(242, 242, 242, 0.5)" },
+});
+
+/** A phone or tablet (no fine pointer), or a window too small to play in. */
+function isTouchOrSmall(): boolean {
+  const coarse = matchMedia("(pointer: coarse)").matches && !matchMedia("(any-pointer: fine)").matches;
+  return coarse || innerWidth < 760 || innerHeight < 480;
+}
+
+const subscribeResize = (fn: () => void) => {
+  addEventListener("resize", fn);
+  return () => removeEventListener("resize", fn);
+};
+
+/** Set once the flow has been anywhere but the menu: from then on, the menu focuses Play when it comes back. */
+let leftMenuOnce = false;
+
+/** The `/` route's page: the menu while the flow is on it. */
+export function MenuScreen() {
+  const { app } = useEngine();
+  const onMenu = useSelector(app, (s) => s.screen === "menu");
+  if (!onMenu) leftMenuOnce = true;
+  return onMenu ? <Menu focusPlay={leftMenuOnce} /> : null;
+}
+
+function Menu({ focusPlay }: { focusPlay: boolean }) {
+  const { app, lobby, loading, gesture } = useEngine();
+  const progress = useStore(loading);
+  const touch = useSyncExternalStore(subscribeResize, isTouchOrSmall);
+  const play = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (focusPlay) play.current?.focus({ preventScroll: true });
+  }, [focusPlay]);
+
+  // The open games list polls only while the menu is up.
+  useEffect(() => {
+    lobby.watch(true);
+    return () => lobby.watch(false);
+  }, [lobby]);
+
+  const panel = (name: "howto" | "settings") => () => {
+    gesture();
+    openPanel(name);
+  };
+
+  return (
+    <VStack as="main" aria-label="Main menu" data-testid="menu" xstyle={styles.screen}>
+      <VStack xstyle={styles.main}>
+        <VStack as="header" gap={2}>
+          <Heading level={1} xstyle={[shared.display, styles.title]}>
+            Bagarre
+          </Heading>
+          <Text color="secondary" xstyle={styles.tagline}>
+            Isometric 1v1 duels. First to {KILLS_TO_WIN} kills.
+          </Text>
+        </VStack>
+
+        {touch && (
+          <HStack gap={2} align="start" xstyle={styles.touch} data-testid="touch-note">
+            <Icon icon={KeyboardIcon} size="md" />
+            <Text color="inherit">
+              Bagarre is played with a keyboard and a mouse. Have a look around here, then come back on a computer to
+              play.
+            </Text>
+          </HStack>
+        )}
+
+        <VStack gap={3} xstyle={styles.actions}>
+          <Button
+            ref={play}
+            label="Play: quick match"
+            variant="primary"
+            size="lg"
+            xstyle={styles.play}
+            data-testid="play"
+            onClick={() => {
+              gesture();
+              app.quickMatch();
+            }}
+          >
+            <VStack as="span" gap={0.5} align="start">
+              <Text xstyle={[shared.display, styles.playLabel]} color="inherit">
+                Play
+              </Text>
+              <Text xstyle={styles.playSub}>Quick match</Text>
+            </VStack>
+          </Button>
+          <Button
+            label="Private game"
+            variant="secondary"
+            size="lg"
+            xstyle={styles.wide}
+            data-testid="private-game"
+            icon={<Icon icon={LockIcon} size="sm" />}
+            onClick={() => {
+              gesture();
+              app.privateGame();
+            }}
+          >
+            <VStack as="span" gap={0.5} align="start">
+              <Text weight="semibold" color="inherit">
+                Private game
+              </Text>
+              <Text type="supporting" color="secondary">
+                Play a friend with a link
+              </Text>
+            </VStack>
+          </Button>
+          <HStack gap={1} xstyle={styles.links}>
+            <Button label="How to play" variant="ghost" aria-haspopup="dialog" data-testid="open-howto" onClick={panel("howto")} />
+            <Button label="Settings" variant="ghost" aria-haspopup="dialog" data-testid="open-settings" onClick={panel("settings")} />
+          </HStack>
+          {progress !== null && (
+            <Text type="supporting" xstyle={[styles.loading, shared.tabular]} data-testid="menu-loading">
+              Loading the arena… {Math.round(progress * 100)}%
+            </Text>
+          )}
+        </VStack>
+
+        <Text type="supporting" xstyle={styles.maps}>
+          <Text as="span" type="supporting" xstyle={styles.mapsCount}>
+            {MAPS.length} maps
+          </Text>{" "}
+          {MAPS.map((m) => m.name).join(" · ")}
+        </Text>
+      </VStack>
+
+      <VStack as="aside" gap={3} xstyle={styles.side}>
+        <AccountChip />
+        <OpenGames />
+      </VStack>
+    </VStack>
+  );
+}

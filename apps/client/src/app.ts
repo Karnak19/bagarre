@@ -1,8 +1,10 @@
 // The app's flow, with no DOM in it: which screen is up, joining and leaving
-// rooms, the routes, and the per-game flags (paused, rematch pressed,
-// opponent left, scoreboard held). The views (menu.ts, overlays.ts, and
-// main.ts's wiring) read `getState()` / `gameView()` and call the actions;
-// they never touch the network or the rooms themselves.
+// rooms, and the per-game flags (paused, rematch pressed, opponent left,
+// scoreboard held). The React views (ui/) read `getState()` / `gameView()`
+// and call the actions; they never touch the network or the rooms
+// themselves. The routes belong to TanStack Router (routes/): the route
+// lifecycle calls `routeMenu()` / `routeGame()`, and this store moves between
+// pages through the `Navigator` it is given (router.tsx).
 //
 //   menu ──Play / Private / a listed game──▶ joining ──▶ game ──Leave / Main menu / Back──▶ menu
 //     ▲                                        │         (waiting ⇄ playing ⇄ ended are the server's
@@ -10,12 +12,33 @@
 //
 // Opening `/game/<code>` directly (or coming back to it with Forward) starts
 // at `joining` for that room.
+//
+// Pages and joins:
+// - `/` entered (boot, Back, Main menu): `routeMenu()` leaves any room.
+// - `/game/<code>` entered or its code changed: `routeGame(code)` joins that
+//   room, unless it is the one we are already in.
+// - Play / Private game run on `/`; once the room is joined the store pushes
+//   its page (`nav.toGame`), whose `routeGame` is then a no-op.
 
 import type { Phase } from "@bagarre/shared";
 import { guestName } from "./auth.ts";
 import type { Match } from "./match.ts";
 import { JoinError, Net, joinGame, type JoinRequest, type Snapshot } from "./net.ts";
-import { backToMenu, inviteUrl, onRouteChange, parseRoute, pushGame, stripPlayParam, type Route } from "./router.ts";
+
+/** How the flow moves between pages (implemented on TanStack Router in router.tsx). */
+export interface Navigator {
+  /** Pushes `/game/<code>` (a new history entry: Back returns to the menu). */
+  toGame(code: string): void;
+  /** Back to `/`: `history.back()` if this page was reached from the menu, else a replace. */
+  toMenu(): void;
+  /** The current page is a game page. */
+  onGamePage(): boolean;
+  /** The shareable link to a game. */
+  inviteUrl(code: string): string;
+}
+
+/** Room ids are Colyseus' 9-character ids; anything else can't be a game. */
+export const GAME_CODE = /^[A-Za-z0-9_-]{1,32}$/;
 
 export type Screen = "menu" | "joining" | "game" | "notice";
 
@@ -75,6 +98,7 @@ export interface AppConfig {
   lagMs: number;
   /** The dev `?map=` choice, passed to every join. */
   mapParam: string | null;
+  nav: Navigator;
 }
 
 const initialState: AppState = {
@@ -107,9 +131,7 @@ export class App {
   constructor(
     private engine: Engine,
     private config: AppConfig,
-  ) {
-    onRouteChange((r) => this.onRoute(r));
-  }
+  ) {}
 
   // --- State ---------------------------------------------------------------------
 
@@ -159,15 +181,26 @@ export class App {
 
   // --- Actions -----------------------------------------------------------------------
 
-  /** Boots from the current URL. `playNow`: the dev `?play`, straight into a quick match. */
-  start(playNow: boolean) {
-    const r = parseRoute();
-    if (playNow) {
-      stripPlayParam();
-      if (r.page === "game") this.onRoute(r);
-      else void this.join({ kind: "quick" });
-    } else if (r.page === "game") this.onRoute(r);
-    else this.showMenu();
+  /** Route lifecycle: `/` was entered. Leaves whatever game was up. */
+  routeMenu() {
+    if (this.state.screen !== "menu") this.showMenu();
+    else this.engine.enterMenu();
+  }
+
+  /** Route lifecycle: `/game/<code>` was entered (or its code changed). */
+  routeGame(code: string) {
+    if (!GAME_CODE.test(code)) {
+      this.joinToken++;
+      this.leaveRoom();
+      this.showNotice({
+        title: "This game doesn't exist anymore",
+        body: "That link isn't a game link. Start a new game from the menu.",
+        retry: null,
+      });
+      return;
+    }
+    if (this.current?.net.roomId === code) return;
+    void this.join({ kind: "id", roomId: code });
   }
 
   quickMatch() {
@@ -178,10 +211,9 @@ export class App {
     void this.join({ kind: "private" });
   }
 
-  /** A game from the open games list: its page, then join it. */
+  /** A game from the open games list: its page, whose route then joins it. */
   joinListed(roomId: string) {
-    pushGame(roomId);
-    void this.join({ kind: "id", roomId });
+    this.config.nav.toGame(roomId);
   }
 
   retry() {
@@ -191,7 +223,7 @@ export class App {
 
   /** Cancel, Leave match, Main menu, Back to menu: leave whatever is going on and go to `/`. */
   leave() {
-    if (parseRoute().page === "game") backToMenu();
+    if (this.config.nav.onGamePage()) this.config.nav.toMenu();
     else this.showMenu();
   }
 
@@ -237,25 +269,6 @@ export class App {
     this.engine.enterMenu();
   }
 
-  private onRoute(r: Route) {
-    if (r.page === "menu") {
-      if (this.state.screen !== "menu") this.showMenu();
-      return;
-    }
-    if (!r.code) {
-      this.joinToken++;
-      this.leaveRoom();
-      this.showNotice({
-        title: "This game doesn't exist anymore",
-        body: "That link isn't a game link. Start a new game from the menu.",
-        retry: null,
-      });
-      return;
-    }
-    if (this.current?.net.roomId === r.code) return;
-    void this.join({ kind: "id", roomId: r.code });
-  }
-
   private showNotice(notice: Notice) {
     this.set({ ...initialState, screen: "notice", notice });
   }
@@ -273,7 +286,6 @@ export class App {
         await new Net(room, 0).leave();
         return;
       }
-      if (req.kind !== "id") pushGame(room.roomId);
       const net = new Net(room, this.config.lagMs);
       net.onClosed = () => {
         if (this.current?.net !== net) return;
@@ -284,9 +296,11 @@ export class App {
       this.set({
         screen: "game",
         roomId: room.roomId,
-        inviteUrl: inviteUrl(room.roomId),
+        inviteUrl: this.config.nav.inviteUrl(room.roomId),
         isPrivate: req.kind === "private",
       });
+      // Play / Private game joined from the menu: now the game has a page.
+      if (req.kind !== "id") this.config.nav.toGame(room.roomId);
     } catch (err) {
       if (token !== this.joinToken) return;
       const e = err instanceof JoinError ? err : new JoinError("error", String(err));
