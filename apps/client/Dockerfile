@@ -26,7 +26,22 @@ ARG VITE_SERVER_URL=/colyseus
 ENV VITE_CLERK_PUBLISHABLE_KEY=$VITE_CLERK_PUBLISHABLE_KEY \
     VITE_CONVEX_URL=$VITE_CONVEX_URL \
     VITE_SERVER_URL=$VITE_SERVER_URL
-RUN cd apps/client && bun run build
+
+# With a production deploy key, the Convex functions deploy first and then the
+# client builds against that deployment's URL (VITE_CONVEX_URL is set by
+# `convex deploy`), so the backend and the app always ship together. Without a
+# key, only the client builds. The key is a build arg of this stage only: it
+# never reaches the final image. Convex changes must stay backward compatible,
+# since the old game server talks to the new functions until its container
+# is replaced.
+ARG CONVEX_DEPLOY_KEY=
+RUN if [ -n "$CONVEX_DEPLOY_KEY" ]; then \
+      cd packages/backend && CONVEX_DEPLOY_KEY="$CONVEX_DEPLOY_KEY" bunx convex deploy \
+        --cmd "cd ../../apps/client && bun run build" \
+        --cmd-url-env-var-name VITE_CONVEX_URL; \
+    else \
+      cd apps/client && bun run build; \
+    fi
 
 FROM caddy:2-alpine
 COPY apps/client/Caddyfile /etc/caddy/Caddyfile

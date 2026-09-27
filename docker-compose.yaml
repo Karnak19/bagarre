@@ -41,6 +41,8 @@ services:
         VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY}
         VITE_CONVEX_URL: ${VITE_CONVEX_URL}
         VITE_SERVER_URL: ${VITE_SERVER_URL:-/colyseus}
+        # Optional: deploys the Convex functions to production during the build.
+        CONVEX_DEPLOY_KEY: ${CONVEX_DEPLOY_KEY:-}
     restart: unless-stopped
     expose:
       - "80"
