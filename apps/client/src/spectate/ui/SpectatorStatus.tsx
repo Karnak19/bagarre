@@ -41,7 +41,7 @@ function statusLine(v: GameView | null): string {
   if (s.mode === "tdm") {
     if (s.phase === "playing") return s.suddenDeath ? `${teamScore} · sudden death` : teamScore;
     if (s.phase === "ended")
-      return s.winningTeam === NO_TEAM ? `${teamScore} · a draw · next match soon` : `${TEAM_NAMES[s.winningTeam]} team wins ${teamScore} · next match soon`;
+      return s.winningTeam === NO_TEAM ? `${teamScore} · next match soon` : `${TEAM_NAMES[s.winningTeam]} team wins ${teamScore} · next match soon`;
   }
   if (s.phase === "ended") {
     const winner = s.winner ? s.players.get(s.winner)?.name : "";

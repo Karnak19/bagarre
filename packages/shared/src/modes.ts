@@ -18,6 +18,7 @@ import {
   MAX_PLAYERS,
   RESPAWN_DELAY,
   ROOM_NAME,
+  SUDDEN_DEATH_MAX,
   TEAM_COUNTDOWN,
   TEAM_END_DELAY,
   TEAM_KILLS_TO_WIN,
@@ -57,6 +58,12 @@ export interface ModeRules {
   killsToWin: number;
   /** Seconds before the most kills wins (0: no time limit). */
   timeLimit: number;
+  /**
+   * A tie for the lead at the time limit goes to sudden death (the next kill
+   * that breaks it wins) for at most this many seconds; then the match ends
+   * and `rank`'s tiebreaks decide. 0 with no time limit (a duel).
+   */
+  suddenDeathMax: number;
   /** Seconds of countdown before a match starts once enough players are in (0: starts at once). */
   countdown: number;
   respawnDelay: number;
@@ -79,6 +86,10 @@ export const DUEL_RULES: ModeRules = {
   minPerTeam: 0,
   killsToWin: KILLS_TO_WIN,
   timeLimit: 0,
+  // A duel can't end level: it ends on the first player to KILLS_TO_WIN (one
+  // kill at a time), and a player leaving sends the room back to waiting with
+  // no result. So no sudden death, and `rank` never has a tie to break.
+  suddenDeathMax: 0,
   countdown: 0,
   respawnDelay: RESPAWN_DELAY,
   endDelay: MATCH_END_DELAY,
@@ -97,6 +108,7 @@ export const FFA_RULES: ModeRules = {
   minPerTeam: 0,
   killsToWin: FFA_KILLS_TO_WIN,
   timeLimit: FFA_TIME_LIMIT,
+  suddenDeathMax: SUDDEN_DEATH_MAX,
   countdown: FFA_COUNTDOWN,
   respawnDelay: FFA_RESPAWN_DELAY,
   endDelay: FFA_END_DELAY,
@@ -107,7 +119,7 @@ export const FFA_RULES: ModeRules = {
 /**
  * Team deathmatch: red against blue, up to 4v4 on the FFA maps that have team
  * sides. First team to 25 kills, or the most after 8 minutes (a tie goes to
- * sudden death). The countdown starts at 2v2 and players drop in up to 4v4.
+ * sudden death, then `rank`'s tiebreaks: never a draw). The countdown starts at 2v2 and players drop in up to 4v4.
  */
 export const TEAM_RULES: ModeRules = {
   mode: "tdm",
@@ -120,6 +132,7 @@ export const TEAM_RULES: ModeRules = {
   minPerTeam: TEAM_MIN_PER_TEAM,
   killsToWin: TEAM_KILLS_TO_WIN,
   timeLimit: TEAM_TIME_LIMIT,
+  suddenDeathMax: SUDDEN_DEATH_MAX,
   countdown: TEAM_COUNTDOWN,
   respawnDelay: TEAM_RESPAWN_DELAY,
   endDelay: TEAM_END_DELAY,
@@ -138,26 +151,81 @@ export function rulesOf(mode: string): ModeRules {
   return isGameMode(mode) ? MODES[mode] : DUEL_RULES;
 }
 
+/**
+ * One entry of a ranking: a player, or a team (its kills, its players' damage
+ * together). `reachedAt` is the server tick at which `kills` was reached: the
+ * tick of the latest kill, or the match start with none.
+ */
 export interface Standing {
   id: string;
   kills: number;
-  deaths: number;
+  /** Damage dealt during the match. */
+  damage: number;
+  reachedAt: number;
 }
 
 /**
- * Final places: most kills first, then fewest deaths. Players equal on both
- * share a place (1, 1, 3...). Used by the server for the result and the stats,
- * and by the client for the placement table, so both agree.
+ * Why first place won when it was level on kills with second: most damage
+ * dealt ("damage"), reached that kill score first ("first"), or the lot
+ * ("lot"). "" when it won outright on kills (or was alone).
  */
-export function placements<T extends Standing>(players: readonly T[]): { player: T; place: number }[] {
-  const sorted = [...players].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
-  const out: { player: T; place: number }[] = [];
-  sorted.forEach((p, i) => {
-    const prev = out[i - 1];
-    const tied = prev && prev.player.kills === p.kills && prev.player.deaths === p.deaths;
-    out.push({ player: p, place: tied ? prev.place : i + 1 });
-  });
-  return out;
+export type TiebreakReason = "" | "damage" | "first" | "lot";
+
+/**
+ * FNV-1a (32 bits) of a string: a small, fast hash, the same on the server
+ * and the client. The lot of `rank` is drawn with it.
+ */
+export function fnv1a(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/** An entry's lot in a match: the lowest wins. Reproducible from the seed (the match id) and the entry's id. */
+export function lotOf(seed: string, id: string): number {
+  return fnv1a(`${seed}:${id}`);
+}
+
+/**
+ * The final order of a match, with no draws: every entry gets its own place,
+ * 1 to n. Most kills first; entries level on kills are split by, in turn:
+ *   1. the most damage dealt,
+ *   2. the one who reached that kill score first (earliest `reachedAt`),
+ *   3. the lot (`lotOf` the seed, the match id: reproducible, never random).
+ * Deaths never count. The same function ranks the players of a duel or an
+ * FFA and the two teams of a team deathmatch (and the players within each
+ * team), on the server; clients show the places the server synced.
+ * `reason` is why the first one won (see TiebreakReason).
+ */
+export function rank<T extends Standing>(entries: readonly T[], seed: string): { order: { entry: T; place: number }[]; reason: TiebreakReason } {
+  const lot = new Map(entries.map((e) => [e.id, lotOf(seed, e.id)]));
+  const sorted = [...entries].sort(
+    (a, b) =>
+      b.kills - a.kills ||
+      b.damage - a.damage ||
+      a.reachedAt - b.reachedAt ||
+      lot.get(a.id)! - lot.get(b.id)! ||
+      // Two ids with the same hash: still one order, whatever the input order.
+      (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
+  const [first, second] = sorted;
+  const reason: TiebreakReason =
+    !first || !second || first.kills !== second.kills
+      ? ""
+      : first.damage !== second.damage
+        ? "damage"
+        : first.reachedAt !== second.reachedAt
+          ? "first"
+          : "lot";
+  return { order: sorted.map((entry, i) => ({ entry, place: i + 1 })), reason };
+}
+
+/** `TiebreakReason` from a synced string (anything unknown reads as "", won outright). */
+export function parseTiebreak(v: unknown): TiebreakReason {
+  return v === "damage" || v === "first" || v === "lot" ? v : "";
 }
 
 /** "1st", "2nd", "3rd", "4th"... */

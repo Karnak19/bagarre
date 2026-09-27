@@ -22,7 +22,6 @@ import {
   canDamage,
   findMap,
   ordinal,
-  placements,
   sameTeam,
   weaponDef,
   type InputMessage,
@@ -40,7 +39,7 @@ import type { Net, Snapshot } from "./net.ts";
 import { Predictor } from "./prediction.ts";
 import { paintFor, paintOf } from "./paint.ts";
 import { GameScene, PLAYER_CSS_COLORS, PlayerMesh, playerColor } from "./scene.ts";
-import { clock, secondsLeft } from "./scoreboard.ts";
+import { byPlace, clock, secondsLeft } from "./scoreboard.ts";
 import { sceneRig } from "./spectate/camera.ts";
 import type { SpectatorControlActions } from "./spectate/controls.ts";
 import type { CameraMode } from "./spectate/model.ts";
@@ -684,7 +683,7 @@ export class Match {
     const all: (PlayerView & { id: string })[] = [];
     s.players.forEach((p, id) => all.push({ ...p, id }));
     all.sort((a, b) => a.slot - b.slot);
-    const placed = placements(all);
+    const placed = byPlace(all, s.phase === "ended");
     const mine = placed.find((p) => p.player.id === you);
     const left = secondsLeft(s);
     const running = s.phase === "playing";

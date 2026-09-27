@@ -3,7 +3,7 @@
 // from the synced room state (the server counts shots, hits, damage and
 // measures ping). Pure: no DOM.
 
-import { NO_TEAM, TEAM_BLUE, TEAM_NAMES, TEAM_RED, TICK_RATE, WEAPONS, findMap, ordinal, placements, type GameMode, type PlayerView } from "@bagarre/shared";
+import { NO_TEAM, TEAM_BLUE, TEAM_NAMES, TEAM_RED, TICK_RATE, WEAPONS, findMap, ordinal, type GameMode, type PlayerView } from "@bagarre/shared";
 import type { Snapshot } from "./net.ts";
 import { TEAM_PAINT, paintOf } from "./paint.ts";
 
@@ -15,6 +15,19 @@ export const COLUMNS = [
   { key: "weapon", label: "Weapon", short: "Gun" },
   { key: "ping", label: "Ping", short: "Ping" },
 ] as const;
+
+/**
+ * Players by place. Once the match ended: the places the server synced
+ * (`PlayerView.place`, all different: the server alone knows the tiebreaks,
+ * see `rank` in @bagarre/shared); anyone without one (joined after the end)
+ * goes last. While it runs: a live order, most kills then most damage, one
+ * place each. Equal players keep their input order (by seat, see callers).
+ */
+export function byPlace<T extends PlayerView>(players: readonly T[], ended: boolean): { player: T; place: number }[] {
+  const last = (p: PlayerView) => p.place || Number.MAX_SAFE_INTEGER;
+  const sorted = [...players].sort(ended ? (a, b) => last(a) - last(b) : (a, b) => b.kills - a.kills || b.damage - a.damage);
+  return sorted.map((player, i) => ({ player, place: ended && player.place ? player.place : i + 1 }));
+}
 
 /** Seconds as "m:ss". */
 export function clock(seconds: number) {
@@ -37,10 +50,10 @@ export interface ScoreboardRow {
   /** TEAM_RED / TEAM_BLUE, NO_TEAM outside a team mode. */
   team: number;
   you: boolean;
-  /** Final place so far (kills, then deaths; equal players share it), and as "1st". */
+  /** Place (see `byPlace`: the final one once ended, else live), and as "1st". */
   place: number;
   placeLabel: string;
-  /** Most kills, alone at the top. */
+  /** Most kills, alone at the top (once ended: the winner, 1st). */
   leader: boolean;
   account: boolean;
   /** Lost connection, seat held. */
@@ -68,7 +81,7 @@ export interface ScoreboardModel {
   /** FFA: time left, "m:ss" ("" with no limit). */
   timeLeft: string;
   suddenDeath: boolean;
-  /** By place: most kills first, then fewest deaths. */
+  /** By place (`byPlace`). */
   rows: ScoreboardRow[];
   /**
    * Team deathmatch: the two teams, red then blue, each with its score (the
@@ -78,7 +91,7 @@ export interface ScoreboardModel {
   teams: ScoreboardTeam[] | null;
   /** Our team (NO_TEAM: none, or watching). */
   youTeam: number;
-  /** The winning team once the match ended (NO_TEAM: a draw, not over, or no teams). */
+  /** The winning team once the match ended (NO_TEAM: not over, or no teams). */
   winningTeam: number;
 }
 
@@ -103,7 +116,8 @@ export function scoreboardModel(s: Snapshot | null, you: string): ScoreboardMode
   s?.players.forEach((p, id) => players.push({ ...p, id }));
   // Equal players keep a stable order (by seat).
   players.sort((a, b) => a.slot - b.slot);
-  const placed = placements(players);
+  const ended = s?.phase === "ended";
+  const placed = byPlace(players, ended);
   const mine = s?.players.get(you);
   const theirs = players.find((p) => p.id !== you);
   const top = placed[0]?.player.kills ?? 0;
@@ -118,7 +132,8 @@ export function scoreboardModel(s: Snapshot | null, you: string): ScoreboardMode
     you: p.id === you,
     place,
     placeLabel: ordinal(place),
-    leader: top > 0 && alone && p.kills === top,
+    // The winner once ended (a broken tie included); while playing, the one most kills.
+    leader: ended ? place === 1 : top > 0 && alone && p.kills === top,
     account: p.account,
     away: !p.connected,
     kills: p.kills,
@@ -130,7 +145,6 @@ export function scoreboardModel(s: Snapshot | null, you: string): ScoreboardMode
     weapon: WEAPONS[p.weapon]?.name ?? "",
     ping: p.ping > 0 ? `${p.ping} ms` : "–",
   });
-  const ended = s?.phase === "ended";
   const winningTeam = ended ? (s?.winningTeam ?? NO_TEAM) : NO_TEAM;
   const youTeam = mine?.team ?? NO_TEAM;
   const teams =
@@ -147,7 +161,7 @@ export function scoreboardModel(s: Snapshot | null, you: string): ScoreboardMode
             you: youTeam === team,
             won: winningTeam === team,
             // The leader mark is the team's best player here, not the whole room's.
-            rows: placements(on).map((pl) => ({ ...row(pl), leader: false })),
+            rows: byPlace(on, ended).map((pl) => ({ ...row(pl), leader: false })),
           };
         })
       : null;

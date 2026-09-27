@@ -29,8 +29,12 @@ const MAX_MATCH_PLAYERS = MAX_PLAYERS.tdm;
  *
  * Every mode alike: `won` is a win, anything else a loss. In a duel and a
  * free-for-all a win is first place; in a team deathmatch it is being on
- * the winning team (a draw is a loss for everyone). The places (`place`, 1 =
+ * the winning team. A match is never a draw: the game server breaks every
+ * tie (see `rank` in @bagarre/shared), so each match has one winner or one
+ * winning team, and every player their own place. The places (`place`, 1 =
  * first) and, with teams, each player's `team` are kept on the match's row.
+ * Older servers sent shared places (and 1 / 2 by team): those are still
+ * accepted and kept as sent, so `place` is only checked for its range.
  */
 export const record = mutation({
   args: {

@@ -166,11 +166,13 @@ export const FFA_RESPAWN_DELAY = 3;
 /** Seconds the placement table stays up before the rematch. */
 export const FFA_END_DELAY = 8;
 /**
- * A tie for the most kills when the time runs out goes to sudden death: the
- * match ends as soon as one player alone has the most kills. If that takes
- * longer than this many seconds, it ends anyway and deaths break the tie.
+ * FFA and team deathmatch: a tie for the most kills when the time runs out
+ * goes to sudden death: the match ends as soon as one player (one team)
+ * alone has the most kills. If that takes longer than this many seconds, it
+ * ends anyway and the tiebreaks of `rank` (modes.ts) pick the winner: most
+ * damage, then first to the score, then the lot. Never a draw.
  */
-export const FFA_SUDDEN_DEATH_MAX = 60;
+export const SUDDEN_DEATH_MAX = 60;
 
 // --- Team deathmatch (see modes.ts): red against blue, up to 4v4 on the FFA maps ---
 /** Room name of the team deathmatch matchmaking. */
@@ -183,7 +185,7 @@ export const TEAM_MIN_PER_TEAM = 2;
 export const TEAM_MIN_PLAYERS = 2 * TEAM_MIN_PER_TEAM;
 /** The first team to this many kills wins... */
 export const TEAM_KILLS_TO_WIN = 25;
-/** ...or the team with the most after this many seconds (a tie goes to sudden death, capped by FFA_SUDDEN_DEATH_MAX). */
+/** ...or the team with the most after this many seconds (a tie goes to sudden death, capped by SUDDEN_DEATH_MAX). */
 export const TEAM_TIME_LIMIT = 480;
 /** Seconds of countdown once both teams have TEAM_MIN_PER_TEAM connected. */
 export const TEAM_COUNTDOWN = 10;

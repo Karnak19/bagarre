@@ -43,7 +43,6 @@ import {
   DEFAULT_MAP_ID,
   DUEL_RULES,
   FFA_RULES,
-  FFA_SUDDEN_DEATH_MAX,
   NO_TEAM,
   TEAM_BLUE,
   TEAM_RED,
@@ -79,7 +78,7 @@ import {
   grenadeDamage,
   grenadeFlightTicks,
   mapById,
-  placements,
+  rank,
   readSim,
   respawnPoint,
   shotPellets,
@@ -103,6 +102,7 @@ import {
   type Phase,
   type RoomMeta,
   type Spawn,
+  type Standing,
   type Vec2,
 } from "@bagarre/shared";
 import { AuthRejected, guestName, recordMatch, resolveIdentity, type Identity, type MatchResult } from "./accounts.ts";
@@ -124,6 +124,11 @@ interface PlayerInternal {
   identity: Identity;
   /** Deaths in the current match (kills are synced on Player). */
   deaths: number;
+  /**
+   * Tick at which the player reached their current kill count: their latest
+   * kill, or the match start with none. A tiebreak (see `rank`).
+   */
+  reachedAt: number;
   /** The latency probe in flight: its number and when it was sent (performance.now()). */
   ping: { n: number; at: number } | null;
   /**
@@ -273,8 +278,16 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   private nextGrenadeId = 0;
   private nextKill = 0;
   private matchResetTicks = 0;
-  /** Unique per match, so a retried stats write is applied once. */
+  /** Unique per match, so a retried stats write is applied once. Also the seed of the tiebreak lot. */
   private matchId = "";
+  /**
+   * Teams: each team's damage dealt this match (red, blue), counted as it is
+   * dealt so a leaver's damage still counts for the team, and the tick of
+   * each team's latest kill (the match start with none). Tiebreaks, see
+   * endTeamMatch.
+   */
+  private teamDamage: [number, number] = [0, 0];
+  private teamReachedAt: [number, number] = [0, 0];
   /** The map being played; `state.mapId` mirrors it. Only changes between matches (see `pickMap`). */
   private map: MapDef = this.rules.maps[0] ?? mapById(DEFAULT_MAP_ID);
   /** Pinned (`pinnedTo`) or forced by the dev `?map=` option: every match stays on `map`. */
@@ -565,7 +578,9 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       player.aim = this.hubAim(spawn);
     }
     this.state.players.set(client.sessionId, player);
-    this.internals.set(client.sessionId, { queue: [], tokens: INPUT_BURST, identity, deaths: 0, ping: null, baselined: false });
+    // A drop-in reached its 0 kills at the match start, like everyone else.
+    const reachedAt = this.state.startTick;
+    this.internals.set(client.sessionId, { queue: [], tokens: INPUT_BURST, identity, deaths: 0, reachedAt, ping: null, baselined: false });
     this.joinOrder.push(client.sessionId);
   }
 
@@ -675,9 +690,12 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       this.bulletInternals.delete(bid);
     });
     if (this.state.phase === "playing") {
-      if (this.seats < this.rules.minToContinue) this.endMatch();
-      // Teams: a team with nobody left loses, whatever the score.
-      else if (this.rules.teams && this.teamCounts(false).includes(0)) this.endTeamMatch(this.teamCounts(false)[TEAM_RED] > 0 ? TEAM_RED : TEAM_BLUE);
+      // Teams: a team with nobody left loses, whatever the score (checked
+      // first: the last player standing wins for their team even when the
+      // room is then too small to go on).
+      if (this.rules.teams && this.seats > 0 && this.teamCounts(false).includes(0))
+        this.endTeamMatch(this.teamCounts(false)[TEAM_RED] > 0 ? TEAM_RED : TEAM_BLUE);
+      else if (this.seats < this.rules.minToContinue) this.endMatch();
       else if (this.state.suddenDeath && this.hasLeader()) this.endMatch();
     } else if (this.state.phase === "waiting" && this.rules.teams) this.rebalance();
     this.syncListing();
@@ -706,6 +724,11 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   private setPhase(phase: Phase) {
     this.state.phase = phase;
     if (phase !== "waiting") this.state.countdown = 0;
+    // The final places and the tiebreak only mean something on the result.
+    if (phase !== "ended") {
+      this.state.tiebreak = "";
+      this.state.players.forEach((p) => (p.place = 0));
+    }
     this.syncListing();
   }
 
@@ -784,7 +807,6 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     this.state.suddenDeath = false;
     this.state.feed.clear();
     this.matchId = `${this.roomId}:${crypto.randomUUID()}`;
-    this.internals.forEach((i) => (i.deaths = 0));
     this.resetScoreboard();
     if (this.rules.mode === "duel") {
       this.state.players.forEach((p) => {
@@ -811,6 +833,12 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     }
     this.state.startTick = this.state.tick;
     this.state.endTick = 0;
+    this.internals.forEach((i) => {
+      i.deaths = 0;
+      i.reachedAt = this.state.startTick;
+    });
+    this.teamDamage = [0, 0];
+    this.teamReachedAt = [this.state.startTick, this.state.startTick];
     this.setPhase("playing");
   }
 
@@ -908,13 +936,17 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     if (this.state.countdown === 0) this.startMatch();
   }
 
-  /** Time limit: the most kills wins; a tie goes to sudden death (see FFA_SUDDEN_DEATH_MAX). */
+  /**
+   * Time limit: the most kills wins; a tie goes to sudden death, for at most
+   * `rules.suddenDeathMax` seconds, after which the match ends and the
+   * tiebreaks decide (endMatch).
+   */
   private stepTimeLimit() {
     const limit = this.rules.timeLimit;
     if (limit <= 0) return;
     const elapsed = this.state.tick - this.state.startTick;
     if (this.state.suddenDeath) {
-      if (elapsed >= ticks(limit + FFA_SUDDEN_DEATH_MAX)) this.endMatch();
+      if (elapsed >= ticks(limit + this.rules.suddenDeathMax)) this.endMatch();
       return;
     }
     if (elapsed < ticks(limit)) return;
@@ -1105,7 +1137,11 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     // Scoreboard: what actually came off the opponent (shield, then HP down to 0).
     const dealt = Math.min(amount, target.shieldHp + target.hp);
     const attacker = attackerId === targetId ? undefined : this.state.players.get(attackerId);
-    if (attacker && this.state.phase === "playing") attacker.damage = Math.min(0xffff, attacker.damage + dealt);
+    if (attacker && this.state.phase === "playing") {
+      attacker.damage = Math.min(0xffff, attacker.damage + dealt);
+      // Teams: the team's own total, which outlives a leaver's seat.
+      if (attacker.team === TEAM_RED || attacker.team === TEAM_BLUE) this.teamDamage[attacker.team] += dealt;
+    }
     let left = amount;
     if (target.shieldHp > 0) {
       const absorbed = Math.min(target.shieldHp, left);
@@ -1132,6 +1168,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     if (!shooter) return;
 
     shooter.kills = Math.min(0xff, shooter.kills + 1);
+    const shooterInternal = this.internals.get(attackerId);
+    if (shooterInternal) shooterInternal.reachedAt = this.state.tick;
     if (this.rules.teams) {
       // The kill counts for the team, and the team's kills are what win.
       const score = this.addTeamKill(shooter.team);
@@ -1139,7 +1177,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       else if (this.state.suddenDeath && this.hasLeader()) this.endMatch();
       return;
     }
-    if (shooter.kills >= this.rules.killsToWin) this.endMatch(attackerId);
+    if (shooter.kills >= this.rules.killsToWin) this.endMatch();
     else if (this.state.suddenDeath && this.soleLeader()) this.endMatch();
   }
 
@@ -1161,40 +1199,49 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   }
 
   /**
-   * The match is over: first to the kill target (`winnerId`), the time limit,
-   * sudden death, or too few players left. Places come from `placements`
-   * (kills, then deaths); `winner` is the sole first place, "" if shared.
+   * The match is over: first to the kill target, the time limit, sudden
+   * death (won, or its cap ran out), or too few players left. There is
+   * always one winner: the places come from `rank` (kills, then damage,
+   * then first to the score, then the lot), all different, and `winner` is
+   * 1st. Whoever reached the kill target is alone on top on kills, so 1st.
    */
-  private endMatch(winnerId?: string) {
+  private endMatch() {
     if (this.rules.teams) {
       this.endTeamMatch();
       return;
     }
-    const standings: { id: string; kills: number; deaths: number }[] = [];
-    this.state.players.forEach((p, id) => standings.push({ id, kills: p.kills, deaths: this.internals.get(id)?.deaths ?? p.deaths }));
-    const places = placements(standings);
-    const firsts = places.filter((p) => p.place === 1);
-    this.state.winner = winnerId ?? (firsts.length === 1 ? firsts[0].player.id : "");
+    const { order, reason } = rank(this.standings(), this.matchId);
+    order.forEach(({ entry, place }) => (this.state.players.get(entry.id)!.place = place));
+    this.state.winner = order[0]?.entry.id ?? "";
+    this.state.tiebreak = reason;
     this.state.endTick = this.state.tick;
     this.setPhase("ended");
     this.matchResetTicks = ticks(this.rules.endDelay);
     this.clearProjectiles();
-    this.recordStats(new Map(places.map((p) => [p.player.id, p.place])));
+    this.recordStats();
+  }
+
+  /** Every seat's standing for `rank`: kills, damage dealt, and when the kill count was reached. */
+  private standings(): Standing[] {
+    const out: Standing[] = [];
+    this.state.players.forEach((p, id) =>
+      out.push({ id, kills: p.kills, damage: p.damage, reachedAt: this.internals.get(id)?.reachedAt ?? this.state.startTick }),
+    );
+    return out;
   }
 
   /**
    * Sends the finished match to Convex for the account players (guests are
-   * skipped). A win is first place (a shared first counts for each); every
-   * other place is a loss.
+   * skipped), with the places set on the players. A win is first place (the
+   * one winner); every other place is a loss.
    */
-  private recordStats(places: Map<string, number>, winningTeam = NO_TEAM) {
+  private recordStats(winningTeam = NO_TEAM) {
     const results: MatchResult[] = [];
     this.state.players.forEach((p, id) => {
       const internal = this.internals.get(id);
       if (internal?.identity.kind !== "account") return;
-      const place = places.get(id) ?? places.size;
-      // Teams: a win for everyone on the winning team, a loss for the others
-      // (a draw is a loss for all).
+      const place = p.place;
+      // Teams: a win for everyone on the winning team, a loss for the others.
       if (this.rules.teams) {
         results.push({ clerkId: internal.identity.clerkId, kills: p.kills, deaths: internal.deaths, won: p.team === winningTeam, place, team: p.team });
         return;
@@ -1256,9 +1303,10 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
 
   /** One more kill for `team`; returns its new score. */
   private addTeamKill(team: number): number {
+    if (team !== TEAM_RED && team !== TEAM_BLUE) return 0;
+    this.teamReachedAt[team] = this.state.tick;
     if (team === TEAM_RED) return (this.state.redScore = Math.min(0xffff, this.state.redScore + 1));
-    if (team === TEAM_BLUE) return (this.state.blueScore = Math.min(0xffff, this.state.blueScore + 1));
-    return 0;
+    return (this.state.blueScore = Math.min(0xffff, this.state.blueScore + 1));
   }
 
   /** The team ahead on kills, or NO_TEAM on a tie. */
@@ -1325,22 +1373,33 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   }
 
   /**
-   * The end of a team match: the team ahead wins (NO_TEAM: a draw, when
-   * sudden death ran out on a tie), or `forced` (the only team with players
-   * left). No single winner. Everyone on the winning team is placed 1st and
-   * the others 2nd (1st for all on a draw).
+   * The end of a team match: `forced` wins (the only team with players
+   * left), else the team with the most kills; level on kills, `rank` on the
+   * team totals decides (the team's damage, then first to the score, then
+   * the lot). Never a draw, and no single winner. Places are all different:
+   * the winning team's players first, then the others, each team in `rank`
+   * order of its players' own kills, damage and so on.
    */
   private endTeamMatch(forced?: number) {
-    const winningTeam = forced ?? this.leadingTeam();
+    const team = (t: number): Standing => ({
+      id: String(t),
+      kills: t === TEAM_RED ? this.state.redScore : this.state.blueScore,
+      damage: this.teamDamage[t],
+      reachedAt: this.teamReachedAt[t],
+    });
+    const decided = rank([team(TEAM_RED), team(TEAM_BLUE)], this.matchId);
+    const winningTeam = forced ?? Number(decided.order[0].entry.id);
     this.state.winner = "";
     this.state.winningTeam = winningTeam;
+    this.state.tiebreak = forced === undefined ? decided.reason : "";
+    const players = rank(this.standings(), this.matchId).order.map((o) => this.state.players.get(o.entry.id)!);
+    const inOrder = [...players.filter((p) => p.team === winningTeam), ...players.filter((p) => p.team !== winningTeam)];
+    inOrder.forEach((p, i) => (p.place = i + 1));
     this.state.endTick = this.state.tick;
     this.setPhase("ended");
     this.matchResetTicks = ticks(this.rules.endDelay);
     this.clearProjectiles();
-    const places = new Map<string, number>();
-    this.state.players.forEach((p, id) => places.set(id, winningTeam === NO_TEAM || p.team === winningTeam ? 1 : 2));
-    this.recordStats(places, winningTeam);
+    this.recordStats(winningTeam);
   }
 
   /**

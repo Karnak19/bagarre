@@ -1,7 +1,8 @@
 // Free-for-all checks for the smoke test (see smoke.ts). Every scenario runs
 // in its own FFA room type pinned to Crossroads (registered by smoke.ts with
 // `registerFfaRooms`), with a 1 s countdown so the checks don't wait 10 s;
-// the timed one also has a 3 s time limit.
+// the timed one also has a 3 s time limit, and the tiebreak ones a 2 s
+// limit with a 1 s sudden death cap, so the tiebreaks decide.
 //
 // Kills are dealt through the room's own damage path (`damage`, the one
 // bullets and grenades call), like smoke.ts' random-map check does, except the
@@ -25,6 +26,7 @@ import {
   TICK_RATE,
   bodiesSee,
   findMap,
+  rank,
   type InputMessage,
   type KillView,
   type OpenGame,
@@ -62,6 +64,7 @@ type LocalFfa = {
     players: Map<string, PlayerView>;
     phase: string;
     winner: string;
+    tiebreak: string;
     countdown: number;
     suddenDeath: boolean;
     feed: KillView[];
@@ -69,6 +72,8 @@ type LocalFfa = {
   clients: { sessionId: string; ref: { terminate(): void } }[];
   maxClients: number;
   locked: boolean;
+  /** Private in GameRoom: the tiebreak lot's seed. */
+  matchId: string;
 };
 const local = (roomId: string) => matchMaker.getLocalRoomById(roomId) as unknown as LocalFfa;
 
@@ -82,6 +87,8 @@ export function registerFfaRooms() {
   matchMaker.defineRoomType("ffa_cancel", FfaRoom.pinnedTo("crossroads").withRules({ ...quick, countdown: 3 }));
   // Not pinned: its rematch must move to another FFA map.
   matchMaker.defineRoomType("ffa_timed", FfaRoom.withRules({ ...quick, timeLimit: 3 }));
+  // Ties that sudden death doesn't break: the time runs out after 2 s, sudden death after 1 more.
+  matchMaker.defineRoomType("ffa_tie", FfaRoom.pinnedTo("crossroads").withRules({ ...quick, timeLimit: 2, suddenDeathMax: 1 }));
 }
 
 /** `n` clients in one fresh room of `type` (the first creates it). */
@@ -436,6 +443,88 @@ async function firstTo15(url: string, h: AccountsHarness): Promise<Lines> {
   return lines;
 }
 
+/**
+ * A tie for the most kills that sudden death doesn't break (its cap runs
+ * out): the tiebreaks pick one winner. `setup` plays the match; `expect`
+ * names the winner and the reason. The places must be 1, 2, 3, synced.
+ */
+async function tiebreak(
+  url: string,
+  label: string,
+  setup: (roomId: string, a: Room, b: Room, c: Room) => Promise<void>,
+  expect: (a: Room, b: Room, c: Room, matchId: string) => { winner: string; reason: string },
+): Promise<Lines> {
+  const tag = `[ffa tiebreak ${label}]`;
+  const lines: Lines = [];
+  const ok = (c: boolean, l: string) => lines.push([c, `${tag} ${l}`]);
+  const rooms = await fill(url, "ffa_tie", 3);
+  try {
+    const [a, b, c] = rooms;
+    await waitFor(() => state(a).phase === "playing", 3000);
+    const room = local(a.roomId);
+    await setup(a.roomId, a, b, c);
+    const sudden = await waitFor(() => room.state.suddenDeath, 4000);
+    const ended = await waitFor(() => room.state.phase === "ended", 3000);
+    const want = expect(a, b, c, room.matchId);
+    ok(sudden && ended, `the tie goes to sudden death, whose cap runs out (phase ${room.state.phase})`);
+    ok(
+      room.state.winner === want.winner && room.state.tiebreak === want.reason,
+      `one winner, on "${want.reason}" (winner ${rooms.findIndex((r) => r.sessionId === room.state.winner)}, reason "${room.state.tiebreak}")`,
+    );
+    await waitFor(() => state(a).tiebreak === want.reason && (state(a).players.get(want.winner)?.place ?? 0) === 1, 1000);
+    const places = rooms.map((r) => state(a).players.get(r.sessionId)?.place ?? 0);
+    ok(
+      [...places].sort().join(",") === "1,2,3" && state(a).winner === want.winner && state(a).tiebreak === want.reason,
+      `the clients get unique places, the winner 1st, and the reason (${places.join(",")}, "${state(a).tiebreak}")`,
+    );
+  } finally {
+    await leaveAll(rooms);
+  }
+  return lines;
+}
+
+/** Hurts `victim` by `attacker` without killing (the victim alive first). */
+async function hurt(roomId: string, attacker: string, victim: string, amount: number) {
+  const room = local(roomId);
+  await waitFor(() => !!room.state.players.get(victim)?.alive, 5000);
+  room.damage(attacker, victim, room.state.players.get(victim), amount, 0);
+}
+
+/** The winner `rank` predicts from the match id alone (everyone level: the lot). */
+const lotWinner = (rooms: Room[], matchId: string) =>
+  rank(rooms.map((r) => ({ id: r.sessionId, kills: 0, damage: 0, reachedAt: 0 })), matchId).order[0].entry.id;
+
+const tiebreaks = (url: string) => [
+  // 1-1: A has dealt 30 more damage.
+  tiebreak(
+    url,
+    "damage",
+    async (id, a, b, c) => {
+      await kill(id, b.sessionId, c.sessionId);
+      await kill(id, a.sessionId, c.sessionId);
+      await hurt(id, a.sessionId, c.sessionId, 30);
+    },
+    (a) => ({ winner: a.sessionId, reason: "damage" }),
+  ),
+  // 1-1, same damage: B got there first.
+  tiebreak(
+    url,
+    "first",
+    async (id, a, b, c) => {
+      await kill(id, b.sessionId, c.sessionId);
+      await kill(id, a.sessionId, c.sessionId);
+    },
+    (_a, b) => ({ winner: b.sessionId, reason: "first" }),
+  ),
+  // 0-0-0, nobody hurt: the lot, from the match id.
+  tiebreak(
+    url,
+    "lot",
+    async () => {},
+    (a, b, c, matchId) => ({ winner: lotWinner([a, b, c], matchId), reason: "lot" }),
+  ),
+];
+
 /** Every FFA scenario, in parallel. Registers nothing: call `registerFfaRooms` first. */
 export async function ffaChecks(url: string, h: AccountsHarness): Promise<Lines[]> {
   const results = await Promise.allSettled([
@@ -447,6 +536,7 @@ export async function ffaChecks(url: string, h: AccountsHarness): Promise<Lines[
     reconnect(url),
     timeLimit(url),
     firstTo15(url, h),
+    ...tiebreaks(url),
   ]);
   return results.map((r) =>
     r.status === "fulfilled" ? r.value : [[false, `[ffa] scenario crashed: ${r.reason instanceof Error ? r.reason.stack : r.reason}`]],

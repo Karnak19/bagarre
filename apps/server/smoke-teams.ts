@@ -2,7 +2,8 @@
 // runs in its own room type registered by `registerTeamRooms`, pinned to
 // Crossroads (West against East) with a 1 s countdown and a short respawn,
 // so a scenario takes seconds; the timed one has a 3 s time limit and isn't
-// pinned (its rematch moves map).
+// pinned (its rematch moves map), and the tiebreak ones a 2 s limit with a
+// 1 s sudden death cap, so the tiebreaks decide.
 //
 // Kills go through the room's own damage path (`damage`, the one bullets and
 // grenades call) like smoke-ffa.ts; the friendly fire checks use real
@@ -29,6 +30,7 @@ import {
   bodiesSee,
   clearShot,
   findMap,
+  rank,
   teamSpawns,
   type InputMessage,
   type KillView,
@@ -63,6 +65,7 @@ type LocalTeam = {
     phase: string;
     winner: string;
     winningTeam: number;
+    tiebreak: string;
     redScore: number;
     blueScore: number;
     countdown: number;
@@ -73,6 +76,8 @@ type LocalTeam = {
   clients: { sessionId: string; ref: { terminate(): void } }[];
   maxClients: number;
   locked: boolean;
+  /** Private in GameRoom: the tiebreak lot's seed. */
+  matchId: string;
 };
 const local = (roomId: string) => matchMaker.getLocalRoomById(roomId) as unknown as LocalTeam;
 const teamOf = (room: LocalTeam, id: string) => room.state.players.get(id)?.team ?? -1;
@@ -92,6 +97,8 @@ export function registerTeamRooms() {
   // A long countdown: the waiting-room checks happen before it ends.
   matchMaker.defineRoomType("tdm_wait", TeamRoom.pinnedTo("crossroads").withRules({ ...quick, countdown: 30 }));
   matchMaker.defineRoomType("tdm_timed", TeamRoom.withRules({ ...quick, timeLimit: 3 }));
+  // Ties that sudden death doesn't break: the time runs out after 2 s, sudden death after 1 more.
+  matchMaker.defineRoomType("tdm_tie", TeamRoom.pinnedTo("crossroads").withRules({ ...quick, timeLimit: 2, suddenDeathMax: 1 }));
 }
 
 async function joinN(url: string, type: string, n: number, opts: Record<string, unknown> = {}): Promise<Room[]> {
@@ -480,9 +487,10 @@ async function firstTo25(url: string, h: AccountsHarness): Promise<Lines> {
     ok(
       !!rec &&
         rec.players.length === 4 &&
-        red.every((r) => res(r)?.won === true && res(r)?.team === TEAM_RED && res(r)?.place === 1) &&
-        blue.every((r) => res(r)?.won === false && res(r)?.team === TEAM_BLUE && res(r)?.place === 2),
-      `matches.record: a win for each red player, a loss for each blue (${JSON.stringify(rec?.players)})`,
+        red.every((r) => res(r)?.won === true && res(r)?.team === TEAM_RED && [1, 2].includes(res(r)?.place ?? 0)) &&
+        blue.every((r) => res(r)?.won === false && res(r)?.team === TEAM_BLUE && [3, 4].includes(res(r)?.place ?? 0)) &&
+        new Set(rec.players.map((p) => p.place)).size === 4,
+      `matches.record: a win for each red player (1st, 2nd), a loss for each blue (3rd, 4th) (${JSON.stringify(rec?.players)})`,
     );
     type Row = { matchId: string; mode?: string; placements?: { clerkId: string; place: number; team?: number }[] };
     // The harness logs the call before convex-test has run it: give the write a moment.
@@ -533,6 +541,98 @@ async function liveTeamRecord(): Promise<Lines> {
   return lines;
 }
 
+/**
+ * A tie on team kills that sudden death doesn't break (its cap runs out):
+ * the tiebreaks on the team totals pick one team. `setup` plays the match
+ * and returns who is still in; `expect` names the team and the reason.
+ * Places: all different, the winning team's players first.
+ */
+async function tiebreak(
+  url: string,
+  label: string,
+  setup: (roomId: string, red: Room[], blue: Room[]) => Promise<Room[]>,
+  expect: (matchId: string) => { team: number; reason: string },
+): Promise<Lines> {
+  const tag = `[tdm tiebreak ${label}]`;
+  const lines: Lines = [];
+  const ok = (c: boolean, l: string) => lines.push([c, `${tag} ${l}`]);
+  const rooms = await joinN(url, "tdm_tie", 4);
+  try {
+    const room = local(rooms[0].roomId);
+    await waitFor(() => room.state.phase === "playing", 4000);
+    const [red, blue] = byTeam(room, rooms);
+    const left = await setup(rooms[0].roomId, red, blue);
+    const sudden = await waitFor(() => room.state.suddenDeath, 4000);
+    const ended = await waitFor(() => room.state.phase === "ended", 3000);
+    const want = expect(room.matchId);
+    ok(sudden && ended && room.state.redScore === room.state.blueScore, `a tie goes to sudden death, whose cap runs out (${room.state.redScore}-${room.state.blueScore})`);
+    ok(
+      room.state.winningTeam === want.team && room.state.tiebreak === want.reason && room.state.winner === "",
+      `one winning team, on "${want.reason}" (team ${room.state.winningTeam}, reason "${room.state.tiebreak}")`,
+    );
+    const watcher = left[0];
+    await waitFor(() => state(watcher).phase === "ended" && state(watcher).tiebreak === want.reason, 1000);
+    const places = left.map((r) => ({ place: state(watcher).players.get(r.sessionId)?.place ?? 0, team: teamOf(room, r.sessionId) }));
+    const sorted = [...places].sort((x, y) => x.place - y.place);
+    ok(
+      sorted.map((p) => p.place).join(",") === left.map((_, i) => i + 1).join(",") &&
+        sorted.every((p, i) => (i < sorted.filter((q) => q.team === want.team).length) === (p.team === want.team)) &&
+        state(watcher).winningTeam === want.team,
+      `the clients get unique places, the winning team's players first (${JSON.stringify(sorted)})`,
+    );
+  } finally {
+    await leaveAll(rooms);
+  }
+  return lines;
+}
+
+/** Hurts `victim` by `attacker` without killing (the victim alive first). */
+async function hurt(roomId: string, attacker: string, victim: string, amount: number) {
+  const room = local(roomId);
+  await waitFor(() => !!room.state.players.get(victim)?.alive, 5000);
+  room.damage(attacker, victim, room.state.players.get(victim), amount, 0);
+}
+
+/** The team `rank` predicts from the match id alone (both level: the lot). */
+const lotTeam = (matchId: string) =>
+  Number(rank([TEAM_RED, TEAM_BLUE].map((t) => ({ id: String(t), kills: 0, damage: 0, reachedAt: 0 })), matchId).order[0].entry.id);
+
+const tiebreaks = (url: string) => [
+  // 1-1: red dealt 30 more, by a player who then leaves (the damage stays the team's).
+  tiebreak(
+    url,
+    "damage",
+    async (id, red, blue) => {
+      await kill(id, red[0].sessionId, blue[0].sessionId);
+      await kill(id, blue[0].sessionId, red[0].sessionId);
+      await hurt(id, red[1].sessionId, blue[1].sessionId, 30);
+      await red[1].leave();
+      return [red[0], ...blue];
+    },
+    () => ({ team: TEAM_RED, reason: "damage" }),
+  ),
+  // 1-1, same damage: blue got there first.
+  tiebreak(
+    url,
+    "first",
+    async (id, red, blue) => {
+      await kill(id, blue[0].sessionId, red[0].sessionId);
+      // A few ticks later: the two kills must not land on the same tick.
+      await sleep(TICK_MS * 5);
+      await kill(id, red[0].sessionId, blue[0].sessionId);
+      return [...red, ...blue];
+    },
+    () => ({ team: TEAM_BLUE, reason: "first" }),
+  ),
+  // 0-0, nobody hurt: the lot, from the match id.
+  tiebreak(
+    url,
+    "lot",
+    async (_id, red, blue) => [...red, ...blue],
+    (matchId) => ({ team: lotTeam(matchId), reason: "lot" }),
+  ),
+];
+
 /** Every team scenario, in parallel. Call `registerTeamRooms` first. */
 export async function teamChecks(url: string, h: AccountsHarness): Promise<Lines[]> {
   const results = await Promise.allSettled([
@@ -545,6 +645,7 @@ export async function teamChecks(url: string, h: AccountsHarness): Promise<Lines
     listing(url),
     firstTo25(url, h),
     liveTeamRecord(),
+    ...tiebreaks(url),
   ]);
   return results.map((r) =>
     r.status === "fulfilled" ? r.value : [[false, `[tdm] scenario crashed: ${r.reason instanceof Error ? r.reason.stack : r.reason}`]],

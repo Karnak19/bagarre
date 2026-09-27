@@ -50,6 +50,8 @@ export const Player = schema(
     shots: t.uint16().default(0),
     hits: t.uint16().default(0),
     damage: t.uint16().default(0),
+    /** Final place once the match ended (1 = first, all different, see `rank`); 0 while it runs. */
+    place: t.uint8().default(0),
     /** Round trip in ms, measured by the server. */
     ping: t.uint16().default(0),
     /** False while the server holds a dropped player's seat (see GameRoom.onDrop). */
@@ -110,7 +112,9 @@ export const GameState = schema(
     mode: t.string().default("duel"),
     phase: t.string().default("waiting"),
     winner: t.string().default(""),
-    /** Team deathmatch: each team's kills this match, and the winner once it ended (NO_TEAM: a draw). */
+    /** Why the winner won when level on kills: "damage", "first", "lot" (TiebreakReason), "" outright. */
+    tiebreak: t.string().default(""),
+    /** Team deathmatch: each team's kills this match, and the winner once it ended (NO_TEAM until then). */
     redScore: t.uint16().default(0),
     blueScore: t.uint16().default(0),
     winningTeam: t.uint8().default(NO_TEAM),

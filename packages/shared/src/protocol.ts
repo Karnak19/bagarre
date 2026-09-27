@@ -163,6 +163,12 @@ export interface PlayerView extends PlayerSim {
   shots: number;
   hits: number;
   damage: number;
+  /**
+   * Final place once the match ended, 1 = first, set by the server (`rank`
+   * in modes.ts): every player has their own, no shared places. 0 while the
+   * match runs, and for a player who joined after the end.
+   */
+  place: number;
   /** Round-trip time to the server in ms, measured by the server (MSG_PING). */
   ping: number;
   /**
@@ -193,6 +199,7 @@ export const PLAYER_VIEW_KEYS = [
   "shots",
   "hits",
   "damage",
+  "place",
   "ping",
   "connected",
 ] as const satisfies readonly (keyof PlayerView)[];
@@ -260,9 +267,14 @@ export interface RoomStateView {
   /** "duel", "ffa" or "tdm" (see modes.ts). Set when the room is made, never changes. */
   mode: string;
   phase: Phase;
-  /** Session id of the winner, "" before the end or for a shared first place (always "" with teams). */
+  /** Session id of the winner once the match ended, "" before (always "" with teams). There is always one. */
   winner: string;
-  /** Team deathmatch: the kills of each team this match, and the winning team once it ended (NO_TEAM: a draw, or no teams). */
+  /**
+   * Why the winner (the winning team) won when it was level on kills, once
+   * the match ended: a `TiebreakReason` (modes.ts), "" when it won outright.
+   */
+  tiebreak: string;
+  /** Team deathmatch: the kills of each team this match, and the winning team once it ended (NO_TEAM before, or no teams). */
   redScore: number;
   blueScore: number;
   winningTeam: number;

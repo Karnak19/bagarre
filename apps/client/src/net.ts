@@ -11,6 +11,7 @@ import {
   NO_TEAM,
   PLAYER_VIEW_KEYS,
   isGameMode,
+  parseTiebreak,
   rulesOf,
   watchPath,
   type OpenGame,
@@ -22,6 +23,7 @@ import {
   type Phase,
   type PlayerView,
   type RoomStateView,
+  type TiebreakReason,
 } from "@bagarre/shared";
 import { account } from "./auth.ts";
 
@@ -39,7 +41,9 @@ export interface Snapshot {
   mode: GameMode;
   phase: Phase;
   winner: string;
-  /** Team deathmatch: each team's kills, and the winning team once ended (NO_TEAM: a draw, or no teams). */
+  /** Why the winner won when level on kills (see RoomStateView.tiebreak), "" outright. */
+  tiebreak: TiebreakReason;
+  /** Team deathmatch: each team's kills, and the winning team once ended (NO_TEAM before, or no teams). */
   redScore: number;
   blueScore: number;
   winningTeam: number;
@@ -108,6 +112,7 @@ function capture(state: RoomStateView): Omit<Snapshot, "t" | "epoch"> {
     mode: isGameMode(state.mode) ? state.mode : "duel",
     phase: state.phase,
     winner: state.winner,
+    tiebreak: parseTiebreak(state.tiebreak),
     redScore: state.redScore ?? 0,
     blueScore: state.blueScore ?? 0,
     winningTeam: state.winningTeam ?? NO_TEAM,

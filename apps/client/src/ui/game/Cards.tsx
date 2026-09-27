@@ -31,6 +31,7 @@ import {
   TICK_RATE,
   rulesOf,
   type PlayerView,
+  type TiebreakReason,
 } from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -616,24 +617,38 @@ function PauseCard() {
 
 // --- Result ----------------------------------------------------------------------------
 
+/**
+ * Why a tie for the most kills went the winner's way, for the result card:
+ * "Won on damage dealt", "Won by reaching 18 kills first", "Won on a coin
+ * flip" ("Red won ..." with teams). `score` is the tied kill score (the
+ * winner's kills, or the winning team's score). Null when won outright.
+ */
+function tiebreakLine(reason: TiebreakReason, score: number, team: string | null): string | null {
+  const won = team ? `${team} won` : "Won";
+  if (reason === "damage") return `${won} on damage dealt.`;
+  if (reason === "first") return `${won} by reaching ${score} ${score === 1 ? "kill" : "kills"} first.`;
+  if (reason === "lot") return `${won} on a coin flip.`;
+  return null;
+}
+
 function ResultCard() {
   countRender("card.result");
   const { app, view, gesture } = useEngine();
   const staying = useSelector(app, (s) => s.staying);
   const won = useSelector(view, (v) => !!v?.snapshot && v.snapshot.winner === v.you);
+  const tiebreak = useSelector(view, (v) => v?.snapshot?.tiebreak ?? "");
   const endDelay = useSelector(view, (v) => rulesOf(v?.snapshot?.mode ?? "duel").endDelay);
   const left = useSelector(view, (v) => Math.max(0, Math.ceil(endDelay - (performance.now() - (v?.endedAt ?? 0)) / 1000)));
   const model = useSelector(view, (v) => scoreboardModel(v?.snapshot ?? null, v?.you ?? ""), jsonEqual);
   const ffa = model.mode === "ffa";
   const teams = model.teams;
-  // FFA: our place, from the same placements as the table (shared places allowed).
+  // FFA: our place, the server's (every place is its own: no draws).
   const mine = model.rows.find((r) => r.you);
-  const firsts = model.rows.filter((r) => r.place === 1).length;
   // Teams: our team's result; a spectator (or a player without a team) reads which team won.
   const winner = teams?.find((t) => t.won) ?? null;
   const [headline, top] = teams
     ? !winner
-      ? ["Draw", false]
+      ? ["Match over", false]
       : model.youTeam === NO_TEAM
         ? [`${winner.name} team wins`, false]
         : winner.team === model.youTeam
@@ -644,9 +659,13 @@ function ResultCard() {
       : !mine
         ? ["Match over", false]
         : mine.place === 1
-          ? [firsts > 1 ? "Shared first place" : "You won!", true]
+          ? ["You won!", true]
           : [`You placed ${mine.placeLabel}`, false];
   const leader = ffa && mine?.place !== 1 ? model.rows[0] : null;
+  // A tie broken: say how (the tied score is the winner's, or the winning team's).
+  const why = teams
+    ? winner && tiebreakLine(tiebreak, winner.score, winner.name)
+    : tiebreakLine(tiebreak, model.rows.find((r) => r.place === 1)?.kills ?? 0, null);
   return (
     <CardBox name="result" wide={!staying}>
       <Title name="result" xstyle={[shared.display, styles.resultTitle, (ffa || !!teams) && styles.resultSmall, top && styles.resultWin]}>
@@ -661,7 +680,6 @@ function ResultCard() {
           <Text as="span" color="inherit" weight="bold" xstyle={slotText(teams[1].slot)}>
             {teams[1].score} {teams[1].name}
           </Text>
-          {winner ? "" : ": nobody broke the tie in sudden death."}
         </Text>
       )}
       {leader && (
@@ -669,7 +687,12 @@ function ResultCard() {
           <Text as="span" color="inherit" weight="bold" xstyle={slotText(leader.slot)}>
             {leader.name}
           </Text>{" "}
-          {firsts > 1 ? "shared first place" : "won"} with {leader.kills} {leader.kills === 1 ? "kill" : "kills"}.
+          won with {leader.kills} {leader.kills === 1 ? "kill" : "kills"}.
+        </Text>
+      )}
+      {why && (
+        <Text color="secondary" xstyle={styles.resultSub} data-testid="result-tiebreak" data-reason={tiebreak}>
+          {why}
         </Text>
       )}
       <Text color="secondary" xstyle={[styles.resultSub, shared.tabular]} data-testid="result-countdown">
