@@ -1,0 +1,77 @@
+// Yard: the original arena from arena.ts, converted as-is (same boxes, same
+// spawns in the same order, same props and lighting as arenaView.ts/scene.ts).
+// Only `h` differs from arena.ts: here it is the height arenaView.ts actually
+// draws each prop at (arena.ts's `h` was never used), so a renderer that
+// honours `h` keeps the Yard looking exactly as it does today.
+import type { MapDef } from "./types.ts";
+
+export const YARD: MapDef = {
+  id: "yard",
+  name: "Yard",
+  blurb: "The old training yard: a crate stack in the middle, four pieces of cover, no surprises.",
+  halfX: 15,
+  halfZ: 15,
+  symmetry: "point",
+  obstacles: [
+    { kind: "crate", x: 0, z: 0, w: 3, d: 3, h: 1.5 },
+    { kind: "sandbags", x: -7, z: -4, w: 1, d: 5, h: 1.35 },
+    { kind: "sandbags", x: 7, z: 4, w: 1, d: 5, h: 1.35 },
+    { kind: "barrier", x: -4, z: 8, w: 5, d: 1, h: 1.3 },
+    { kind: "barrier", x: 4, z: -8, w: 5, d: 1, h: 1.3 },
+    { kind: "container", x: -9.5, z: 9.5, w: 2, d: 2, h: 1.8 },
+    { kind: "container", x: 9.5, z: -9.5, w: 2, d: 2, h: 1.8 },
+  ],
+  spawns: [
+    { x: -12, z: -12 },
+    { x: 12, z: 12 },
+    { x: -12, z: 12 },
+    { x: 12, z: -12 },
+  ],
+  decor: [
+    { prop: "Debris_Papers_1", x: -3, z: -3.5, yaw: 0.4 },
+    { prop: "Debris_Papers_2", x: 3.5, z: 3, yaw: 2.1 },
+    { prop: "Debris_Papers_3", x: -10.5, z: 2.5, yaw: 1.2 },
+    { prop: "Debris_Papers_1", x: 10, z: -2, yaw: 3.3 },
+    { prop: "Debris_Papers_3", x: 1.5, z: 11.5, yaw: 0.2 },
+    { prop: "Debris_Papers_2", x: -1, z: -11.8, yaw: 4.1 },
+    { prop: "Debris_Pile", x: -12.6, z: -3.5, yaw: 0.6, scale: 0.9 },
+    { prop: "Debris_Pile", x: 12.6, z: 3.5, yaw: 3.7, scale: 0.9 },
+    { prop: "Pallet", x: -12.8, z: 6.5, yaw: 0.3 },
+    { prop: "Pallet_Broken", x: 12.8, z: -6.5, yaw: 2.0 },
+    { prop: "WoodPlanks", x: 6.5, z: 10.5, yaw: 1.1 },
+    { prop: "WoodPlanks", x: -6.5, z: -10.5, yaw: 2.4 },
+    // Outside the walls (wall outer face at 15.6).
+    { prop: "TrafficCone", x: -16.5, z: -6, yaw: 0 },
+    { prop: "TrafficCone", x: -16.5, z: -4.6, yaw: 0.7 },
+    { prop: "TrafficCone", x: 16.5, z: 6, yaw: 0.2 },
+    { prop: "TrafficCone", x: 16.9, z: 4.8, yaw: 1.3 },
+    { prop: "TrafficCone", x: 5, z: 16.5, yaw: 0 },
+    { prop: "TrafficCone", x: -5, z: -16.5, yaw: 0.9 },
+    { prop: "Debris_Tires", x: -16.8, z: 9, yaw: 0.5 },
+    { prop: "Debris_Tires", x: 16.8, z: -9, yaw: 2.5 },
+    { prop: "ExplodingBarrel", x: 9, z: -16.7, yaw: 0 },
+    { prop: "ExplodingBarrel", x: 9.9, z: -16.8, yaw: 0.8 },
+    { prop: "ExplodingBarrel", x: -9, z: 16.7, yaw: 0.3 },
+    { prop: "CardboardBoxes_2", x: -11, z: -16.8, yaw: 0.2 },
+    { prop: "CardboardBoxes_4", x: 11, z: 16.9, yaw: 2.8 },
+    { prop: "CardboardBoxes_1", x: -16.7, z: 12, yaw: 1.4 },
+    { prop: "CardboardBoxes_1", x: 16.7, z: -12, yaw: 4.2 },
+    { prop: "Pallet", x: 0, z: 17.5, yaw: 0.1 },
+    { prop: "Pallet", x: 0.3, z: -17.5, yaw: 1.7 },
+  ],
+  theme: {
+    floor: 0x5f6570,
+    grid: 0x6d7380,
+    gridOpacity: 0.18,
+    outerFloor: 0x3a3e46,
+    background: 0x1a1d24,
+    wall: "brick",
+    hemiSky: 0xdde6ff,
+    hemiGround: 0x3a3228,
+    hemiIntensity: 1.25,
+    sun: 0xfff4e0,
+    sunIntensity: 2.3,
+    sunDir: { x: 12, y: 25, z: 6 },
+  },
+  favours: ["rifle", "smg"],
+};
