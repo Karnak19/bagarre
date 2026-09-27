@@ -139,6 +139,8 @@ html, body {
 .ability .t { font-size: 12px; font-variant-numeric: tabular-nums; min-height: 15px; }
 .ability.ready { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45); }
 .ability.active { box-shadow: inset 0 0 0 2px #9fe6ff; }
+.ability.sound { width: 56px; }
+.ability.sound.muted { opacity: 0.55; }
 
 #hud-picker {
   position: absolute;

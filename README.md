@@ -59,6 +59,7 @@ Put the two windows side by side: a tab in the background stops sending input
 | **Q**              | Grenade: lobbed at the cursor, max 10 m, flies over cover     |
 | **E**              | Shield: a bubble that soaks damage before your HP             |
 | **1**-**4**        | Pick a weapon, while dead or between matches (see below)      |
+| **M**              | Mute / unmute sound (remembered between visits)               |
 
 Keys are read by physical position, so on AZERTY it's ZQSD to move and the
 key labelled **A** throws a grenade. First to 5 kills wins; the match restarts
@@ -68,6 +69,11 @@ A grenade lands, then explodes 0.6 s later: the red circle on the ground is
 its blast radius, so get out of it. It hurts its thrower too, at half rate.
 The dash has no invulnerability, you dodge by getting out of the bullet's path.
 
+Sound starts after your first click or key press (browser autoplay rules).
+Your own actions are heard instantly, from the prediction. The opponent's are
+delayed by the interpolation delay (100 ms) so they match what you see, and
+are panned and softened by distance.
+
 ## Weapons
 
 The pick is shown above the ability bar. It only goes in your hand when you
@@ -75,10 +81,10 @@ The pick is shown above the ability bar. It only goes in your hand when you
 
 | Key | Weapon  | Damage   | Fire interval | Bullet speed | Range | Spread | Magazine | Reload | Role                         |
 | --- | ------- | -------- | ------------- | ------------ | ----- | ------ | -------- | ------ | ---------------------------- |
-| 1   | Rifle   | 20       | 0.2 s         | 22 m/s       | 18 m  | 2.3°   | 12       | 1.5 s  | All-rounder, 5 hits (0.8 s)  |
-| 2   | Shotgun | 6 × 12   | 0.7 s         | 18 m/s       | 7 m   | 23°    | 5        | 2.0 s  | Close range, 2 blasts (0.7 s)|
-| 3   | Sniper  | 70       | 1.2 s         | 45 m/s       | 30 m  | 0°     | 4        | 2.5 s  | Long range, 2 hits (1.2 s)   |
-| 4   | SMG     | 11       | 0.1 s         | 20 m/s       | 12 m  | 9°     | 30       | 1.8 s  | Mid range, 10 hits (0.9 s)   |
+| 1   | Rifle   | 20       | 0.2 s         | 45 m/s       | 18 m  | 2.3°   | 12       | 1.5 s  | All-rounder, 5 hits (0.8 s)  |
+| 2   | Shotgun | 6 × 12   | 0.7 s         | 36 m/s       | 7 m   | 23°    | 5        | 2.0 s  | Close range, 2 blasts (0.7 s)|
+| 3   | Sniper  | 70       | 1.2 s         | 90 m/s       | 30 m  | 0°     | 4        | 2.5 s  | Long range, 2 hits (1.2 s)   |
+| 4   | SMG     | 11       | 0.1 s         | 40 m/s       | 12 m  | 9°     | 30       | 1.8 s  | Mid range, 10 hits (0.9 s)   |
 
 | Ability | Numbers                                                                 |
 | ------- | ----------------------------------------------------------------------- |

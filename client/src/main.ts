@@ -5,12 +5,14 @@ import {
   SERVER_PORT,
   SHIELD,
   TICK_MS,
+  weaponDef,
   TICK_RATE,
   type InputMessage,
   type Phase,
   type PlayerView,
   type Vec2,
 } from "@bagarre/shared";
+import { WEAPON_SFX, initAudioOnFirstGesture, isMuted, play, setListener, setMuted, type PlayOptions, type SfxName } from "./audio.ts";
 import { LocalBullets } from "./bullets.ts";
 import { Hud } from "./hud.ts";
 import { Input, screenToWorldMove } from "./input.ts";
@@ -45,7 +47,11 @@ const buffer = new SnapshotBuffer();
 const predictor = new Predictor();
 const localBullets = new LocalBullets();
 const meshes = new Map<string, PlayerMesh>();
-const lastHp = new Map<string, number>();
+/** Each player as of the previous snapshot, to spot what changed (hits, deaths, remote shots...). */
+const lastView = new Map<string, PlayerView>();
+/** Grenades already heard being thrown / landing. Pruned like `announcedBlasts`. */
+const seenGrenades = new Set<string>();
+const landedGrenades = new Set<string>();
 /**
  * Grenade blasts, detected when the snapshot arrives and shown when render
  * time reaches it. (Sampling the interpolated grenades could skip the single
@@ -65,6 +71,23 @@ let endedAt = 0;
 let cursor: Vec2 | null = null;
 /** Where the opponent was drawn last frame, for visual hits of predicted bullets. */
 let opponentDrawn: Vec2 | null = null;
+/** Fire button state on the previous tick, for the empty-click on a fresh press. */
+let wasFiring = false;
+
+// --- Sound -------------------------------------------------------------------
+// Our own actions play the moment they are predicted (in the tick loop below),
+// never from reconcile: it replays pending inputs and would play them again.
+// Everything read from a snapshot about the opponent is delayed by the
+// interpolation delay, so it is heard when it is drawn.
+const REMOTE_DELAY = INTERP_DELAY_MS / 1000;
+/** Dev-only log of every sound played, read by the headless check. */
+const sfxLog: { t: number; name: SfxName; delay: number; x?: number; z?: number }[] = [];
+function sfx(name: SfxName, opts?: PlayOptions) {
+  if (import.meta.env.DEV) sfxLog.push({ t: performance.now(), name, delay: opts?.delay ?? 0, x: opts?.x, z: opts?.z });
+  play(name, opts);
+}
+initAudioOnFirstGesture();
+input.onMute = () => setMuted(!isMuted());
 
 function canMove(p: PlayerView, ph: Phase) {
   return p.alive && ph !== "ended";
@@ -78,7 +101,10 @@ function canPick(p: PlayerView | null, ph: Phase) {
 input.onPick = (weapon) => {
   const latest = buffer.latest();
   const me = latest?.players.get(net.sessionId) ?? null;
-  if (latest && canPick(me, latest.phase)) net.sendPick(weapon);
+  if (latest && canPick(me, latest.phase)) {
+    net.sendPick(weapon);
+    sfx("weapon_pick");
+  }
 };
 
 function meshFor(id: string, slot: number): PlayerMesh {
@@ -100,22 +126,62 @@ net.onSnapshot = (s) => {
   }
 
   if (s.phase !== phase) {
-    if (s.phase === "ended") endedAt = performance.now();
+    if (s.phase === "ended") {
+      endedAt = performance.now();
+      sfx(s.winner === net.sessionId ? "match_win" : "match_lose");
+    }
     phase = s.phase;
   }
 
-  // Hit flash when someone's HP goes down.
   const now = performance.now();
   s.grenades.forEach((g, id) => {
+    // Our own throws were already heard from the prediction.
+    if (!seenGrenades.has(id)) {
+      seenGrenades.add(id);
+      if (g.owner !== net.sessionId) sfx("grenade_throw", { x: g.x, z: g.z, delay: REMOTE_DELAY });
+    }
+    if (g.landed && !landedGrenades.has(id)) {
+      landedGrenades.add(id);
+      sfx("grenade_bounce", { x: g.tx, z: g.tz, delay: REMOTE_DELAY });
+    }
     if (!g.exploded || announcedBlasts.has(id)) return;
     announcedBlasts.add(id);
     blasts.push({ at: s.t + INTERP_DELAY_MS, x: g.tx, z: g.tz, own: g.owner === net.sessionId });
   });
-  if (announcedBlasts.size > 64) for (const id of announcedBlasts) if (!s.grenades.has(id)) announcedBlasts.delete(id);
+  for (const set of [announcedBlasts, seenGrenades, landedGrenades])
+    if (set.size > 64) for (const id of set) if (!s.grenades.has(id)) set.delete(id);
+
   s.players.forEach((p, id) => {
-    const prev = lastHp.get(id);
-    if (prev !== undefined && p.hp < prev) meshFor(id, p.slot).flash(now + (id === net.sessionId ? 0 : INTERP_DELAY_MS));
-    lastHp.set(id, p.hp);
+    const prev = lastView.get(id);
+    lastView.set(id, p);
+    if (!prev) return;
+    const mine = id === net.sessionId;
+    // Our own events are heard now; the opponent's when they are drawn, where they are.
+    const at: PlayOptions | undefined = mine ? undefined : { x: p.x, z: p.z, delay: REMOTE_DELAY };
+
+    // Hit flash (and its sound) when someone's HP goes down.
+    if (p.hp < prev.hp) {
+      meshFor(id, p.slot).flash(now + (mine ? 0 : INTERP_DELAY_MS));
+      sfx(mine ? "hurt" : "hit", at);
+    }
+    if (p.shieldHp < prev.shieldHp && p.shieldHp > 0) sfx("shield_hit", at);
+    // Broken by damage, not simply run out (expiry zeroes it on its last tick).
+    if (prev.shieldHp > 0 && p.shieldHp === 0 && prev.shieldTicks > 1) sfx("shield_break", at);
+    if (prev.alive && !p.alive) sfx("death", at);
+    if (!prev.alive && p.alive) sfx("respawn", at);
+
+    // The opponent's own actions (ours come from the prediction). Shots are
+    // read from the ammo count, not from new bullets: a fast bullet can hit
+    // and vanish before any snapshot shows it. Several inputs can land in
+    // one server tick, so one snapshot may hold more than one shot.
+    if (mine || !prev.alive || !p.alive) return;
+    const shots = p.weapon === prev.weapon ? prev.ammo - p.ammo : 0;
+    const gap = weaponDef(p.weapon).fireInterval;
+    for (let i = 0; i < shots; i++)
+      sfx(WEAPON_SFX[p.weapon] ?? "rifle", { ...at, delay: REMOTE_DELAY + i * gap });
+    if (p.dashCd > prev.dashCd) sfx("dash", at);
+    if (prev.reloadTicks === 0 && p.reloadTicks > 0) sfx("reload", { ...at, volume: 0.7 });
+    if (p.shieldTicks > prev.shieldTicks) sfx("shield_up", at);
   });
 
   // Drop meshes of players who left.
@@ -123,7 +189,7 @@ net.onSnapshot = (s) => {
     if (!s.players.has(id)) {
       scene.removePlayer(m);
       meshes.delete(id);
-      lastHp.delete(id);
+      lastView.delete(id);
     }
   }
 };
@@ -131,7 +197,7 @@ net.onSnapshot = (s) => {
 void net.connect(serverUrl);
 
 // Dev-only handle for poking at the game from the console or a test script.
-if (import.meta.env.DEV) Object.assign(window, { __bagarre: { scene, net, predictor, localBullets } });
+if (import.meta.env.DEV) Object.assign(window, { __bagarre: { scene, net, predictor, localBullets, input, sfxLog } });
 
 // --- Game loop ---------------------------------------------------------------
 function frame(now: number) {
@@ -163,9 +229,19 @@ function frame(now: number) {
         gz: target.z,
         ...input.presses,
       };
+      const before = predictor.sim;
       const res = predictor.apply(msg, canMove(meServer, latest.phase));
       // Instant local shots: same pellets, same ids as the server will spawn.
       if (res?.fired) localBullets.spawn(meServer.slot, msg.seq, predictor.weapon, res.sim.x, res.sim.z, msg.aim);
+      if (res && before) {
+        if (res.fired) sfx(WEAPON_SFX[predictor.weapon] ?? "rifle");
+        if (res.sim.dashCd > before.dashCd) sfx("dash");
+        if (res.grenade) sfx("grenade_throw");
+        if (res.shield) sfx("shield_up");
+        if (before.reloadTicks === 0 && res.sim.reloadTicks > 0) sfx("reload");
+        else if (msg.fire && !wasFiring && !res.fired && res.sim.reloadTicks > 0) sfx("empty_click");
+      }
+      wasFiring = msg.fire;
       localBullets.step(opponentDrawn);
       net.sendInput(msg);
     }
@@ -176,6 +252,7 @@ function frame(now: number) {
   // 2. Local player: predicted position, smoothed between ticks.
   if (meServer) {
     const pos = predictor.render(accumulator / TICK_MS, dt);
+    setListener(pos.x, pos.z);
     if (input.hasPointer) {
       const hit = scene.cursorOnGround(input.ndc);
       cursor = hit ? { x: hit.x, z: hit.z } : null;
@@ -220,6 +297,7 @@ function frame(now: number) {
   while (blasts.length > 0 && blasts[0].at <= now) {
     const b = blasts.shift()!;
     scene.blast(b.x, b.z, now, b.own);
+    sfx("explosion", { x: b.x, z: b.z });
   }
 
   for (const m of meshes.values()) {
@@ -256,6 +334,7 @@ function frame(now: number) {
     canPick: !!latest && canPick(meServer, latest.phase),
     banner,
     debug: debugParts.join("  |  "),
+    muted: isMuted(),
   });
 
   requestAnimationFrame(frame);

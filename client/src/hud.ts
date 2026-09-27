@@ -25,6 +25,8 @@ export interface HudModel {
   canPick: boolean;
   banner: { title: string; sub: string } | null;
   debug: string;
+  /** Sound muted (M toggles). */
+  muted: boolean;
 }
 
 export class Hud {
@@ -42,9 +44,21 @@ export class Hud {
     shield: $("#ab-shield"),
   };
   private pickerKey = "";
+  /** Mute toggle tile, built here so it sits right after the abilities. */
+  private sound = (() => {
+    const el = document.createElement("div");
+    el.className = "ability sound";
+    el.innerHTML = `<div class="key">M</div><div class="label">Sound</div><div class="t"></div>`;
+    $("#hud-bottom").append(el);
+    return el;
+  })();
 
   private setBar(el: HTMLElement, p: PlayerView | null) {
     el.classList.toggle("absent", !p);
+    const mine = el === this.me;
+    const label = p?.name ? (mine ? `${p.name} (you)` : p.name) : mine ? "You" : "Opponent";
+    const nameEl = el.querySelector<HTMLElement>(".name")!;
+    if (nameEl.textContent !== label) nameEl.textContent = label;
     const fill = el.querySelector<HTMLElement>(".fill")!;
     fill.style.width = `${p ? (100 * p.hp) / MAX_HP : 0}%`;
     if (p) el.style.setProperty("--color", PLAYER_CSS_COLORS[p.slot] ?? "#888");
@@ -87,6 +101,11 @@ export class Hud {
     this.setAbility(this.abilities.dash, s?.dashCd ?? 0, DASH_COOLDOWN_TICKS);
     this.setAbility(this.abilities.grenade, s?.grenadeCd ?? 0, GRENADE_COOLDOWN_TICKS);
     this.setAbility(this.abilities.shield, s?.shieldCd ?? 0, SHIELD_COOLDOWN_TICKS, (m.me?.shieldHp ?? 0) > 0);
+
+    const soundText = m.muted ? "off" : "on";
+    const soundT = this.sound.querySelector(".t")!;
+    if (soundT.textContent !== soundText) soundT.textContent = soundText;
+    this.sound.classList.toggle("muted", m.muted);
 
     // Weapon picker: current pick highlighted; only live while dead / between matches.
     const pick = m.me?.pick ?? 0;

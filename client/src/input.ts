@@ -17,6 +17,8 @@ export class Input {
   readonly presses = { dash: 0, grenade: 0, shield: 0, reload: 0 };
   /** Called with 0-3 when a weapon key (1-4) is pressed. */
   onPick: (weapon: number) => void = () => {};
+  /** Called when M (mute toggle) is pressed. */
+  onMute: () => void = () => {};
 
   constructor(canvas: HTMLCanvasElement) {
     window.addEventListener("keydown", (e) => {
@@ -27,6 +29,7 @@ export class Input {
       else if (e.code === "KeyQ") this.presses.grenade++;
       else if (e.code === "KeyE") this.presses.shield++;
       else if (e.code === "KeyR") this.presses.reload++;
+      else if (e.code === "KeyM") this.onMute();
       else if (/^Digit[1-4]$/.test(e.code)) this.onPick(Number(e.code.slice(5)) - 1);
     });
     window.addEventListener("keyup", (e) => this.keys.delete(e.code));
