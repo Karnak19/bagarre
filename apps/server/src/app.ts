@@ -1,19 +1,19 @@
 import { createAuthContext, createEndpoint, createRouter, defineRoom, defineServer, matchMaker } from "@colyseus/core";
 import { WebSocketTransport } from "@colyseus/ws-transport";
-import { FFA_ROOM_NAME, GAMES_ROUTE, ROOM_NAME, WATCH_ROUTE, type ModeRules, type OpenGame, type RoomMeta } from "@bagarre/shared";
-import { DuelRoom, FfaRoom, GameRoom } from "./GameRoom.ts";
+import { FFA_ROOM_NAME, GAMES_ROUTE, ROOM_NAME, TEAM_ROOM_NAME, WATCH_ROUTE, type ModeRules, type OpenGame, type RoomMeta } from "@bagarre/shared";
+import { DuelRoom, FfaRoom, GameRoom, TeamRoom } from "./GameRoom.ts";
 
 /**
  * The menu's open games list: the public rooms of both modes, the ones with
  * a free seat first (Join), then the ones to watch (Watch): full, or a duel
  * under way. Newest first within each. A duel has a free seat while one
- * player waits for an opponent; a free-for-all while it has a seat left,
- * waiting or playing (players drop in). Private rooms never show up
+ * player waits for an opponent; a free-for-all or a team deathmatch while
+ * it has a seat left, waiting or playing (players drop in). Private rooms never show up
  * (Colyseus keeps them out of `query({ private: false })`). Seats come from
  * the metadata, never from `clients`, which counts spectators too. `names`:
  * the room types to list (the smoke test lists its own).
  */
-export async function openGames(names: readonly string[] = [ROOM_NAME, FFA_ROOM_NAME]): Promise<OpenGame[]> {
+export async function openGames(names: readonly string[] = [ROOM_NAME, FFA_ROOM_NAME, TEAM_ROOM_NAME]): Promise<OpenGame[]> {
   const out: OpenGame[] = [];
   for (const name of names) {
     const rooms = await matchMaker.query({ name, private: false });
@@ -29,8 +29,9 @@ export async function openGames(names: readonly string[] = [ROOM_NAME, FFA_ROOM_
         phase: meta.phase,
         players: meta.players,
         maxPlayers: meta.maxPlayers,
+        ...(meta.teams ? { teams: meta.teams } : {}),
         spectators: meta.spectators ?? 0,
-        joinable: free && !r.locked && (meta.mode === "ffa" || meta.phase === "waiting"),
+        joinable: free && !r.locked && (meta.mode !== "duel" || meta.phase === "waiting"),
         createdAt: meta.createdAt,
       });
     }
@@ -40,7 +41,7 @@ export async function openGames(names: readonly string[] = [ROOM_NAME, FFA_ROOM_
 
 const listGames = createEndpoint(GAMES_ROUTE, { method: "GET" }, async () => ({ games: await openGames() }));
 
-const GAME_ROOM_NAMES = new Set([ROOM_NAME, FFA_ROOM_NAME]);
+const GAME_ROOM_NAMES = new Set([ROOM_NAME, FFA_ROOM_NAME, TEAM_ROOM_NAME]);
 
 /**
  * Watching a game: a spectator's place in a room, past the seat lock (a full
@@ -79,11 +80,12 @@ function watchEndpoint(allowRoom: (name: string) => boolean) {
 
 /**
  * `mapId` pins every duel room to one duel map (the smoke test forces
- * "yard"), `ffaMapId` every FFA room to one FFA map; without them each match
- * picks a random map of its mode's pool. `watchAnyRoom` opens the watch
+ * "yard"), `ffaMapId` every FFA room to one FFA map, `teamMapId` every team
+ * deathmatch room to one team map; without them each match picks a random
+ * map of its mode's pool. `watchAnyRoom` opens the watch
  * route to every room type (the smoke test's own), not just "duel" and "ffa".
- * `duelRules` / `ffaRules` tweak each mode's rules (the e2e server's short
- * kill target and countdown).
+ * `duelRules` / `ffaRules` / `teamRules` tweak each mode's rules (the e2e
+ * server's short kill target and countdown).
  */
 export function createServer(
   options: {
@@ -91,14 +93,17 @@ export function createServer(
     gracefullyShutdown?: boolean;
     mapId?: string;
     ffaMapId?: string;
+    teamMapId?: string;
     watchAnyRoom?: boolean;
     duelRules?: Partial<ModeRules>;
     ffaRules?: Partial<ModeRules>;
+    teamRules?: Partial<ModeRules>;
   } = {},
 ) {
   const watchGame = watchEndpoint((name) => options.watchAnyRoom === true || GAME_ROOM_NAMES.has(name));
   const duel = options.duelRules ? DuelRoom.withRules(options.duelRules) : DuelRoom;
   const ffa = options.ffaRules ? FfaRoom.withRules(options.ffaRules) : FfaRoom;
+  const tdm = options.teamRules ? TeamRoom.withRules(options.teamRules) : TeamRoom;
   return defineServer({
     greet: options.greet ?? false,
     gracefullyShutdown: options.gracefullyShutdown ?? true,
@@ -106,6 +111,7 @@ export function createServer(
     rooms: {
       [ROOM_NAME]: defineRoom(options.mapId ? duel.pinnedTo(options.mapId) : duel),
       [FFA_ROOM_NAME]: defineRoom(options.ffaMapId ? ffa.pinnedTo(options.ffaMapId) : ffa),
+      [TEAM_ROOM_NAME]: defineRoom(options.teamMapId ? tdm.pinnedTo(options.teamMapId) : tdm),
     },
     routes: createRouter({ listGames, watchGame }),
   });

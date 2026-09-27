@@ -18,10 +18,25 @@ import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { Text } from "@astryxdesign/core/Text";
 import { TextInput } from "@astryxdesign/core/TextInput";
-import { FFA_MAX_PLAYERS, FFA_MIN_PLAYERS, RECONNECT_GRACE_S, TICK_RATE, rulesOf, type PlayerView } from "@bagarre/shared";
+import {
+  FFA_MAX_PLAYERS,
+  FFA_MIN_PLAYERS,
+  NO_TEAM,
+  RECONNECT_GRACE_S,
+  TEAM_BLUE,
+  TEAM_MIN_PER_TEAM,
+  TEAM_NAMES,
+  TEAM_RED,
+  TEAM_SIZE,
+  TICK_RATE,
+  rulesOf,
+  type PlayerView,
+  type TiebreakReason,
+} from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Notice } from "../../app.ts";
+import { TEAM_PAINT, paintOf } from "../../paint.ts";
 import { countRender } from "../../renders.ts";
 import { scoreboardModel } from "../../scoreboard.ts";
 import { openPanel } from "../../uiState.ts";
@@ -75,6 +90,11 @@ const styles = stylex.create({
   hint: { marginBlockStart: "14px", color: "rgba(242, 242, 242, 0.5)" },
   spinner: { flexShrink: 0, marginBlockStart: "2px" },
   seats: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" },
+  teamsGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" },
+  teamSeats: { display: "grid", gridTemplateColumns: "1fr", gap: "6px" },
+  teamHead: { fontSize: "13px", letterSpacing: "0.06em", marginBlockEnd: "2px" },
+  teamYou: { color: "var(--color-text-secondary)", fontSize: "12px", fontWeight: 600, marginInlineStart: "6px", textTransform: "none", letterSpacing: 0 },
+  switch: { marginBlockStart: "10px" },
   seat: {
     minWidth: 0,
     padding: "8px 10px",
@@ -239,24 +259,34 @@ async function copyText(text: string, fallback: HTMLInputElement | null): Promis
   }
 }
 
-/** The seats: players in seat order, then the open ones up to `total`. `showAway` marks dropped connections. */
-function Seats({ total = 2, showAway = false }: { total?: number; showAway?: boolean }) {
+/**
+ * The seats: players in seat order, then the open ones up to `total`.
+ * `showAway` marks dropped connections. `team`: only that team's players
+ * (a team deathmatch lists each team on its own).
+ */
+function Seats({ total = 2, showAway = false, team }: { total?: number; showAway?: boolean; team?: number }) {
   countRender("card.seats");
   const { view } = useEngine();
   const seats = useSelector(
     view,
     (v) => {
       const players: PlayerView[] = [];
-      v?.snapshot?.players.forEach((p) => players.push(p));
+      v?.snapshot?.players.forEach((p) => (team === undefined || p.team === team ? players.push(p) : 0));
       players.sort((a, b) => a.slot - b.slot);
       const me = v?.snapshot?.players.get(v.you);
-      return players.map((p) => ({ slot: p.slot, name: p === me ? `${p.name} (you)` : p.name, away: !p.connected }));
+      return players.map((p) => ({ slot: p.slot, paint: paintOf(p), name: p === me ? `${p.name} (you)` : p.name, away: !p.connected }));
     },
     jsonEqual,
   );
   const open = Math.max(0, total - seats.length);
   return (
-    <VStack as="ul" xstyle={styles.seats} aria-label="Players" data-testid="seats">
+    <VStack
+      as="ul"
+      xstyle={team === undefined ? styles.seats : styles.teamSeats}
+      aria-label={team === undefined ? "Players" : `${TEAM_NAMES[team]} team`}
+      data-testid={team === undefined ? "seats" : "team-seats"}
+      data-team={team}
+    >
       {seats.map((s) => (
         <HStack
           as="li"
@@ -267,8 +297,8 @@ function Seats({ total = 2, showAway = false }: { total?: number; showAway?: boo
           data-testid="seat"
           data-away={(showAway && s.away) || undefined}
         >
-          <HStack as="span" xstyle={[shared.dot, slotDot(s.slot)]} aria-hidden="true" />
-          <Text as="span" color="inherit" xstyle={[styles.seatName, showAway && slotText(s.slot)]}>
+          <HStack as="span" xstyle={[shared.dot, slotDot(s.paint)]} aria-hidden="true" />
+          <Text as="span" color="inherit" xstyle={[styles.seatName, showAway && slotText(s.paint)]}>
             {s.name}
           </Text>
           {showAway && s.away && (
@@ -326,8 +356,8 @@ function InviteLink() {
 
 function WaitingCard() {
   const { view } = useEngine();
-  const ffa = useSelector(view, (v) => v?.snapshot?.mode === "ffa");
-  return ffa ? <FfaWaitingCard /> : <DuelWaitingCard />;
+  const mode = useSelector(view, (v) => v?.snapshot?.mode ?? "duel");
+  return mode === "ffa" ? <FfaWaitingCard /> : mode === "tdm" ? <TeamWaitingCard /> : <DuelWaitingCard />;
 }
 
 function DuelWaitingCard() {
@@ -430,6 +460,111 @@ function FfaWaitingCard() {
   );
 }
 
+/**
+ * A team deathmatch waiting for players: red and blue side by side, the
+ * switch button (only when it keeps the teams within one, like the server's
+ * rule), and the countdown once both teams have TEAM_MIN_PER_TEAM in
+ * (players can still join during it, up to 4v4).
+ */
+function TeamWaitingCard() {
+  countRender("card.waitingTeam");
+  const { app, view } = useEngine();
+  const { opponentLeft, isPrivate } = useSelector(app, (s) => ({ opponentLeft: s.opponentLeft, isPrivate: s.isPrivate }), shallowEqual);
+  const t = useSelector(
+    view,
+    (v) => {
+      const n = [0, 0];
+      v?.snapshot?.players.forEach((p) => (p.team === TEAM_RED || p.team === TEAM_BLUE ? n[p.team]++ : 0));
+      return { red: n[TEAM_RED], blue: n[TEAM_BLUE], you: v?.snapshot?.players.get(v.you)?.team ?? NO_TEAM };
+    },
+    shallowEqual,
+  );
+  const seconds = useSelector(view, (v) => Math.ceil((v?.snapshot?.countdown ?? 0) / TICK_RATE));
+  const count = `${t.red}v${t.blue}`;
+  const [title, sub] =
+    seconds > 0
+      ? [null, `${count}. Others can still join, up to ${TEAM_SIZE}v${TEAM_SIZE}.`]
+      : opponentLeft
+        ? ["Too few players left", `Waiting for more to join. It starts again at ${TEAM_MIN_PER_TEAM}v${TEAM_MIN_PER_TEAM} (${count}).`]
+        : [
+            isPrivate ? "Waiting for your friends…" : "Waiting for players…",
+            `Starts at ${TEAM_MIN_PER_TEAM}v${TEAM_MIN_PER_TEAM} · ${count}, up to ${TEAM_SIZE}v${TEAM_SIZE}.${isPrivate ? " Send them the link." : ""}`,
+          ];
+  // Same rule as the server: after the move the teams differ by at most one.
+  const other = t.you === TEAM_RED ? TEAM_BLUE : TEAM_RED;
+  const mine = t.you === TEAM_RED ? t.red : t.blue;
+  const theirs = t.you === TEAM_RED ? t.blue : t.red;
+  const canSwitch = t.you !== NO_TEAM && Math.abs(mine - 1 - (theirs + 1)) <= 1;
+  return (
+    <CardBox name="waiting" wide>
+      <HStack gap={3} align="start">
+        {seconds === 0 && <Spinner size="lg" xstyle={styles.spinner} aria-label="Waiting" />}
+        <VStack>
+          {title ? (
+            <Title name="waiting">{title}</Title>
+          ) : (
+            <Title name="waiting" xstyle={[shared.display, styles.countdown, shared.tabular]} testId="team-countdown">
+              Starting in{" "}
+              <Text as="span" color="inherit" xstyle={styles.countdownNumber}>
+                {seconds}
+              </Text>
+            </Title>
+          )}
+          <Text color="secondary" xstyle={[styles.sub, shared.tabular]} data-testid="team-players">
+            {sub}
+          </Text>
+        </VStack>
+      </HStack>
+      <Text as="p" xstyle={shared.eyebrow}>
+        Teams
+      </Text>
+      <VStack xstyle={styles.teamsGrid}>
+        {[TEAM_RED, TEAM_BLUE].map((team) => (
+          <VStack key={team} gap={1}>
+            <Text as="span" xstyle={[shared.display, styles.teamHead, slotText(TEAM_PAINT[team])]}>
+              {TEAM_NAMES[team]}
+              {t.you === team && (
+                <Text as="span" xstyle={styles.teamYou}>
+                  your team
+                </Text>
+              )}
+            </Text>
+            <Seats team={team} total={TEAM_SIZE} showAway />
+          </VStack>
+        ))}
+      </VStack>
+      {t.you !== NO_TEAM && (
+        <HStack gap={2} align="center" xstyle={styles.switch}>
+          <Button
+            label={`Switch to ${TEAM_NAMES[other]}`}
+            variant="secondary"
+            isDisabled={!canSwitch}
+            data-testid="switch-team"
+            data-team={other}
+            onClick={() => app.switchTeam(other)}
+          />
+          {!canSwitch && (
+            <Text type="supporting" color="secondary" data-testid="switch-team-hint">
+              Teams must stay even: you can switch when yours has one more.
+            </Text>
+          )}
+        </HStack>
+      )}
+      <Text as="p" xstyle={shared.eyebrow}>
+        Invite link
+      </Text>
+      <InviteLink />
+      <Text as="p" xstyle={shared.eyebrow}>
+        Your weapon
+      </Text>
+      <WeaponPicker />
+      <HStack xstyle={styles.actions}>
+        <Button label="Cancel" variant="secondary" onClick={() => app.leave()} data-testid="waiting-cancel" />
+      </HStack>
+    </CardBox>
+  );
+}
+
 // --- Pause (Esc) -----------------------------------------------------------------------
 
 function PauseCard() {
@@ -482,37 +617,82 @@ function PauseCard() {
 
 // --- Result ----------------------------------------------------------------------------
 
+/**
+ * Why a tie for the most kills went the winner's way, for the result card:
+ * "Won on damage dealt", "Won by reaching 18 kills first", "Won on a coin
+ * flip" ("Red won ..." with teams). `score` is the tied kill score (the
+ * winner's kills, or the winning team's score). Null when won outright.
+ */
+function tiebreakLine(reason: TiebreakReason, score: number, team: string | null): string | null {
+  const won = team ? `${team} won` : "Won";
+  if (reason === "damage") return `${won} on damage dealt.`;
+  if (reason === "first") return `${won} by reaching ${score} ${score === 1 ? "kill" : "kills"} first.`;
+  if (reason === "lot") return `${won} on a coin flip.`;
+  return null;
+}
+
 function ResultCard() {
   countRender("card.result");
   const { app, view, gesture } = useEngine();
   const staying = useSelector(app, (s) => s.staying);
   const won = useSelector(view, (v) => !!v?.snapshot && v.snapshot.winner === v.you);
+  const tiebreak = useSelector(view, (v) => v?.snapshot?.tiebreak ?? "");
   const endDelay = useSelector(view, (v) => rulesOf(v?.snapshot?.mode ?? "duel").endDelay);
   const left = useSelector(view, (v) => Math.max(0, Math.ceil(endDelay - (performance.now() - (v?.endedAt ?? 0)) / 1000)));
   const model = useSelector(view, (v) => scoreboardModel(v?.snapshot ?? null, v?.you ?? ""), jsonEqual);
   const ffa = model.mode === "ffa";
-  // FFA: our place, from the same placements as the table (shared places allowed).
+  const teams = model.teams;
+  // FFA: our place, the server's (every place is its own: no draws).
   const mine = model.rows.find((r) => r.you);
-  const firsts = model.rows.filter((r) => r.place === 1).length;
-  const [headline, top] = !ffa
-    ? [won ? "You win!" : "You lose", won]
-    : !mine
+  // Teams: our team's result; a spectator (or a player without a team) reads which team won.
+  const winner = teams?.find((t) => t.won) ?? null;
+  const [headline, top] = teams
+    ? !winner
       ? ["Match over", false]
-      : mine.place === 1
-        ? [firsts > 1 ? "Shared first place" : "You won!", true]
-        : [`You placed ${mine.placeLabel}`, false];
+      : model.youTeam === NO_TEAM
+        ? [`${winner.name} team wins`, false]
+        : winner.team === model.youTeam
+          ? ["Your team wins!", true]
+          : ["Your team lost", false]
+    : !ffa
+      ? [won ? "You win!" : "You lose", won]
+      : !mine
+        ? ["Match over", false]
+        : mine.place === 1
+          ? ["You won!", true]
+          : [`You placed ${mine.placeLabel}`, false];
   const leader = ffa && mine?.place !== 1 ? model.rows[0] : null;
+  // A tie broken: say how (the tied score is the winner's, or the winning team's).
+  const why = teams
+    ? winner && tiebreakLine(tiebreak, winner.score, winner.name)
+    : tiebreakLine(tiebreak, model.rows.find((r) => r.place === 1)?.kills ?? 0, null);
   return (
     <CardBox name="result" wide={!staying}>
-      <Title name="result" xstyle={[shared.display, styles.resultTitle, ffa && styles.resultSmall, top && styles.resultWin]}>
+      <Title name="result" xstyle={[shared.display, styles.resultTitle, (ffa || !!teams) && styles.resultSmall, top && styles.resultWin]}>
         {headline}
       </Title>
+      {teams && (
+        <Text xstyle={[styles.resultSub, shared.tabular]} data-testid="result-teams" data-winner={winner?.team}>
+          <Text as="span" color="inherit" weight="bold" xstyle={slotText(teams[0].slot)}>
+            {teams[0].name} {teams[0].score}
+          </Text>{" "}
+          –{" "}
+          <Text as="span" color="inherit" weight="bold" xstyle={slotText(teams[1].slot)}>
+            {teams[1].score} {teams[1].name}
+          </Text>
+        </Text>
+      )}
       {leader && (
         <Text xstyle={styles.resultSub} data-testid="result-winner">
           <Text as="span" color="inherit" weight="bold" xstyle={slotText(leader.slot)}>
             {leader.name}
           </Text>{" "}
-          {firsts > 1 ? "shared first place" : "won"} with {leader.kills} {leader.kills === 1 ? "kill" : "kills"}.
+          won with {leader.kills} {leader.kills === 1 ? "kill" : "kills"}.
+        </Text>
+      )}
+      {why && (
+        <Text color="secondary" xstyle={styles.resultSub} data-testid="result-tiebreak" data-reason={tiebreak}>
+          {why}
         </Text>
       )}
       <Text color="secondary" xstyle={[styles.resultSub, shared.tabular]} data-testid="result-countdown">

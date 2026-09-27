@@ -26,10 +26,15 @@ export interface MatchResult {
   clerkId: string;
   kills: number;
   deaths: number;
-  /** First place (a shared first counts). */
+  /** First place, or on the winning team with teams. There is always exactly one winner (or winning team). */
   won: boolean;
-  /** Final place, 1 = first (see `placements` in @bagarre/shared). */
+  /**
+   * Final place, 1 = first, never shared (see `rank` in @bagarre/shared).
+   * With teams: the winning team's players first, then the others.
+   */
   place: number;
+  /** Team deathmatch: the player's team (TEAM_RED or TEAM_BLUE). Absent in the other modes. */
+  team?: number;
 }
 
 export interface AccountsConfig {

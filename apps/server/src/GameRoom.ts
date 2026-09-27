@@ -1,8 +1,17 @@
-// The game room, for both modes. A duel and a free-for-all run the same
-// simulation (inputs, bullets, grenades, damage); what differs is in the
-// mode's rules (@bagarre/shared modes.ts): seats, win condition, map pool,
-// countdown, spawns, respawn delay. `DuelRoom` and `FfaRoom` at the bottom
-// only pick the rules.
+// The game room, for every mode. A duel, a free-for-all and a team
+// deathmatch run the same simulation (inputs, bullets, grenades, damage);
+// what differs is in the mode's rules (@bagarre/shared modes.ts): seats, win
+// condition, map pool, countdown, spawns, respawn delay, teams. `DuelRoom`,
+// `FfaRoom` and `TeamRoom` at the bottom only pick the rules.
+//
+// Teams (rules.teams): every seat gets a team (`Player.team`) when it is
+// taken, the smaller one (`pickTeam`). Friendly fire is one rule,
+// `canDamage` from @bagarre/shared, applied where a hit lands: a bullet flies
+// through a teammate (stepBullets), a blast skips teammates and the thrower
+// (explode), and `damage` refuses the rest. Kills also count for the team
+// (`redScore` / `blueScore`), which is what wins. Outside a team mode every
+// player is NO_TEAM, for which `canDamage` is always true and none of the
+// team branches run, so a duel and an FFA play exactly as before.
 //
 // Seats and clients. A client is not a player: a player is a seat, which is
 // an entry in `state.players` (plus its `internals`), and the seat number is
@@ -34,7 +43,10 @@ import {
   DEFAULT_MAP_ID,
   DUEL_RULES,
   FFA_RULES,
-  FFA_SUDDEN_DEATH_MAX,
+  NO_TEAM,
+  TEAM_BLUE,
+  TEAM_RED,
+  TEAM_RULES,
   GRENADE_FUSE_TICKS,
   INPUT_BURST,
   KILL_FEED_SIZE,
@@ -47,6 +59,7 @@ import {
   MSG_PING,
   MSG_PONG,
   MSG_TAKE_SEAT,
+  MSG_TEAM,
   CLOSE_NO_PLAYERS,
   SPECTATOR_IDLE_S,
   PLAYER_RADIUS,
@@ -57,6 +70,7 @@ import {
   TICK_RATE,
   bulletId,
   bulletLifeTicks,
+  canDamage,
   circlesOverlap,
   ffaRespawnPoint,
   ffaStartSpawns,
@@ -64,7 +78,7 @@ import {
   grenadeDamage,
   grenadeFlightTicks,
   mapById,
-  placements,
+  rank,
   readSim,
   respawnPoint,
   shotPellets,
@@ -75,6 +89,9 @@ import {
   parsePick,
   parsePong,
   parseTakeSeat,
+  parseTeam,
+  sameTeam,
+  teamSpawns,
   ticks,
   weaponDef,
   writeSim,
@@ -85,6 +102,7 @@ import {
   type Phase,
   type RoomMeta,
   type Spawn,
+  type Standing,
   type Vec2,
 } from "@bagarre/shared";
 import { AuthRejected, guestName, recordMatch, resolveIdentity, type Identity, type MatchResult } from "./accounts.ts";
@@ -106,6 +124,11 @@ interface PlayerInternal {
   identity: Identity;
   /** Deaths in the current match (kills are synced on Player). */
   deaths: number;
+  /**
+   * Tick at which the player reached their current kill count: their latest
+   * kill, or the match start with none. A tiebreak (see `rank`).
+   */
+  reachedAt: number;
   /** The latency probe in flight: its number and when it was sent (performance.now()). */
   ping: { n: number; at: number } | null;
   /**
@@ -123,6 +146,8 @@ interface BulletInternal {
   ticksLeft: number;
   damage: number;
   weapon: number;
+  /** The shooter's team when it was fired (NO_TEAM outside a team mode): it flies through that team. */
+  team: number;
 }
 
 /** Server-only bookkeeping per grenade. */
@@ -132,6 +157,8 @@ interface GrenadeInternal {
   flightTicks: number;
   age: number;
   fuseLeft: number;
+  /** The thrower's team when it was thrown: its blast spares that team (and the thrower, with teams). */
+  team: number;
 }
 
 const PING_INTERVAL_MS = 2000;
@@ -214,6 +241,14 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       internal.ping = null;
     },
 
+    // Team deathmatch, while waiting: move to the other team if that keeps
+    // the teams balanced (see switchTeam).
+    [MSG_TEAM]: (client: Client, raw: unknown) => {
+      if (this.spectators.has(client.sessionId)) return;
+      const msg = parseTeam(raw);
+      if (msg) this.switchTeam(client.sessionId, msg.team);
+    },
+
     // A spectator takes a free seat, on the same connection (see takeSeat).
     [MSG_TAKE_SEAT]: (client: Client, raw: unknown) => {
       if (!parseTakeSeat(raw)) return;
@@ -243,8 +278,16 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   private nextGrenadeId = 0;
   private nextKill = 0;
   private matchResetTicks = 0;
-  /** Unique per match, so a retried stats write is applied once. */
+  /** Unique per match, so a retried stats write is applied once. Also the seed of the tiebreak lot. */
   private matchId = "";
+  /**
+   * Teams: each team's damage dealt this match (red, blue), counted as it is
+   * dealt so a leaver's damage still counts for the team, and the tick of
+   * each team's latest kill (the match start with none). Tiebreaks, see
+   * endTeamMatch.
+   */
+  private teamDamage: [number, number] = [0, 0];
+  private teamReachedAt: [number, number] = [0, 0];
   /** The map being played; `state.mapId` mirrors it. Only changes between matches (see `pickMap`). */
   private map: MapDef = this.rules.maps[0] ?? mapById(DEFAULT_MAP_ID);
   /** Pinned (`pinnedTo`) or forced by the dev `?map=` option: every match stays on `map`. */
@@ -525,14 +568,19 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       // Face the centre of the map.
       player.aim = Math.atan2(-spawn.z, -spawn.x);
     } else {
+      // Teams: the smaller team (see pickTeam), before the spawn is picked.
+      if (this.rules.teams) player.team = this.pickTeam();
       // FFA: out of everyone's sight, whatever the phase (a drop-in mid-match
-      // lands here too), facing the hub.
-      const spawn = ffaRespawnPoint(this.map, this.map.spawns, this.livingPositions(null));
+      // lands here too), facing the hub. Teams: on the team's own side, out
+      // of every enemy's sight.
+      const spawn = ffaRespawnPoint(this.map, this.spawnsOf(player.team), this.livingEnemies(null, player.team));
       writeSim(player, spawnSim(spawn.x, spawn.z, player.weapon));
       player.aim = this.hubAim(spawn);
     }
     this.state.players.set(client.sessionId, player);
-    this.internals.set(client.sessionId, { queue: [], tokens: INPUT_BURST, identity, deaths: 0, ping: null, baselined: false });
+    // A drop-in reached its 0 kills at the match start, like everyone else.
+    const reachedAt = this.state.startTick;
+    this.internals.set(client.sessionId, { queue: [], tokens: INPUT_BURST, identity, deaths: 0, reachedAt, ping: null, baselined: false });
     this.joinOrder.push(client.sessionId);
   }
 
@@ -583,6 +631,10 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   private ready(): boolean {
     const r = this.rules;
     if (this.seats < r.minPlayers) return false;
+    if (r.teams) {
+      const [red, blue] = this.teamCounts(true);
+      if (red < r.minPerTeam || blue < r.minPerTeam) return false;
+    }
     return r.startNeedsAll ? this.connectedSeats() === this.seats : this.connectedSeats() >= r.minPlayers;
   }
 
@@ -638,9 +690,14 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       this.bulletInternals.delete(bid);
     });
     if (this.state.phase === "playing") {
-      if (this.seats < this.rules.minToContinue) this.endMatch();
-      else if (this.state.suddenDeath && this.soleLeader()) this.endMatch();
-    }
+      // Teams: a team with nobody left loses, whatever the score (checked
+      // first: the last player standing wins for their team even when the
+      // room is then too small to go on).
+      if (this.rules.teams && this.seats > 0 && this.teamCounts(false).includes(0))
+        this.endTeamMatch(this.teamCounts(false)[TEAM_RED] > 0 ? TEAM_RED : TEAM_BLUE);
+      else if (this.seats < this.rules.minToContinue) this.endMatch();
+      else if (this.state.suddenDeath && this.hasLeader()) this.endMatch();
+    } else if (this.state.phase === "waiting" && this.rules.teams) this.rebalance();
     this.syncListing();
   }
 
@@ -667,6 +724,11 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   private setPhase(phase: Phase) {
     this.state.phase = phase;
     if (phase !== "waiting") this.state.countdown = 0;
+    // The final places and the tiebreak only mean something on the result.
+    if (phase !== "ended") {
+      this.state.tiebreak = "";
+      this.state.players.forEach((p) => (p.place = 0));
+    }
     this.syncListing();
   }
 
@@ -684,6 +746,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       phase: this.state.phase as Phase,
       players: this.seats,
       maxPlayers: this.rules.maxPlayers,
+      teams: this.rules.teams ? this.teamCounts(false) : undefined,
       spectators: this.spectators.size,
       createdAt: this.createdAt,
     };
@@ -719,6 +782,13 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     this.state.mapId = map.id;
     this.syncListing();
     this.clearProjectiles();
+    if (this.rules.teams) {
+      for (const [id, spawn] of this.teamStarts(map)) {
+        const p = this.state.players.get(id)!;
+        writeSim(p, spawnSim(spawn.x, spawn.z, p.weapon, readSim(p)));
+      }
+      return;
+    }
     const starts = this.rules.mode === "duel" ? null : ffaStartSpawns(map, map.spawns, this.seats);
     let i = 0;
     this.state.players.forEach((p) => {
@@ -731,16 +801,25 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     this.pickMap();
     this.clearProjectiles();
     this.state.winner = "";
+    this.state.winningTeam = NO_TEAM;
+    this.state.redScore = 0;
+    this.state.blueScore = 0;
     this.state.suddenDeath = false;
     this.state.feed.clear();
     this.matchId = `${this.roomId}:${crypto.randomUUID()}`;
-    this.internals.forEach((i) => (i.deaths = 0));
     this.resetScoreboard();
     if (this.rules.mode === "duel") {
       this.state.players.forEach((p) => {
         const spawn = duelSpawn(this.map, p.slot);
         this.spawnAt(p, spawn.x, spawn.z);
       });
+    } else if (this.rules.teams) {
+      // Each team on its own side, spread out, facing the hub.
+      for (const [id, spawn] of this.teamStarts(this.map)) {
+        const p = this.state.players.get(id)!;
+        this.spawnAt(p, spawn.x, spawn.z);
+        p.aim = this.hubAim(spawn);
+      }
     } else {
       // Spread out, each out of the others' sight, in a random order, facing the hub.
       const ids = [...this.state.players.keys()].sort(() => Math.random() - 0.5);
@@ -754,6 +833,12 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     }
     this.state.startTick = this.state.tick;
     this.state.endTick = 0;
+    this.internals.forEach((i) => {
+      i.deaths = 0;
+      i.reachedAt = this.state.startTick;
+    });
+    this.teamDamage = [0, 0];
+    this.teamReachedAt = [this.state.startTick, this.state.startTick];
     this.setPhase("playing");
   }
 
@@ -825,6 +910,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       // room back to waiting): a match never starts against an empty seat.
       if (this.matchResetTicks > 0) this.matchResetTicks--;
       if (this.matchResetTicks <= 0) {
+        // Teams: leavers may have left them lopsided; even them out first.
+        if (this.rules.teams) this.rebalance();
         if (this.seats < this.rules.minPlayers) this.setPhase("waiting");
         else if (this.ready()) this.startMatch();
         else if (!this.rules.startNeedsAll) this.setPhase("waiting");
@@ -849,18 +936,27 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     if (this.state.countdown === 0) this.startMatch();
   }
 
-  /** Time limit: the most kills wins; a tie goes to sudden death (see FFA_SUDDEN_DEATH_MAX). */
+  /**
+   * Time limit: the most kills wins; a tie goes to sudden death, for at most
+   * `rules.suddenDeathMax` seconds, after which the match ends and the
+   * tiebreaks decide (endMatch).
+   */
   private stepTimeLimit() {
     const limit = this.rules.timeLimit;
     if (limit <= 0) return;
     const elapsed = this.state.tick - this.state.startTick;
     if (this.state.suddenDeath) {
-      if (elapsed >= ticks(limit + FFA_SUDDEN_DEATH_MAX)) this.endMatch();
+      if (elapsed >= ticks(limit + this.rules.suddenDeathMax)) this.endMatch();
       return;
     }
     if (elapsed < ticks(limit)) return;
-    if (this.soleLeader()) this.endMatch();
+    if (this.hasLeader()) this.endMatch();
     else this.state.suddenDeath = true;
+  }
+
+  /** Someone leads alone: a player, or a team with teams. */
+  private hasLeader(): boolean {
+    return this.rules.teams ? this.leadingTeam() !== NO_TEAM : this.soleLeader() !== null;
   }
 
   /** The one player with the most kills, or null on a tie. */
@@ -919,7 +1015,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       bullet.z = b.z;
       bullet.owner = owner;
       this.state.bullets.set(id, bullet);
-      this.bulletInternals.set(id, { vx: b.vx, vz: b.vz, ticksLeft: bulletLifeTicks(w), damage: w.damage, weapon: player.weapon });
+      this.bulletInternals.set(id, { vx: b.vx, vz: b.vz, ticksLeft: bulletLifeTicks(w), damage: w.damage, weapon: player.weapon, team: player.team });
     });
   }
 
@@ -941,6 +1037,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       flightTicks: grenadeFlightTicks(dist),
       age: 0,
       fuseLeft: GRENADE_FUSE_TICKS,
+      team: player.team,
     });
   }
 
@@ -956,7 +1053,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       const alive = stepBullet(this.map, sim, (bx, bz) => {
         let hit = false;
         this.state.players.forEach((target, targetId) => {
-          if (hit || targetId === bullet.owner || !target.alive) return;
+          // A teammate is not in the way: the bullet flies through (canDamage).
+          if (hit || targetId === bullet.owner || !target.alive || !canDamage(internal.team, target.team, false)) return;
           if (circlesOverlap(bx, bz, BULLET_RADIUS, target.x, target.z, PLAYER_RADIUS)) {
             hit = true;
             const shooter = this.state.players.get(bullet.owner);
@@ -979,7 +1077,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
 
   private stepGrenades() {
     const dead: string[] = [];
-    const blasts: { owner: string; x: number; z: number }[] = [];
+    const blasts: { owner: string; x: number; z: number; team: number }[] = [];
     this.state.grenades.forEach((g, id) => {
       const internal = this.grenadeInternals.get(id);
       // An exploded grenade stays for exactly one snapshot so clients see the blast.
@@ -1000,21 +1098,22 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       internal.fuseLeft--;
       if (internal.fuseLeft <= 0) {
         g.exploded = true;
-        blasts.push({ owner: g.owner, x: g.tx, z: g.tz });
+        blasts.push({ owner: g.owner, x: g.tx, z: g.tz, team: internal.team });
       }
     });
     for (const id of dead) {
       this.state.grenades.delete(id);
       this.grenadeInternals.delete(id);
     }
-    for (const b of blasts) this.explode(b.owner, b.x, b.z);
+    for (const b of blasts) this.explode(b.owner, b.x, b.z, b.team);
   }
 
-  private explode(owner: string, x: number, z: number) {
+  private explode(owner: string, x: number, z: number, team: number) {
     // Collect first: a kill can end the match and clear the state mid-loop.
     const hits: { id: string; p: Player; dmg: number }[] = [];
     this.state.players.forEach((p, id) => {
-      if (!p.alive) return;
+      // Teams: the blast spares the thrower's team and the thrower.
+      if (!p.alive || !canDamage(team, p.team, id === owner)) return;
       const edge = Math.hypot(p.x - x, p.z - z) - PLAYER_RADIUS;
       const dmg = grenadeDamage(edge, id === owner);
       if (dmg !== null && dmg > 0) hits.push({ id, p, dmg });
@@ -1032,10 +1131,17 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
    */
   private damage(attackerId: string, targetId: string, target: Player, amount: number, weapon = 0) {
     if (!target.alive) return;
+    // No friendly fire, and no hurting yourself, with teams. (Bullets and
+    // blasts already skip them; this also covers any other path.)
+    if (!canDamage(this.teamOf(attackerId), target.team, attackerId === targetId)) return;
     // Scoreboard: what actually came off the opponent (shield, then HP down to 0).
     const dealt = Math.min(amount, target.shieldHp + target.hp);
     const attacker = attackerId === targetId ? undefined : this.state.players.get(attackerId);
-    if (attacker && this.state.phase === "playing") attacker.damage = Math.min(0xffff, attacker.damage + dealt);
+    if (attacker && this.state.phase === "playing") {
+      attacker.damage = Math.min(0xffff, attacker.damage + dealt);
+      // Teams: the team's own total, which outlives a leaver's seat.
+      if (attacker.team === TEAM_RED || attacker.team === TEAM_BLUE) this.teamDamage[attacker.team] += dealt;
+    }
     let left = amount;
     if (target.shieldHp > 0) {
       const absorbed = Math.min(target.shieldHp, left);
@@ -1062,7 +1168,16 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     if (!shooter) return;
 
     shooter.kills = Math.min(0xff, shooter.kills + 1);
-    if (shooter.kills >= this.rules.killsToWin) this.endMatch(attackerId);
+    const shooterInternal = this.internals.get(attackerId);
+    if (shooterInternal) shooterInternal.reachedAt = this.state.tick;
+    if (this.rules.teams) {
+      // The kill counts for the team, and the team's kills are what win.
+      const score = this.addTeamKill(shooter.team);
+      if (score >= this.rules.killsToWin) this.endMatch();
+      else if (this.state.suddenDeath && this.hasLeader()) this.endMatch();
+      return;
+    }
+    if (shooter.kills >= this.rules.killsToWin) this.endMatch();
     else if (this.state.suddenDeath && this.soleLeader()) this.endMatch();
   }
 
@@ -1076,53 +1191,215 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     e.victim = victimId;
     e.victimName = victim.name;
     e.victimSlot = victim.slot;
+    e.killerTeam = killer?.team ?? NO_TEAM;
+    e.victimTeam = victim.team;
     e.weapon = weapon;
     this.state.feed.push(e);
     while (this.state.feed.length > KILL_FEED_SIZE) this.state.feed.shift();
   }
 
   /**
-   * The match is over: first to the kill target (`winnerId`), the time limit,
-   * sudden death, or too few players left. Places come from `placements`
-   * (kills, then deaths); `winner` is the sole first place, "" if shared.
+   * The match is over: first to the kill target, the time limit, sudden
+   * death (won, or its cap ran out), or too few players left. There is
+   * always one winner: the places come from `rank` (kills, then damage,
+   * then first to the score, then the lot), all different, and `winner` is
+   * 1st. Whoever reached the kill target is alone on top on kills, so 1st.
    */
-  private endMatch(winnerId?: string) {
-    const standings: { id: string; kills: number; deaths: number }[] = [];
-    this.state.players.forEach((p, id) => standings.push({ id, kills: p.kills, deaths: this.internals.get(id)?.deaths ?? p.deaths }));
-    const places = placements(standings);
-    const firsts = places.filter((p) => p.place === 1);
-    this.state.winner = winnerId ?? (firsts.length === 1 ? firsts[0].player.id : "");
+  private endMatch() {
+    if (this.rules.teams) {
+      this.endTeamMatch();
+      return;
+    }
+    const { order, reason } = rank(this.standings(), this.matchId);
+    order.forEach(({ entry, place }) => (this.state.players.get(entry.id)!.place = place));
+    this.state.winner = order[0]?.entry.id ?? "";
+    this.state.tiebreak = reason;
     this.state.endTick = this.state.tick;
     this.setPhase("ended");
     this.matchResetTicks = ticks(this.rules.endDelay);
     this.clearProjectiles();
-    this.recordStats(new Map(places.map((p) => [p.player.id, p.place])));
+    this.recordStats();
+  }
+
+  /** Every seat's standing for `rank`: kills, damage dealt, and when the kill count was reached. */
+  private standings(): Standing[] {
+    const out: Standing[] = [];
+    this.state.players.forEach((p, id) =>
+      out.push({ id, kills: p.kills, damage: p.damage, reachedAt: this.internals.get(id)?.reachedAt ?? this.state.startTick }),
+    );
+    return out;
   }
 
   /**
    * Sends the finished match to Convex for the account players (guests are
-   * skipped). A win is first place (a shared first counts for each); every
-   * other place is a loss.
+   * skipped), with the places set on the players. A win is first place (the
+   * one winner); every other place is a loss.
    */
-  private recordStats(places: Map<string, number>) {
+  private recordStats(winningTeam = NO_TEAM) {
     const results: MatchResult[] = [];
     this.state.players.forEach((p, id) => {
       const internal = this.internals.get(id);
       if (internal?.identity.kind !== "account") return;
-      const place = places.get(id) ?? places.size;
+      const place = p.place;
+      // Teams: a win for everyone on the winning team, a loss for the others.
+      if (this.rules.teams) {
+        results.push({ clerkId: internal.identity.clerkId, kills: p.kills, deaths: internal.deaths, won: p.team === winningTeam, place, team: p.team });
+        return;
+      }
       results.push({ clerkId: internal.identity.clerkId, kills: p.kills, deaths: internal.deaths, won: place === 1, place });
     });
     // Fire and forget: the game loop never waits on Convex.
     void recordMatch(this.matchId, results, this.rules.mode);
   }
 
-  /** Where the living players other than `except` stand. */
-  private livingPositions(except: string | null): Vec2[] {
+  /**
+   * Where the living enemies of `team` other than `except` stand: everyone
+   * but `except` outside a team mode (NO_TEAM has no teammates).
+   */
+  private livingEnemies(except: string | null, team: number): Vec2[] {
     const out: Vec2[] = [];
     this.state.players.forEach((p, id) => {
-      if (id !== except && p.alive) out.push({ x: p.x, z: p.z });
+      if (id !== except && p.alive && !sameTeam(p.team, team)) out.push({ x: p.x, z: p.z });
     });
     return out;
+  }
+
+  /** The spawns a player of `team` uses on the current map: the team's side with teams, else all of them. */
+  private spawnsOf(team: number): readonly Spawn[] {
+    return this.rules.teams ? teamSpawns(this.map, team) : this.map.spawns;
+  }
+
+  // --- Teams (rules.teams) -------------------------------------------------------------
+
+  /** A seat's team (NO_TEAM outside a team mode, or for someone without a seat). */
+  teamOf(id: string): number {
+    return this.state.players.get(id)?.team ?? NO_TEAM;
+  }
+
+  /** Seats on red and on blue: all of them, or only the connected ones. */
+  private teamCounts(connectedOnly: boolean): [number, number] {
+    const n: [number, number] = [0, 0];
+    this.state.players.forEach((p) => {
+      if ((p.team === TEAM_RED || p.team === TEAM_BLUE) && (!connectedOnly || p.connected)) n[p.team]++;
+    });
+    return n;
+  }
+
+  /**
+   * The team a new seat goes to: the smaller one. On a tie, the one with
+   * fewer players connected (a dropped player may not come back), then the
+   * one behind on kills (mid-match, the newcomer helps the losing side),
+   * then red.
+   */
+  private pickTeam(): number {
+    const all = this.teamCounts(false);
+    if (all[TEAM_RED] !== all[TEAM_BLUE]) return all[TEAM_RED] < all[TEAM_BLUE] ? TEAM_RED : TEAM_BLUE;
+    const on = this.teamCounts(true);
+    if (on[TEAM_RED] !== on[TEAM_BLUE]) return on[TEAM_RED] < on[TEAM_BLUE] ? TEAM_RED : TEAM_BLUE;
+    if (this.state.phase === "playing" && this.state.redScore !== this.state.blueScore)
+      return this.state.redScore < this.state.blueScore ? TEAM_RED : TEAM_BLUE;
+    return TEAM_RED;
+  }
+
+  /** One more kill for `team`; returns its new score. */
+  private addTeamKill(team: number): number {
+    if (team !== TEAM_RED && team !== TEAM_BLUE) return 0;
+    this.teamReachedAt[team] = this.state.tick;
+    if (team === TEAM_RED) return (this.state.redScore = Math.min(0xffff, this.state.redScore + 1));
+    return (this.state.blueScore = Math.min(0xffff, this.state.blueScore + 1));
+  }
+
+  /** The team ahead on kills, or NO_TEAM on a tie. */
+  private leadingTeam(): number {
+    const { redScore: r, blueScore: b } = this.state;
+    return r === b ? NO_TEAM : r > b ? TEAM_RED : TEAM_BLUE;
+  }
+
+  /**
+   * MSG_TEAM: while waiting, a player moves to the other team if the sizes
+   * still differ by at most one afterwards (so only from the bigger team of
+   * an odd count: 3v2 -> 2v3). Anything else is refused silently. The
+   * player moves to a spawn on the new side.
+   */
+  private switchTeam(id: string, team: number) {
+    const player = this.state.players.get(id);
+    if (!player || !this.rules.teams || this.state.phase !== "waiting" || player.team === team) return;
+    const sizes = this.teamCounts(false);
+    sizes[player.team]--;
+    sizes[team]++;
+    if (Math.abs(sizes[TEAM_RED] - sizes[TEAM_BLUE]) > 1) return;
+    player.team = team;
+    this.toOwnSide(id, player);
+    this.syncListing();
+  }
+
+  /**
+   * Evens the teams out between matches (a leave can make them 3v1): while
+   * they differ by more than one, the latest joiner of the bigger team moves
+   * to the other one, and to its side.
+   */
+  private rebalance() {
+    for (;;) {
+      const [red, blue] = this.teamCounts(false);
+      if (Math.abs(red - blue) <= 1) return;
+      const from = red > blue ? TEAM_RED : TEAM_BLUE;
+      const id = [...this.joinOrder].reverse().find((s) => this.state.players.get(s)?.team === from);
+      const p = id ? this.state.players.get(id) : undefined;
+      if (!id || !p) return;
+      p.team = from === TEAM_RED ? TEAM_BLUE : TEAM_RED;
+      this.toOwnSide(id, p);
+      this.syncListing();
+    }
+  }
+
+  /** Puts a player on a spawn of their own team's side, out of the enemies' sight, facing the hub. */
+  private toOwnSide(id: string, p: Player) {
+    const spawn = ffaRespawnPoint(this.map, this.spawnsOf(p.team), this.livingEnemies(id, p.team));
+    writeSim(p, spawnSim(spawn.x, spawn.z, p.weapon, readSim(p)));
+    p.aim = this.hubAim(spawn);
+  }
+
+  /** Match start with teams: each team spread over its own side (ffaStartSpawns on the side's spawns). */
+  private teamStarts(map: MapDef): Map<string, Spawn> {
+    const out = new Map<string, Spawn>();
+    const ids = [...this.state.players.keys()].sort(() => Math.random() - 0.5);
+    for (const team of [TEAM_RED, TEAM_BLUE]) {
+      const mine = ids.filter((id) => this.state.players.get(id)?.team === team);
+      if (mine.length === 0) continue;
+      const starts = ffaStartSpawns(map, teamSpawns(map, team), mine.length);
+      mine.forEach((id, i) => out.set(id, starts[i % starts.length]));
+    }
+    return out;
+  }
+
+  /**
+   * The end of a team match: `forced` wins (the only team with players
+   * left), else the team with the most kills; level on kills, `rank` on the
+   * team totals decides (the team's damage, then first to the score, then
+   * the lot). Never a draw, and no single winner. Places are all different:
+   * the winning team's players first, then the others, each team in `rank`
+   * order of its players' own kills, damage and so on.
+   */
+  private endTeamMatch(forced?: number) {
+    const team = (t: number): Standing => ({
+      id: String(t),
+      kills: t === TEAM_RED ? this.state.redScore : this.state.blueScore,
+      damage: this.teamDamage[t],
+      reachedAt: this.teamReachedAt[t],
+    });
+    const decided = rank([team(TEAM_RED), team(TEAM_BLUE)], this.matchId);
+    const winningTeam = forced ?? Number(decided.order[0].entry.id);
+    this.state.winner = "";
+    this.state.winningTeam = winningTeam;
+    this.state.tiebreak = forced === undefined ? decided.reason : "";
+    const players = rank(this.standings(), this.matchId).order.map((o) => this.state.players.get(o.entry.id)!);
+    const inOrder = [...players.filter((p) => p.team === winningTeam), ...players.filter((p) => p.team !== winningTeam)];
+    inOrder.forEach((p, i) => (p.place = i + 1));
+    this.state.endTick = this.state.tick;
+    this.setPhase("ended");
+    this.matchResetTicks = ticks(this.rules.endDelay);
+    this.clearProjectiles();
+    this.recordStats(winningTeam);
   }
 
   /**
@@ -1139,7 +1416,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       this.spawnAt(player, spawn.x, spawn.z);
       return;
     }
-    const spawn = ffaRespawnPoint(this.map, this.map.spawns, this.livingPositions(id));
+    // Teams: on the team's own side, out of every enemy's sight.
+    const spawn = ffaRespawnPoint(this.map, this.spawnsOf(player.team), this.livingEnemies(id, player.team));
     this.spawnAt(player, spawn.x, spawn.z);
   }
 }
@@ -1152,4 +1430,9 @@ export class DuelRoom extends GameRoom {
 /** Free for all: 3-6 players, first to FFA_KILLS_TO_WIN or the most kills after FFA_TIME_LIMIT. Room "ffa". */
 export class FfaRoom extends GameRoom {
   static override rules = FFA_RULES;
+}
+
+/** Team deathmatch: red against blue, up to 4v4, first team to TEAM_KILLS_TO_WIN or the most after TEAM_TIME_LIMIT. Room "tdm". */
+export class TeamRoom extends GameRoom {
+  static override rules = TEAM_RULES;
 }

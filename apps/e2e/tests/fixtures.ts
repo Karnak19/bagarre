@@ -2,7 +2,7 @@
 //
 // - `players.open()` makes a player: its own browser context (own storage,
 //   own guest name, own connection), so N players are N contexts.
-// - `players.duel()` / `players.ffa(n)` open a private game by its link and
+// - `players.duel()` / `players.ffa(n)` / `players.teams(n)` open a private game by its link and
 //   wait until every player is in the match. Private games are never listed
 //   nor quick-matched, so tests running in parallel never meet.
 // - `Player.state()` reads the dev handle `window.__bagarre` (Vite dev only)
@@ -35,6 +35,9 @@ export interface PlayerState {
   phase: string | null;
   mapId: string | null;
   spectators: number;
+  /** Team deathmatch: each team's kills. */
+  redScore: number;
+  blueScore: number;
   opponentLeft: boolean;
   boardOpen: boolean;
   inputEnabled: boolean;
@@ -52,6 +55,9 @@ export interface PlayerState {
     alive: boolean;
     connected: boolean;
     slot: number;
+    /** 0 red, 1 blue, 255 outside a team mode. */
+    team: number;
+    hp: number;
     x: number;
     z: number;
   }[];
@@ -99,6 +105,8 @@ export class Player {
           alive: !!p.alive,
           connected: !!p.connected,
           slot: Number(p.slot),
+          team: Number(p.team),
+          hp: Number(p.hp),
           x: Number(p.x),
           z: Number(p.z),
         }),
@@ -116,6 +124,8 @@ export class Player {
         phase: latest?.phase ?? null,
         mapId: latest?.mapId ?? null,
         spectators: latest?.spectators ?? 0,
+        redScore: latest?.redScore ?? 0,
+        blueScore: latest?.blueScore ?? 0,
         opponentLeft: s.opponentLeft,
         boardOpen: b.boardOpen,
         inputEnabled: b.input.enabled,
@@ -218,10 +228,10 @@ export class Players {
   }
 
   /** The host opens a private game of that mode from the menu; resolves with its invite link. */
-  async host(mode: "duel" | "ffa" = "duel", name = "A"): Promise<{ host: Player; invite: string; code: string }> {
+  async host(mode: "duel" | "ffa" | "tdm" = "duel", name = "A"): Promise<{ host: Player; invite: string; code: string }> {
     const host = await this.open(name);
-    await host.goto("/", mode === "ffa" ? FFA_MAP : DUEL_MAP);
-    await host.testId(mode === "ffa" ? "private-ffa" : "private-game").click();
+    await host.goto("/", mode === "duel" ? DUEL_MAP : FFA_MAP);
+    await host.testId(mode === "ffa" ? "private-ffa" : mode === "tdm" ? "private-tdm" : "private-game").click();
     await expect(host.page).toHaveURL(/\/game\/[A-Za-z0-9_-]+/);
     await expect(host.testId("waiting-card")).toBeVisible();
     const invite = await host.testId("invite-link").inputValue();
@@ -249,6 +259,15 @@ export class Players {
   /** A private FFA by link with `n` players; resolves once they are all in the room (the countdown may still run). */
   async ffa(n: number): Promise<{ players: Player[]; code: string; invite: string }> {
     const { host, invite, code } = await this.host("ffa", "A");
+    const players = [host];
+    for (let i = 1; i < n; i++) players.push(await this.join(invite, String.fromCharCode(65 + i), FFA_MAP));
+    for (const p of players) await expect.poll(async () => (await p.state()).players.length).toBe(n);
+    return { players, code, invite };
+  }
+
+  /** A private team deathmatch by link with `n` players (on the FFA map); resolves once they are all in the room. */
+  async teams(n: number): Promise<{ players: Player[]; code: string; invite: string }> {
+    const { host, invite, code } = await this.host("tdm", "A");
     const players = [host];
     for (let i = 1; i < n; i++) players.push(await this.join(invite, String.fromCharCode(65 + i), FFA_MAP));
     for (const p of players) await expect.poll(async () => (await p.state()).players.length).toBe(n);

@@ -6,6 +6,8 @@
 // Next to it, on PORT + 1, a small control API for the tests (test-only,
 // never part of the product):
 //   POST /kill { roomId, killer, victim }  the killer's shot kills the victim at once
+//                                          (through the real damage path: nothing
+//                                          happens between teammates)
 //
 // Run by playwright.config.ts (webServer), or by hand: `bun server.ts`.
 
@@ -18,12 +20,14 @@ export const E2E_RULES = {
   duel: { killsToWin: 2, respawnDelay: 0.5 },
   /** An FFA starts 2 s after the third player is in. */
   ffa: { countdown: 2, respawnDelay: 0.5 },
+  /** A team deathmatch starts 2 s after it is 2v2. */
+  tdm: { countdown: 2, respawnDelay: 0.5 },
 };
 
 const port = Number(process.env.PORT ?? 2610);
 const controlPort = port + 1;
 
-const server = createServer({ gracefullyShutdown: false, duelRules: E2E_RULES.duel, ffaRules: E2E_RULES.ffa });
+const server = createServer({ gracefullyShutdown: false, duelRules: E2E_RULES.duel, ffaRules: E2E_RULES.ffa, teamRules: E2E_RULES.tdm });
 await server.listen(port);
 
 /**

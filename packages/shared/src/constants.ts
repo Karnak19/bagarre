@@ -166,11 +166,37 @@ export const FFA_RESPAWN_DELAY = 3;
 /** Seconds the placement table stays up before the rematch. */
 export const FFA_END_DELAY = 8;
 /**
- * A tie for the most kills when the time runs out goes to sudden death: the
- * match ends as soon as one player alone has the most kills. If that takes
- * longer than this many seconds, it ends anyway and deaths break the tie.
+ * FFA and team deathmatch: a tie for the most kills when the time runs out
+ * goes to sudden death: the match ends as soon as one player (one team)
+ * alone has the most kills. If that takes longer than this many seconds, it
+ * ends anyway and the tiebreaks of `rank` (modes.ts) pick the winner: most
+ * damage, then first to the score, then the lot. Never a draw.
  */
-export const FFA_SUDDEN_DEATH_MAX = 60;
+export const SUDDEN_DEATH_MAX = 60;
+
+// --- Team deathmatch (see modes.ts): red against blue, up to 4v4 on the FFA maps ---
+/** Room name of the team deathmatch matchmaking. */
+export const TEAM_ROOM_NAME = "tdm";
+/** Players per team at most: 4v4. */
+export const TEAM_SIZE = 4;
+export const TEAM_MAX_PLAYERS = 2 * TEAM_SIZE;
+/** Connected players each team needs for the countdown to run: 2v2. */
+export const TEAM_MIN_PER_TEAM = 2;
+export const TEAM_MIN_PLAYERS = 2 * TEAM_MIN_PER_TEAM;
+/** The first team to this many kills wins... */
+export const TEAM_KILLS_TO_WIN = 25;
+/** ...or the team with the most after this many seconds (a tie goes to sudden death, capped by SUDDEN_DEATH_MAX). */
+export const TEAM_TIME_LIMIT = 480;
+/** Seconds of countdown once both teams have TEAM_MIN_PER_TEAM connected. */
+export const TEAM_COUNTDOWN = 10;
+export const TEAM_RESPAWN_DELAY = 3;
+/** Seconds the result stays up before the rematch. */
+export const TEAM_END_DELAY = 8;
+/** `Player.team` values. Every player of a duel or an FFA is NO_TEAM. */
+export const TEAM_RED = 0;
+export const TEAM_BLUE = 1;
+export const NO_TEAM = 255;
+export const TEAM_NAMES = ["Red", "Blue"] as const;
 
 // --- Netcode ---
 /** How far in the past remote entities are rendered, in ms. */

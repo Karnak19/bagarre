@@ -45,6 +45,8 @@ export const shared = stylex.create({
   p3: { backgroundColor: "var(--bagarre-p3)" },
   p4: { backgroundColor: "var(--bagarre-p4)" },
   p5: { backgroundColor: "var(--bagarre-p5)" },
+  p6: { backgroundColor: "var(--bagarre-p6)" },
+  p7: { backgroundColor: "var(--bagarre-p7)" },
   pNone: { backgroundColor: "var(--color-text-disabled)" },
   t0: { color: "var(--bagarre-p0)" },
   t1: { color: "var(--bagarre-p1)" },
@@ -52,6 +54,8 @@ export const shared = stylex.create({
   t3: { color: "var(--bagarre-p3)" },
   t4: { color: "var(--bagarre-p4)" },
   t5: { color: "var(--bagarre-p5)" },
+  t6: { color: "var(--bagarre-p6)" },
+  t7: { color: "var(--bagarre-p7)" },
   /** The blue call-to-action (Copy invite link, Sign in, Save). */
   blueButton: {
     backgroundColor: {
@@ -62,14 +66,16 @@ export const shared = stylex.create({
   },
 });
 
-const FILLS = [shared.p0, shared.p1, shared.p2, shared.p3, shared.p4, shared.p5];
-const TEXTS = [shared.t0, shared.t1, shared.t2, shared.t3, shared.t4, shared.t5];
+const FILLS = [shared.p0, shared.p1, shared.p2, shared.p3, shared.p4, shared.p5, shared.p6, shared.p7];
+const TEXTS = [shared.t0, shared.t1, shared.t2, shared.t3, shared.t4, shared.t5, shared.t6, shared.t7];
 
-/** The background (dot, bar) colour for a player slot, 0..5 (null: no seat). */
+// These take a paint index (paint.ts): a seat's colour 0..5, or a team's, 6 and 7.
+
+/** The background (dot, bar) colour for a paint index (null: no seat). */
 export const slotDot = (slot: number | null) => (slot === null ? null : (FILLS[slot] ?? null));
 
 /** Like slotDot, but a grey fill for no seat (an empty HP bar). */
 export const slotFill = (slot: number | null) => (slot === null ? shared.pNone : (FILLS[slot] ?? shared.pNone));
 
-/** The text colour for a player slot (a name in the kill feed or a table). */
+/** The text colour for a paint index (a name in the kill feed or a table). */
 export const slotText = (slot: number) => TEXTS[slot] ?? null;

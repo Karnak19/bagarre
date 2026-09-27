@@ -14,6 +14,12 @@ export const MSG_PICK = "pick";
 // the Colyseus SDK only warns about unhandled types without it.
 export const MSG_PING = "__latency";
 export const MSG_PONG = "latency:ack";
+/**
+ * Team deathmatch, while waiting: move to the other team, `{ team }`
+ * (TEAM_RED or TEAM_BLUE). Refused unless the teams stay balanced (sizes
+ * differ by at most 1 after the move).
+ */
+export const MSG_TEAM = "team";
 /** Spectator -> room: take a free seat, on the same connection. Payload `{}`. */
 export const MSG_TAKE_SEAT = "seat";
 /**
@@ -60,6 +66,10 @@ export interface InputMessage {
 
 export interface PickMessage {
   weapon: number;
+}
+
+export interface TeamMessage {
+  team: number;
 }
 
 export type Phase = "waiting" | "playing" | "ended";
@@ -121,10 +131,13 @@ export interface PlayerView extends PlayerSim {
   /** Last input seq the server applied for this player (for reconciliation). */
   lastSeq: number;
   /**
-   * The player's seat number: 0-1 in a duel, 0-5 in FFA. Decides the colour
-   * (PLAYER_COLORS) and the bullet ids. The lowest free one is taken at join.
+   * The player's seat number: 0-1 in a duel, 0-5 in FFA, 0-7 in a team
+   * deathmatch. Decides the bullet ids, and the colour outside a team mode
+   * (PLAYER_COLORS). The lowest free one is taken at join.
    */
   slot: number;
+  /** TEAM_RED or TEAM_BLUE in a team deathmatch (their colour); NO_TEAM in the other modes. */
+  team: number;
   /** Server ticks left before respawn, when dead. */
   respawnTicks: number;
   /** Weapon in hand, and the one picked for the next spawn. */
@@ -150,6 +163,12 @@ export interface PlayerView extends PlayerSim {
   shots: number;
   hits: number;
   damage: number;
+  /**
+   * Final place once the match ended, 1 = first, set by the server (`rank`
+   * in modes.ts): every player has their own, no shared places. 0 while the
+   * match runs, and for a player who joined after the end.
+   */
+  place: number;
   /** Round-trip time to the server in ms, measured by the server (MSG_PING). */
   ping: number;
   /**
@@ -168,6 +187,7 @@ export const PLAYER_VIEW_KEYS = [
   "alive",
   "lastSeq",
   "slot",
+  "team",
   "respawnTicks",
   "weapon",
   "pick",
@@ -179,6 +199,7 @@ export const PLAYER_VIEW_KEYS = [
   "shots",
   "hits",
   "damage",
+  "place",
   "ping",
   "connected",
 ] as const satisfies readonly (keyof PlayerView)[];
@@ -230,6 +251,9 @@ export interface KillView {
   victim: string;
   victimName: string;
   victimSlot: number;
+  /** Their teams at the time (NO_TEAM outside a team mode), for the colours. */
+  killerTeam: number;
+  victimTeam: number;
   /** A weapon id (WEAPONS), or KILL_GRENADE. */
   weapon: number;
 }
@@ -240,11 +264,20 @@ export const KILL_GRENADE = 255;
 export const KILL_FEED_SIZE = 5;
 
 export interface RoomStateView {
-  /** "duel" or "ffa" (see modes.ts). Set when the room is made, never changes. */
+  /** "duel", "ffa" or "tdm" (see modes.ts). Set when the room is made, never changes. */
   mode: string;
   phase: Phase;
-  /** Session id of the winner, "" before the end or for a shared first place. */
+  /** Session id of the winner once the match ended, "" before (always "" with teams). There is always one. */
   winner: string;
+  /**
+   * Why the winner (the winning team) won when it was level on kills, once
+   * the match ended: a `TiebreakReason` (modes.ts), "" when it won outright.
+   */
+  tiebreak: string;
+  /** Team deathmatch: the kills of each team this match, and the winning team once it ended (NO_TEAM before, or no teams). */
+  redScore: number;
+  blueScore: number;
+  winningTeam: number;
   tick: number;
   /** The map being played (a `MapDef.id`, see `mapById`). Only changes between matches. */
   mapId: string;
@@ -281,6 +314,8 @@ export interface RoomMeta {
   /** Player seats taken (dropped players waiting to reconnect included), and the seat count. */
   players: number;
   maxPlayers: number;
+  /** Team deathmatch: seats on red and on blue ("3v2"). Absent in the other modes. */
+  teams?: [number, number];
   /** Spectators watching. */
   spectators: number;
   /** Date.now() when the room was created. */
@@ -299,7 +334,7 @@ export interface JoinOptions {
    * Join as a spectator: no seat, no player, no inputs (see the seat model
    * in GameRoom). The client joins through the watch route (WATCH_ROUTE),
    * which sets it, so a room whose seats are full can still be watched. The mode is the room name
-   * ("duel" or "ffa"), never an option.
+   * ("duel", "ffa" or "tdm"), never an option.
    */
   spectate?: boolean;
 }
@@ -330,6 +365,8 @@ export interface OpenGame {
   /** Seats taken and seats in all ("3/6 players"). */
   players: number;
   maxPlayers: number;
+  /** Team deathmatch: seats on red and on blue ("3v2"). */
+  teams?: [number, number];
   spectators: number;
   /** A seat can be taken now (Join); otherwise the game can only be watched. */
   joinable: boolean;

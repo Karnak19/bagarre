@@ -85,6 +85,12 @@ export const BASTION: FfaMapDef = {
     }),
   ),
   hub: { x: 0, z: 0 },
+  // Team deathmatch: the west half (North and West fields, rotations 0 and 3)
+  // against the east half (East and South fields, rotations 1 and 2).
+  teams: [
+    { name: "West", spawns: [0, 1, 2, 3, 12, 13, 14, 15] },
+    { name: "East", spawns: [4, 5, 6, 7, 8, 9, 10, 11] },
+  ],
   zones: [
     { id: "keep", name: "Keep", x0: -7, z0: -7, x1: 7, z1: 7, tint: 0xa2503c },
     { id: "ring", name: "Ring", x0: -12, z0: -12, x1: 12, z1: 12, tint: 0xd8c9a8 },

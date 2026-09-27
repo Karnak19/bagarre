@@ -12,13 +12,15 @@
 import {
   INTERP_DELAY_MS,
   KILL_GRENADE,
+  NO_TEAM,
   SHIELD,
   TICK_MS,
   TICK_RATE,
   WEAPONS,
+  canDamage,
   findMap,
   ordinal,
-  placements,
+  sameTeam,
   weaponDef,
   type InputMessage,
   type Phase,
@@ -27,22 +29,24 @@ import {
 } from "@bagarre/shared";
 import { WEAPON_SFX, isMuted, play, setListener, type PlayOptions, type SfxName } from "./audio.ts";
 import { LocalBullets } from "./bullets.ts";
-import type { FfaHud, Hud, HudModel, KillFeedLine } from "./hud.ts";
+import type { FfaHud, Hud, HudModel, KillFeedLine, TeamHud } from "./hud.ts";
 import { screenToWorldMove, type Input } from "./input.ts";
 import { SnapshotBuffer } from "./interpolation.ts";
 import type { Minimap } from "./minimap.ts";
 import type { Net, Snapshot } from "./net.ts";
 import { Predictor } from "./prediction.ts";
+import { paintFor, paintOf } from "./paint.ts";
 import { GameScene, PLAYER_CSS_COLORS, PlayerMesh, playerColor } from "./scene.ts";
-import { clock, secondsLeft } from "./scoreboard.ts";
+import { byPlace, clock, secondsLeft } from "./scoreboard.ts";
 import { sceneRig } from "./spectate/camera.ts";
 import type { SpectatorControlActions } from "./spectate/controls.ts";
 import type { CameraMode } from "./spectate/model.ts";
 import { Spectator } from "./spectate/spectator.ts";
 
-/** The spectator's Follow zoom: the game's own in a duel, a little wider on the bigger FFA maps. */
-const FOLLOW_VIEW_HEIGHT = { duel: 22, ffa: 26 } as const;
-const slotCss = (slot: number) => PLAYER_CSS_COLORS[slot % PLAYER_CSS_COLORS.length];
+/** The spectator's Follow zoom: the game's own in a duel, a little wider on the bigger FFA and team maps. */
+const FOLLOW_VIEW_HEIGHT = { duel: 22, ffa: 26, tdm: 26 } as const;
+/** CSS colour of a paint index (paint.ts). */
+const paintCss = (paint: number) => PLAYER_CSS_COLORS[paint % PLAYER_CSS_COLORS.length];
 
 // Our own actions play the moment they are predicted (in the tick loop below),
 // never from reconcile: it replays pending inputs and would play them again.
@@ -240,10 +244,17 @@ export class Match {
     return true;
   }
 
-  private meshFor(id: string, slot: number): PlayerMesh {
+  /** The player's mesh, in `paint` (paint.ts). A new paint (a team switch) remakes it. */
+  private meshFor(id: string, paint: number): PlayerMesh {
     let m = this.meshes.get(id);
+    if (m && m.slot !== paint) {
+      this.scene.removePlayer(m);
+      m.dispose();
+      this.meshes.delete(id);
+      m = undefined;
+    }
     if (!m) {
-      m = new PlayerMesh(playerColor(slot), id === this.net.sessionId, slot);
+      m = new PlayerMesh(playerColor(paint), id === this.net.sessionId, paint);
       this.meshes.set(id, m);
       this.scene.addPlayer(m);
     }
@@ -360,8 +371,9 @@ export class Match {
       if (s.phase === "playing") this.mapCardLeft = MAP_CARD_MS;
       if (s.phase === "ended") {
         this.endedAt = performance.now();
-        // A spectator has no side: no win or lose sting.
-        if (me) this.sfx(s.winner === sessionId ? "match_win" : "match_lose");
+        // A spectator has no side: no win or lose sting. With teams, our team's result.
+        const won = s.mode === "tdm" ? !!me && me.team === s.winningTeam : s.winner === sessionId;
+        if (me) this.sfx(won ? "match_win" : "match_lose");
       }
       this.phase = s.phase;
     }
@@ -393,7 +405,7 @@ export class Match {
 
       // Hit flash (and its sound) when someone's HP goes down.
       if (p.hp < prev.hp) {
-        this.meshFor(id, p.slot).flash(now + (mine ? 0 : INTERP_DELAY_MS));
+        this.meshFor(id, paintOf(p)).flash(now + (mine ? 0 : INTERP_DELAY_MS));
         this.sfx(mine ? "hurt" : "hit", at);
       }
       if (p.shieldHp < prev.shieldHp && p.shieldHp > 0) this.sfx("shield_hit", at);
@@ -442,12 +454,20 @@ export class Match {
     this.lastKillN = Math.max(top, 0);
     if (!watching) return;
     if (!this.spectator) {
-      const mode = s.mode === "ffa" ? "ffa" : "duel";
-      this.spectator = new Spectator({ rig: sceneRig(this.scene), colorOf: slotCss, followViewHeight: FOLLOW_VIEW_HEIGHT[mode] });
+      const mode = s.mode;
+      // The spectator colours players by seat; with teams, a seat's colour is its player's team's.
+      const colorOf = (slot: number) => {
+        let paint = slot;
+        this.latest?.players.forEach((p) => {
+          if (p.slot === slot) paint = paintOf(p);
+        });
+        return paintCss(paint);
+      };
+      this.spectator = new Spectator({ rig: sceneRig(this.scene), colorOf, followViewHeight: FOLLOW_VIEW_HEIGHT[mode] });
       const map = findMap(s.mapId);
       if (map) this.spectator.setMap(map);
-      // Follow in a duel, the whole map in a free for all.
-      if (mode === "ffa") this.spectator.setMode("overview");
+      // Follow in a duel, the whole map in a free for all or a team deathmatch.
+      if (mode !== "duel") this.spectator.setMode("overview");
       reset = true;
     }
     this.spectator.onSnapshot(
@@ -534,7 +554,7 @@ export class Match {
           if (dx * dx + dz * dz > 0.01) this.aim = Math.atan2(dz, dx);
         }
       }
-      const mine = this.meshFor(sessionId, meServer.slot);
+      const mine = this.meshFor(sessionId, paintOf(meServer));
       mine.set(pos.x, pos.z, this.aim, meServer.alive, meServer.weapon);
       mine.setShield(meServer.shieldTicks > 0 ? meServer.shieldHp / SHIELD.absorb : 0);
       scene.follow(pos.x, pos.z, dt, !this.cameraSnapped);
@@ -545,15 +565,21 @@ export class Match {
     const renderTime = now - INTERP_DELAY_MS;
     let opponent: PlayerView | null = null;
     const drawn: Vec2[] = [];
+    const allies: { x: number; z: number; slot: number }[] = [];
+    const myTeam = meServer?.team ?? NO_TEAM;
     latest?.players.forEach((p, id) => {
       if (id === sessionId) return;
       opponent = p;
       const s = buffer.samplePlayer(id, renderTime);
       if (!s) return;
-      const m = this.meshFor(id, s.slot);
+      const m = this.meshFor(id, paintOf(s));
       m.set(s.x, s.z, s.aim, s.alive, s.weapon);
       m.setShield(s.shieldTicks > 0 ? s.shieldHp / SHIELD.absorb : 0);
-      if (s.alive) drawn.push({ x: s.x, z: s.z });
+      if (!s.alive) return;
+      // Our predicted bullets stop on whoever they can hurt, and fly through
+      // teammates, like the server's (canDamage).
+      if (canDamage(myTeam, s.team, false)) drawn.push({ x: s.x, z: s.z });
+      else allies.push({ x: s.x, z: s.z, slot: paintOf(s) });
     });
     this.opponentsDrawn = drawn;
 
@@ -572,8 +598,9 @@ export class Match {
       const m = this.meshes.get(shots[i].id);
       if (m) {
         m.shot(now);
-        // Minimap: an enemy shows up only when they fire.
-        this.minimap.ping(m.group.position.x, m.group.position.z, m.slot, now);
+        // Minimap: an enemy shows up only when they fire (teammates are always on it).
+        const shooter = latest?.players.get(shots[i].id);
+        if (!shooter || !sameTeam(shooter.team, myTeam)) this.minimap.ping(m.group.position.x, m.group.position.z, m.slot, now, shots[i].id);
       }
       shots.splice(i, 1);
     }
@@ -583,9 +610,10 @@ export class Match {
     const bullets = new Map<string, { x: number; z: number; slot: number }>();
     for (const [id, b] of buffer.sampleBullets(renderTime)) {
       if (localBullets.owns(id)) continue;
-      bullets.set(id, { x: b.x, z: b.z, slot: latest?.players.get(b.owner)?.slot ?? 0 });
+      const owner = latest?.players.get(b.owner);
+      bullets.set(id, { x: b.x, z: b.z, slot: owner ? paintOf(owner) : 0 });
     }
-    if (meServer) localBullets.render(this.accumulator / TICK_MS, meServer.slot, bullets);
+    if (meServer) localBullets.render(this.accumulator / TICK_MS, paintOf(meServer), bullets);
     scene.syncBullets(bullets);
     scene.syncGrenades(buffer.sampleGrenades(renderTime), now);
     while (this.blasts.length > 0 && this.blasts[0].at <= now) {
@@ -602,13 +630,16 @@ export class Match {
     // 4. HUD. Waiting and the match result have their own cards (Cards.tsx).
     // (`opponent` is assigned in a callback above, which TypeScript can't follow.)
     const ffa = latest?.mode === "ffa";
-    const opp = ffa ? null : (opponent as PlayerView | null);
+    const teams = latest?.mode === "tdm";
+    // The big maps (FFA and teams): no single opponent, a minimap.
+    const big = ffa || teams;
+    const opp = big ? null : (opponent as PlayerView | null);
     let away: PlayerView | null = opp && !opp.connected ? opp : null;
-    if (ffa) latest?.players.forEach((p, id) => (away ??= id !== sessionId && !p.connected ? p : null));
+    if (big) latest?.players.forEach((p, id) => (away ??= id !== sessionId && !p.connected ? p : null));
     let status = "";
     if (net.status === "disconnected") status = `Disconnected${net.error ? `: ${net.error}` : ""}.`;
     else if (away)
-      status = ffa
+      status = big
         ? `${away.name || "A player"} lost their connection.`
         : `${away.name || "Your opponent"} lost their connection. Waiting for them to come back…`;
     else if (meServer && !meServer.alive && latest?.phase === "playing")
@@ -623,9 +654,9 @@ export class Match {
 
     const debugParts = [`pending inputs ${predictor.pendingCount}`, `correction ${predictor.lastError.toFixed(3)} m`];
     if (net.lagMs > 0) debugParts.unshift(`lag +${net.lagMs} ms`);
-    if (ffa && meServer) {
+    if (big && meServer) {
       const pos = predictor.sim ?? meServer;
-      this.minimap.draw(now, { x: pos.x, z: pos.z, aim: this.aim, slot: meServer.slot, alive: meServer.alive });
+      this.minimap.draw(now, { x: pos.x, z: pos.z, aim: this.aim, slot: paintOf(meServer), alive: meServer.alive }, allies);
     }
 
     this.hud.update({
@@ -633,6 +664,7 @@ export class Match {
       me: meServer,
       opponent: opp,
       ffa: ffa && latest ? this.ffaHud(latest) : null,
+      team: teams && latest ? this.teamHud(latest, meServer) : null,
       feed: latest ? this.feedLines(latest, now) : [],
       sim: predictor.sim,
       canPick: !!latest && canPick(meServer, latest.phase),
@@ -649,7 +681,7 @@ export class Match {
     const all: (PlayerView & { id: string })[] = [];
     s.players.forEach((p, id) => all.push({ ...p, id }));
     all.sort((a, b) => a.slot - b.slot);
-    const placed = placements(all);
+    const placed = byPlace(all, s.phase === "ended");
     const mine = placed.find((p) => p.player.id === you);
     const left = secondsLeft(s);
     const running = s.phase === "playing";
@@ -660,6 +692,21 @@ export class Match {
       kills: mine?.player.kills ?? 0,
       killsToWin: s.killsToWin,
       top: placed.slice(0, 3).map(({ player: p }) => ({ id: p.id, name: p.name, slot: p.slot, kills: p.kills, you: p.id === you })),
+      timeLeft: running && left !== null && !s.suddenDeath ? clock(Math.ceil(left)) : "",
+      lowTime: running && left !== null && left <= 30,
+      suddenDeath: s.suddenDeath,
+    };
+  }
+
+  /** Team score, clock and our team for the team deathmatch HUD. */
+  private teamHud(s: Snapshot, me: PlayerView | null): TeamHud {
+    const left = secondsLeft(s);
+    const running = s.phase === "playing";
+    return {
+      you: me?.team ?? NO_TEAM,
+      red: s.redScore,
+      blue: s.blueScore,
+      killsToWin: s.killsToWin,
       timeLeft: running && left !== null && !s.suddenDeath ? clock(Math.ceil(left)) : "",
       lowTime: running && left !== null && left <= 30,
       suddenDeath: s.suddenDeath,
@@ -681,9 +728,9 @@ export class Match {
       out.push({
         n: k.n,
         killer: k.killer ? k.killerName : "",
-        killerSlot: k.killerSlot,
+        killerSlot: paintFor(k.killerSlot, k.killerTeam),
         victim: k.victimName,
-        victimSlot: k.victimSlot,
+        victimSlot: paintFor(k.victimSlot, k.victimTeam),
         weapon: k.weapon === KILL_GRENADE ? "Grenade" : (WEAPONS[k.weapon]?.name ?? ""),
         byYou: !!k.killer && k.killer === you,
         onYou: k.victim === you,

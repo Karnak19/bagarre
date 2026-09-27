@@ -19,6 +19,7 @@ import {
   MIN_TIGHT_SHARE,
   SHOT_RANGE,
 } from "./analyze.ts";
+import { checkTeams, MAX_HUB_GAP, MIN_ENEMY_SPAWN_DIST, MIN_TEAM_SPAWNS } from "./teams.ts";
 
 const only = process.argv.slice(2);
 const maps = only.length ? FFA_MAPS.filter((m) => only.includes(m.id)) : FFA_MAPS;
@@ -75,12 +76,34 @@ for (const m of maps) {
         m.spawns.map((p, i) => [String(i), `(${p.x},${p.z})`, r.spawns[i].zone, pct(r.spawns[i].exposure), `${r.spawns[i].cover.toFixed(2)} m`, String(r.spawns[i].sees)]),
       ),
   );
+  // Team deathmatch sides (red / blue), when the map has them.
+  const team = checkTeams(m);
+  if (team.errors.length) failed = true;
+  if (team.stats) {
+    const t = team.stats;
+    const sides = m.teams!.map((sd) => sd.name).join(" / ");
+    console.log(
+      "\n" +
+        table(
+          ["team sides: " + sides, "value", "rule"],
+          [
+            ["spawns per side", t.counts.join(" / "), `>= ${MIN_TEAM_SPAWNS} each`],
+            ["mean distance to the hub", t.hubMean.map((d) => `${d.toFixed(1)} m`).join(" / "), `gap <= ${MAX_HUB_GAP} m`],
+            ["closest spawn to the hub", t.hubNearest.map((d) => `${d.toFixed(1)} m`).join(" / "), `gap <= ${MAX_HUB_GAP} m`],
+            ["closest enemy spawn", `${t.enemyGap.toFixed(1)} m`, `>= ${MIN_ENEMY_SPAWN_DIST} m`],
+            ["opposite spawn pairs in sight", String(t.pairsInSight), "report"],
+          ],
+        ),
+    );
+  }
+  for (const e of team.errors) console.log(`  error: [teams] ${e}`);
   for (const e of r.errors) console.log(`  error: ${e}`);
   for (const w of r.warnings) console.log(`  warn:  ${w}`);
-  summary.push([m.id, s.size, String(s.boxes), pct(s.camp), ratio.toFixed(2), `${s.c4[1].toFixed(2)} / ${s.c4[2].toFixed(2)} s`, `${s.longest.toFixed(1)} m`, pct(s.hiddenRespawn), ok ? "ok" : "FAIL"]);
+  const teamsOk = team.errors.length === 0;
+  summary.push([m.id, s.size, String(s.boxes), pct(s.camp), ratio.toFixed(2), `${s.c4[1].toFixed(2)} / ${s.c4[2].toFixed(2)} s`, `${s.longest.toFixed(1)} m`, pct(s.hiddenRespawn), m.teams ? (teamsOk ? "ok" : "FAIL") : "none", ok && teamsOk ? "ok" : "FAIL"]);
 }
 
-console.log(`\n${table(["map", "size", "boxes", "camp", "exp ratio", "contact med/p90", "longest", "hidden resp", "result"], summary)}`);
+console.log(`\n${table(["map", "size", "boxes", "camp", "exp ratio", "contact med/p90", "longest", "hidden resp", "teams", "result"], summary)}`);
 console.log(`
 exposure: share of the floor (1 m samples) with a clear shot at the spawn within ${SHOT_RANGE} m. camp: the most the best spot sees.
 tight: floor that sees < 250 m² within 30 m; open: floor that sees >= 150 m² at 18..30 m (sniper only). first contact: players start on spawns picked by the FFA rule, all walk to the hub; first clear shot

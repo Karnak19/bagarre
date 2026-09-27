@@ -110,6 +110,8 @@ test("a match played to the end: result card and scoreboard on both, then a rema
     await expect(card).toBeVisible();
     await expect(card).toContainText(headline);
     await expect(card.getByTestId("scoreboard-row")).toHaveCount(2);
+    // Won outright on kills: no tiebreak line (a duel can't end level).
+    await expect(card.getByTestId("result-tiebreak")).toHaveCount(0);
   }
 
   await a.testId("rematch").click();

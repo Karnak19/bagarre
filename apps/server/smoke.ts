@@ -14,7 +14,10 @@
 // all: countdown, drop-in, kill credit, the end conditions, seats,
 // reconnection and the recorded placements. Part 9 (smoke-spectate.ts) is
 // spectating: the watch route, no inputs, not counted, a free seat taken,
-// rematches, reconnection.
+// rematches, reconnection. Part 10 (smoke-teams.ts) is the team deathmatch:
+// balancing, team switches, the 2v2 countdown, no friendly fire, team kill
+// credit, the end conditions, drop-in and the 4v4 cap, respawn sides,
+// reconnection and the recorded winners.
 
 import { spawn } from "node:child_process";
 import { dirname } from "node:path";
@@ -73,6 +76,7 @@ import { DuelRoom } from "./src/GameRoom.ts";
 import { accountChecks, liveConvexChecks, setupTestAccounts } from "./smoke-accounts.ts";
 import { ffaChecks, registerFfaRooms } from "./smoke-ffa.ts";
 import { registerSpectateRooms, spectatorChecks } from "./smoke-spectate.ts";
+import { registerTeamRooms, teamChecks } from "./smoke-teams.ts";
 
 const PORT = Number(process.env.SMOKE_PORT) || 2599; // SMOKE_PORT: run next to another smoke
 const URL = `http://localhost:${PORT}`;
@@ -1508,6 +1512,7 @@ for (const c of WALL_CASES) matchMaker.defineRoomType(`duel_${c.map}`, DuelRoom.
 matchMaker.defineRoomType("duel_short_grace", ShortGraceRoom);
 registerFfaRooms();
 registerSpectateRooms();
+registerTeamRooms();
 
 let exitCode = 0;
 try {
@@ -1542,6 +1547,9 @@ try {
 
   console.log("\n-- free for all --");
   for (const group of await ffaChecks(URL, accounts)) for (const [c, l] of group) check(c, l);
+
+  console.log("\n-- team deathmatch --");
+  for (const group of await teamChecks(URL, accounts)) for (const [c, l] of group) check(c, l);
 
   console.log("\n-- spectators --");
   for (const group of await spectatorChecks(URL)) for (const [c, l] of group) check(c, l);
