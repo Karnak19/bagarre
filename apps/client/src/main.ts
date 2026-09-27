@@ -27,9 +27,16 @@ const params = new URLSearchParams(location.search);
 const lagMs = Math.max(0, Number(params.get("lag")) || 0);
 /** `?map=runway` asks for that map (dev servers only, the server ignores it in production). */
 const mapParam = params.get("map");
+/**
+ * `VITE_SERVER_URL` may be a path such as `/colyseus`: in production the
+ * client's own web server proxies it to the game server, on the same origin.
+ */
+const configuredServer = import.meta.env.VITE_SERVER_URL as string | undefined;
 const serverUrl =
   params.get("server") ??
-  (import.meta.env.VITE_SERVER_URL as string | undefined) ??
+  (configuredServer?.startsWith("/")
+    ? new URL(configuredServer, location.origin).href.replace(/\/$/, "")
+    : configuredServer) ??
   `${location.protocol}//${location.hostname}:${SERVER_PORT}`;
 /** Dev-only `?play`: skip the menu and quick-match at once (test scripts, quick testing). */
 const playNow = import.meta.env.DEV && params.has("play");
