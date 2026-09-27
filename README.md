@@ -559,7 +559,7 @@ The pick is shown above the ability bar. It only goes in your hand when you
 | 4   | SMG     | 11       | 0.1 s         | 40 m/s       | 12 m  | 9°     | 30       | 1.8 s  | Mid range, 10 hits (0.9 s)   |
 | 5   | Revolver | 34      | 0.45 s        | 70 m/s       | 20 m  | 0°     | 6        | 2.2 s  | Precise mid range, 3 hits (0.93 s) |
 | 6   | Burst pistol | 3 × 12 | 0.45 s per burst, 0.06 s per round | 42 m/s | 15 m | 2.9° | 15 | 1.2 s | One click = 3 rounds, 3 bursts (1.07 s) |
-| 7   | DMR     | 40       | 0.5 s         | 80 m/s       | 26 m  | 0.6°   | 8        | 2.0 s  | Semi-auto marksman, 3 hits (1.0 s) |
+| 7   | DMR     | 40       | 0.57 s        | 80 m/s       | 26 m  | 0.6°   | 8        | 2.0 s  | Semi-auto marksman, 3 hits (1.13 s) |
 
 The burst pistol fires 3 rounds per click. A started burst finishes even if
 you let go of the button, unless the magazine runs dry, a reload starts or

@@ -1,0 +1,99 @@
+# Deploy a version by pushing a tag: git tag v0.4.0 && git push origin v0.4.0
+#
+# 1. The tag must point at a commit that is on main.
+# 2. The full CI (ci.yml) runs on that commit; nothing deploys if it fails.
+# 3. Coolify is pinned to the tag's exact commit and deployed; the job follows
+#    the deployment to the end.
+# 4. The live site is checked, then a GitHub release is created with notes
+#    generated from the commits since the previous tag.
+#
+# Repository secrets (Settings -> Secrets and variables -> Actions):
+#   COOLIFY_URL        e.g. https://coolify.vernouillet.dev
+#   COOLIFY_TOKEN      a Coolify API token allowed to deploy
+#   COOLIFY_APP_UUID   the bagarre application uuid
+# Repository variable:
+#   PUBLIC_URL         the game's public URL, for the live check
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  on-main:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Tag is on main
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) is not on main"
+            exit 1
+          fi
+
+  ci:
+    needs: on-main
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: ci
+    runs-on: ubuntu-latest
+    environment: production
+    # Only this job writes: it creates the GitHub release.
+    permissions:
+      contents: write
+    env:
+      COOLIFY_URL: ${{ secrets.COOLIFY_URL }}
+      COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+      APP: ${{ secrets.COOLIFY_APP_UUID }}
+      PUBLIC_URL: ${{ vars.PUBLIC_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pin Coolify to the tagged commit
+        run: |
+          curl -fsS -X PATCH "$COOLIFY_URL/api/v1/applications/$APP" \
+            -H "Authorization: Bearer $COOLIFY_TOKEN" -H "Content-Type: application/json" \
+            -d "{\"git_commit_sha\": \"$GITHUB_SHA\"}" > /dev/null
+
+      - name: Deploy and wait
+        # bash implies -eo pipefail: a failed curl in `curl | jq` fails the step.
+        shell: bash
+        run: |
+          id=$(curl -fsS "$COOLIFY_URL/api/v1/deploy?uuid=$APP&force=false" \
+            -H "Authorization: Bearer $COOLIFY_TOKEN" | jq -r '.deployments[0].deployment_uuid')
+          echo "Coolify deployment $id"
+          for i in $(seq 1 80); do
+            status=$(curl -fsS "$COOLIFY_URL/api/v1/deployments/$id" \
+              -H "Authorization: Bearer $COOLIFY_TOKEN" | jq -r '.status')
+            echo "$(date +%T) $status"
+            case "$status" in
+              finished) exit 0 ;;
+              failed|cancelled*) echo "::error::Coolify deployment $status"; exit 1 ;;
+            esac
+            sleep 15
+          done
+          echo "::error::Coolify deployment did not finish in 20 minutes"; exit 1
+
+      - name: Live check
+        run: |
+          for path in / /game/abc /colyseus/games; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --retry 5 --retry-delay 5 "$PUBLIC_URL$path")
+            echo "$path -> $code"
+            [ "$code" = 200 ] || { echo "::error::$path returned $code"; exit 1; }
+          done
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag

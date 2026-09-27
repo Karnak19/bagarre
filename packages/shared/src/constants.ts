@@ -44,7 +44,7 @@ export const ticks = (seconds: number) => Math.max(1, Math.round(seconds * TICK_
 // metres, angles in radians. Time-to-kill (100 HP, no shield) at ideal range:
 //   rifle 5 hits = 0.8 s, SMG 10 hits = 0.9 s, shotgun 2 blasts = 0.7 s,
 //   sniper 2 hits = 1.2 s (but one hit + anything finishes),
-//   revolver 3 hits = 0.93 s, burst pistol 3 bursts = 1.07 s, DMR 3 hits = 1.0 s.
+//   revolver 3 hits = 0.93 s, burst pistol 3 bursts = 1.07 s, DMR 3 hits = 1.13 s.
 // =============================================================================
 
 export interface WeaponDef {
@@ -85,7 +85,7 @@ export const WEAPONS: readonly WeaponDef[] = [
   { name: "SMG",     damage: 11, fireInterval: 0.1, bulletSpeed: 40, range: 12, spread: 0.16, pellets: 1, magazine: 30, reloadTime: 1.8 },
   { name: "Revolver", damage: 34, fireInterval: 0.45, bulletSpeed: 70, range: 20, spread: 0, pellets: 1, magazine: 6, reloadTime: 2.2 },
   { name: "Burst pistol", damage: 12, fireInterval: 0.45, bulletSpeed: 42, range: 15, spread: 0.05, pellets: 1, magazine: 15, reloadTime: 1.2, burst: 3, burstInterval: 0.06 },
-  { name: "DMR",     damage: 40, fireInterval: 0.5, bulletSpeed: 80, range: 26, spread: 0.01, pellets: 1, magazine: 8, reloadTime: 2.0 },
+  { name: "DMR",     damage: 40, fireInterval: 0.567, bulletSpeed: 80, range: 26, spread: 0.01, pellets: 1, magazine: 8, reloadTime: 2.0 },
 ];
 export const DEFAULT_WEAPON = 0;
 
