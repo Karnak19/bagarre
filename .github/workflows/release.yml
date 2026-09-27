@@ -70,7 +70,7 @@ jobs:
         # bash implies -eo pipefail: a failed curl in `curl | jq` fails the step.
         shell: bash
         run: |
-          id=$(curl -fsS "$COOLIFY_URL/api/v1/deploy?uuid=$APP&force=false" \
+          id=$(curl -fsS -X POST "$COOLIFY_URL/api/v1/deploy?uuid=$APP&force=false" \
             -H "Authorization: Bearer $COOLIFY_TOKEN" | jq -r '.deployments[0].deployment_uuid')
           echo "Coolify deployment $id"
           for i in $(seq 1 80); do
