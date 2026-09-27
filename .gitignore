@@ -9,3 +9,4 @@ dist/
 *.log
 .vite/
 .previews/
+.claude/worktrees/
