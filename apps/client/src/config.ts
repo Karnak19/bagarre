@@ -1,6 +1,6 @@
 // The dev switches in the query string, typed once for both the router's
 // validateSearch (routes/__root.tsx) and the boot config read before the
-// router exists (main.tsx): `?play`, `?map=`, `?lag=`, `?server=`.
+// router exists (main.tsx): `?play`, `?map=`, `?lag=`, `?server=`, `?fps=`.
 
 import { SERVER_PORT, type GameMode } from "@bagarre/shared";
 
@@ -17,6 +17,12 @@ export interface DevSearch {
   lag?: number;
   /** Another game server, e.g. `http://host:2567`. */
   server?: string;
+  /**
+   * Dev-only: draw at most this many frames a second (the game itself still
+   * runs every animation frame). The e2e suite uses it: its assertions never
+   * look at pixels, and many pages drawing at 60 fps starve a CI runner.
+   */
+  fps?: number;
 }
 
 const str = (v: unknown) => (typeof v === "string" && v !== "" ? v : typeof v === "number" ? String(v) : undefined);
@@ -32,6 +38,8 @@ export function validateDevSearch(raw: Record<string, unknown>): DevSearch {
   if (Number.isFinite(lag) && lag > 0) out.lag = lag;
   const server = str(raw.server);
   if (server) out.server = server;
+  const fps = Number(raw.fps);
+  if (Number.isFinite(fps) && fps > 0) out.fps = fps;
   return out;
 }
 
@@ -41,6 +49,8 @@ export interface BootConfig {
   mapParam: string | null;
   /** `?play` in dev: quick-match this mode at once (null: show the menu). */
   playNow: GameMode | null;
+  /** `?fps=` in dev: the most frames drawn per second (0: every animation frame). */
+  maxFps: number;
 }
 
 /** Read once at boot: the lag, map and server hold for the whole visit (like before the router). */
@@ -60,5 +70,6 @@ export function bootConfig(search = location.search): BootConfig {
     lagMs: s.lag ?? 0,
     mapParam: s.map ?? null,
     playNow: import.meta.env.DEV && s.play ? (s.play === "ffa" ? "ffa" : "duel") : null,
+    maxFps: import.meta.env.DEV ? (s.fps ?? 0) : 0,
   };
 }

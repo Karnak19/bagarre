@@ -32,11 +32,60 @@ what it can (a second `bun run build` with nothing changed is instant).
 | `bun run typecheck`     | Type-checks every package                                          |
 | `bun run lint`          | oxlint on every package                                             |
 | `bun run smoke`         | Boots a real server, connects headless clients, checks the game loop, accounts, reconnection and shutdown |
+| `bun run e2e`           | The Playwright suite: real browsers playing against a real server (see [End-to-end tests](#end-to-end-tests)) |
 | `bun run maps:validate` | Checks every map and prints its stats (see [docs/maps.md](docs/maps.md)) |
 | `bun run start`         | Runs the server alone (no watch)                                    |
 
 To run one package's task only: `bunx turbo run dev --filter=@bagarre/client`,
 or `bun run <script>` inside the package's folder.
+
+## End-to-end tests
+
+`apps/e2e` (`@bagarre/e2e`) is the Playwright suite: headless Chromium pages
+playing against the real game server. Every new feature adds a spec there,
+or extends one.
+
+```sh
+bun run e2e                                  # the whole suite, headless
+cd apps/e2e
+bunx playwright test duel                    # one spec file (or -g "<test name>")
+bunx playwright test --headed --workers 1    # watch it play
+bun run test:ui                              # Playwright's UI mode
+bun run report                               # the last HTML report
+```
+
+The first run may need the browser: `bunx playwright install chromium` in
+`apps/e2e`.
+
+- `playwright.config.ts` boots its own servers on their own ports, so it
+  never meets `bun run dev`: the game server `server.ts` on 2610, and the
+  client on 5610, built in development mode (the `__bagarre` dev handle stays
+  in) and served by `vite preview`. Guests only: no Clerk key, no `.env.local`.
+- `server.ts` is the real `createServer()` with shorter rules (a duel is won
+  at 2 kills, the FFA countdown is 2 s) and a test-only control API on 2611:
+  `POST /kill` kills a player through the room's own damage path, so a test
+  reaches a match end without aiming.
+- `tests/fixtures.ts` holds the fixtures. `players.open()` is a new player
+  (its own browser context); `players.duel()` and `players.host()` /
+  `players.join()` open a private game by its link, so tests running in
+  parallel never meet. `Player.state()` reads the dev handle into one plain
+  object (screen, card, phase, room, players, spectator...), and `kill()`,
+  `bot()`, `sfxCount()` / `sfxSince()` drive and watch the game.
+- Assertions go through `data-testid`s and `__bagarre`, never pixels. Wait
+  with web-first assertions and `expect.poll` / `expectState()`, never a
+  fixed sleep. Pages open with `?map=` (pinned map) and `?fps=10` (a dev-only
+  cap on frames drawn: many pages drawing at 60 fps starve the machine).
+- WebGL: on a Mac the real GPU (Metal, one shared browser per test); on
+  Linux (CI) SwiftShader, one browser per player. `E2E_GL=swiftshader` forces
+  the software path locally.
+
+To add a test: a `*.spec.ts` in `apps/e2e/tests/` importing `test` and
+`expect` from `./fixtures.ts`; give any element you drive a `data-testid`
+and extend `PlayerState` when a test needs a new piece of state.
+
+CI (`.github/workflows/ci.yml`, on pushes to main and pull requests) runs
+build, typecheck, lint, smoke and e2e with no secrets; the Playwright report
+is uploaded when it fails.
 
 ## Accounts (optional)
 

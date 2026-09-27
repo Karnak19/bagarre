@@ -13,6 +13,7 @@
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "smoke": "turbo run smoke",
+    "e2e": "turbo run e2e",
     "maps:validate": "turbo run maps:validate",
     "start": "bun run --cwd apps/server start"
   },

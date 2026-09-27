@@ -35,6 +35,10 @@
       "cache": false,
       "passThroughEnv": ["CLERK_*", "CONVEX_*", "GAME_SERVER_SECRET", "NODE_ENV", "PORT"]
     },
+    "e2e": {
+      "cache": false,
+      "passThroughEnv": ["CI", "E2E_GL", "PLAYWRIGHT_*"]
+    },
     "maps:validate": {
       "outputs": []
     }
