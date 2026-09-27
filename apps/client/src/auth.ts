@@ -265,7 +265,11 @@ class AccountStore implements Readable<AccountState> {
       const res = await this.client.http.post(USERNAME_ROUTE, { body: { username } });
       const result = res.data as ClaimResult;
       const current = this.state.account;
-      if (result.ok && current) this.store.patch({ account: { ...current, username: result.username } });
+      if (result.ok && current) {
+        // A refresh() already in flight would reset the username to its stale null.
+        this.generation++;
+        this.store.patch({ account: { ...current, username: result.username } });
+      }
       return result;
     } catch (err) {
       if (statusOf(err) === 401) void this.refresh();
@@ -289,7 +293,7 @@ class AccountStore implements Readable<AccountState> {
   async getJoinToken(): Promise<string | undefined> {
     await Promise.race([this.ready, new Promise((r) => setTimeout(r, 5000))]);
     const { status } = this.state;
-    return status === "signedIn" || status === "error" || status === "loading" ? this.token : undefined;
+    return status === "signedOut" ? undefined : this.token;
   }
 
   /** The name the menu shows: the username when signed in with one, else this browser's guest name. */

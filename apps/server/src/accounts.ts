@@ -15,6 +15,7 @@
 import { JWT } from "@colyseus/auth";
 import {
   LEADERBOARD_SIZE,
+  MODES,
   usernameError,
   usernameKey,
   type Account,
@@ -191,9 +192,8 @@ export async function leaderboard(limit = LEADERBOARD_SIZE): Promise<Leaderboard
   return rows.map((r, i) => ({ rank: i + 1, username: r.username!, ...statsOf(r) }));
 }
 
-/** Most players a match of each mode can have. */
-const MAX_PLAYERS: Record<GameMode, number> = { duel: 2, ffa: 6, tdm: 8 };
-const MAX_MATCH_PLAYERS = MAX_PLAYERS.tdm;
+/** Most players any match can have: a place is never higher. */
+const MAX_MATCH_PLAYERS = MODES.tdm.maxPlayers;
 
 /**
  * Writes a finished match: one row for the match, and each account player's
@@ -211,7 +211,7 @@ export async function writeMatch(
   mode: GameMode,
 ): Promise<{ status: "recorded" | "duplicate"; updated: number }> {
   if (matchId.length === 0 || matchId.length > 128) throw new Error("Bad matchId");
-  const most = MAX_PLAYERS[mode];
+  const most = MODES[mode].maxPlayers;
   if (players.length > most) throw new Error(`A ${mode} has at most ${most} players`);
   for (const p of players) {
     for (const n of [p.kills, p.deaths]) {
