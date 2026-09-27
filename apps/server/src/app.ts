@@ -1,6 +1,6 @@
 import { createAuthContext, createEndpoint, createRouter, defineRoom, defineServer, matchMaker } from "@colyseus/core";
 import { WebSocketTransport } from "@colyseus/ws-transport";
-import { FFA_ROOM_NAME, GAMES_ROUTE, ROOM_NAME, WATCH_ROUTE, type OpenGame, type RoomMeta } from "@bagarre/shared";
+import { FFA_ROOM_NAME, GAMES_ROUTE, ROOM_NAME, WATCH_ROUTE, type ModeRules, type OpenGame, type RoomMeta } from "@bagarre/shared";
 import { DuelRoom, FfaRoom, GameRoom } from "./GameRoom.ts";
 
 /**
@@ -82,18 +82,30 @@ function watchEndpoint(allowRoom: (name: string) => boolean) {
  * "yard"), `ffaMapId` every FFA room to one FFA map; without them each match
  * picks a random map of its mode's pool. `watchAnyRoom` opens the watch
  * route to every room type (the smoke test's own), not just "duel" and "ffa".
+ * `duelRules` / `ffaRules` tweak each mode's rules (the e2e server's short
+ * kill target and countdown).
  */
 export function createServer(
-  options: { greet?: boolean; gracefullyShutdown?: boolean; mapId?: string; ffaMapId?: string; watchAnyRoom?: boolean } = {},
+  options: {
+    greet?: boolean;
+    gracefullyShutdown?: boolean;
+    mapId?: string;
+    ffaMapId?: string;
+    watchAnyRoom?: boolean;
+    duelRules?: Partial<ModeRules>;
+    ffaRules?: Partial<ModeRules>;
+  } = {},
 ) {
   const watchGame = watchEndpoint((name) => options.watchAnyRoom === true || GAME_ROOM_NAMES.has(name));
+  const duel = options.duelRules ? DuelRoom.withRules(options.duelRules) : DuelRoom;
+  const ffa = options.ffaRules ? FfaRoom.withRules(options.ffaRules) : FfaRoom;
   return defineServer({
     greet: options.greet ?? false,
     gracefullyShutdown: options.gracefullyShutdown ?? true,
     transport: new WebSocketTransport(),
     rooms: {
-      [ROOM_NAME]: defineRoom(options.mapId ? DuelRoom.pinnedTo(options.mapId) : DuelRoom),
-      [FFA_ROOM_NAME]: defineRoom(options.ffaMapId ? FfaRoom.pinnedTo(options.ffaMapId) : FfaRoom),
+      [ROOM_NAME]: defineRoom(options.mapId ? duel.pinnedTo(options.mapId) : duel),
+      [FFA_ROOM_NAME]: defineRoom(options.ffaMapId ? ffa.pinnedTo(options.ffaMapId) : ffa),
     },
     routes: createRouter({ listGames, watchGame }),
   });

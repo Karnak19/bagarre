@@ -109,6 +109,9 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
   // --- The one frame loop (menu and game) --------------------------------------
   let lastFrame = performance.now();
   let frames = 0;
+  // Dev `?fps=`: skip drawing (never the game's own update) between frames.
+  const drawGap = config.maxFps > 0 ? 1000 / config.maxFps : 0;
+  let lastDraw = -Infinity;
 
   function loop(now: number) {
     frames++;
@@ -126,7 +129,10 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
         input.enabled = false;
         attract?.frame(now);
       }
-      scene.render(now);
+      if (now - lastDraw >= drawGap - 1) {
+        lastDraw = now;
+        scene.render(now);
+      }
     }
     requestAnimationFrame(loop);
   }

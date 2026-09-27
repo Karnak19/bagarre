@@ -11,3 +11,5 @@ dist/
 .vite/
 .previews/
 .claude/worktrees/
+test-results/
+playwright-report/

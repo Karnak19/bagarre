@@ -1,0 +1,23 @@
+{
+  "name": "@bagarre/e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "e2e": "playwright test",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "report": "playwright show-report",
+    "server": "bun server.ts",
+    "typecheck": "tsc --noEmit -p .",
+    "lint": "oxlint playwright.config.ts server.ts tests"
+  },
+  "devDependencies": {
+    "@bagarre/server": "workspace:*",
+    "@bagarre/shared": "workspace:*",
+    "@colyseus/core": "^0.18.17",
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^26.6.3",
+    "typescript": "^7.0.2"
+  }
+}
