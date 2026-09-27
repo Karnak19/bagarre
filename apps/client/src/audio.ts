@@ -142,7 +142,7 @@ function readNumber(key: string, fallback: number) {
   }
 }
 
-function readBool(key: string, fallback: boolean) {
+export function readBool(key: string, fallback: boolean) {
   try {
     const v = localStorage.getItem(key);
     return v === null ? fallback : v === "1";
@@ -151,7 +151,7 @@ function readBool(key: string, fallback: boolean) {
   }
 }
 
-function write(key: string, value: string) {
+export function write(key: string, value: string) {
   try {
     localStorage.setItem(key, value);
   } catch {

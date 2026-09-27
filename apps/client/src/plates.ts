@@ -35,8 +35,6 @@ const BORDER = 1;
 /** Bottom of the bar's background above the anchor. */
 const BAR_Y = 2;
 const SHIELD_H = 2;
-/** Gap between the top of the bar and the bottom of the name row. */
-const NAME_GAP = 0;
 // The atlas.
 const ROW_W = 176;
 const ROW_H = 16;
@@ -384,13 +382,13 @@ export class Plates {
       const W = this.canvas.width / this.dpr;
       const H = this.canvas.height / this.dpr;
       const rowTop = p.index * ROW_H;
-      this.quad(p, -Math.round(p.nameW / 2), top + NAME_GAP, p.nameW, ROW_H, 0, 1 - (rowTop + ROW_H) / H, p.nameW / W, 1 - rowTop / H);
+      this.quad(p, -Math.round(p.nameW / 2), top, p.nameW, ROW_H, 0, 1 - (rowTop + ROW_H) / H, p.nameW / W, 1 - rowTop / H);
       this.color(0.6 * r + 0.4, 0.6 * g + 0.4, 0.6 * b + 0.4, a);
     }
     if (!p.connected) {
       // "…" after the name, or after the bar without one.
       const x = nameOn ? Math.round(p.nameW / 2) - PAD : BAR_W / 2 + BORDER;
-      const y = nameOn ? top + NAME_GAP : BAR_Y + (BAR_H + BORDER * 2 + shieldH) / 2 - ROW_H / 2;
+      const y = nameOn ? top : BAR_Y + (BAR_H + BORDER * 2 + shieldH) / 2 - ROW_H / 2;
       this.quad(p, x, y, this.dotsW, ROW_H, this.dotsU0, this.dotsV0, this.dotsU1, this.dotsV1);
       this.color(1, 1, 1, 1);
     }
@@ -448,9 +446,4 @@ export class Plates {
     return out;
   }
 
-  dispose() {
-    this.geo.dispose();
-    this.mat.dispose();
-    this.texture.dispose();
-  }
 }
