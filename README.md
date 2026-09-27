@@ -220,7 +220,7 @@ TypeScript: React never runs per frame and there is no React Three Fiber.
   `scoreboard`, `scoreboard-row`, `esc-menu`, `esc-resume`, `esc-settings`,
   `esc-leave`, `result-card`, `rematch`, `main-menu`, `notice`,
   `notice-retry`, `notice-back`, `account-chip`, `account-panel`,
-  `settings-volume`, `settings-mute`, and the HUD's `hud-*`. The free for
+  `settings-volume`, `settings-mute`, `settings-names`, and the HUD's `hud-*`. The free for
   all adds `play-ffa`, `private-ffa`, `ffa-countdown`, `ffa-players`,
   `placement-row`, `result-winner`, `scoreboard-time`, `hud-ffa`,
   `hud-ffa-rank`, `hud-ffa-top`, `hud-ffa-time`, `hud-killfeed`,
@@ -521,6 +521,15 @@ The dash has no invulnerability, you dodge by getting out of the bullet's path.
 Sound starts after your first click or key press (browser autoplay rules):
 any menu button counts. Settings (on the menu, or from Esc in a game) has the
 master volume and mute; both are remembered.
+
+Every character carries a plate over its head: the other players' name (in
+their seat or team colour) over a health bar, with the shield's remaining
+absorb as a light blue strip under it; yours is the bar alone. A plate hides
+while its player is dead and dims with a "…" while they reconnect; a
+spectator sees everyone's. **Show names** in Settings turns the names off
+(the bars stay), remembered like the sound settings. The plates are drawn in
+the 3D scene over everything (`plates.ts`); `__bagarre.plates` exposes them
+to the tests.
 
 ### Scoreboard
 

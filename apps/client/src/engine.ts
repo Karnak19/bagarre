@@ -181,6 +181,10 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
           const s = m?.spectating ? m.spectator : null;
           return s ? { followId: s.followId, mode: s.mode(), ui: s.ui.getState() } : null;
         },
+        /** The name plates: per player, whether it shows, the name drawn, HP and shield fractions, dimmed (reconnecting). */
+        get plates() {
+          return scene?.plates.debug() ?? [];
+        },
         get predictor() {
           return app.match?.predictor ?? null;
         },

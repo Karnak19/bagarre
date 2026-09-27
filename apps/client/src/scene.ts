@@ -12,6 +12,7 @@ import {
 import { buildArena, disposeArena } from "./arenaView.ts";
 import type { Assets } from "./assets.ts";
 import { Character } from "./character.ts";
+import { Plates } from "./plates.ts";
 import { Vfx, shieldMaterial } from "./vfx.ts";
 
 /**
@@ -278,6 +279,8 @@ export class GameScene {
   private ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private players = new Set<PlayerMesh>();
   private vfx: Vfx;
+  /** Name plates and health bars over the players' heads (filled by match.ts every frame). */
+  readonly plates: Plates;
   private lastRender = -1;
   private trauma = 0;
   private shakeOffset = new THREE.Vector3();
@@ -322,6 +325,8 @@ export class GameScene {
       this.grenadeModel.scale.setScalar(0.55);
     }
     this.vfx = new Vfx(this.scene, this.camera, loaded?.atlas ?? null);
+    this.plates = new Plates(this.renderer, PLAYER_CSS_COLORS);
+    this.scene.add(this.plates.mesh);
     this.resize();
     window.addEventListener("resize", () => this.resize());
   }
@@ -634,6 +639,7 @@ export class GameScene {
     const dt = this.lastRender < 0 ? 0 : Math.min(0.1, (now - this.lastRender) / 1000);
     this.lastRender = now;
     this.vfx.update(dt, now);
+    this.plates.prepare(this.renderer, dt);
     this.renderer.render(this.scene, this.camera);
   }
 }
