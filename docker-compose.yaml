@@ -1,0 +1,55 @@
+# Production: two containers.
+#   client  Caddy on :80, the only service reachable from outside. Serves the
+#           static build and proxies /colyseus/* to the game server.
+#   server  The compiled game server, on the internal network only.
+#
+# On Coolify, give the `client` service the domain (port 80); Coolify's proxy
+# adds TLS in front. Leave `server` without a domain.
+# Locally: docker compose --env-file .env.production.local \
+#   -f docker-compose.yaml -f docker-compose.local.yaml up --build
+# Every variable is listed in .env.production.example.
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    restart: unless-stopped
+    expose:
+      - "2567"
+    environment:
+      NODE_ENV: production
+      PORT: "2567"
+      CONVEX_URL: ${CONVEX_URL}
+      GAME_SERVER_SECRET: ${GAME_SERVER_SECRET}
+      CLERK_JWT_KEY: ${CLERK_JWT_KEY}
+      CLERK_JWT_ISSUER_DOMAIN: ${CLERK_JWT_ISSUER_DOMAIN}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
+      CLERK_AUTHORIZED_PARTIES: ${CLERK_AUTHORIZED_PARTIES:-}
+    healthcheck:
+      test: ["CMD", "/app/bagarre-server", "--healthcheck"]
+      interval: 15s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+
+  client:
+    build:
+      context: .
+      dockerfile: apps/client/Dockerfile
+      args:
+        VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY}
+        VITE_CONVEX_URL: ${VITE_CONVEX_URL}
+        VITE_SERVER_URL: ${VITE_SERVER_URL:-/colyseus}
+    restart: unless-stopped
+    expose:
+      - "80"
+    depends_on:
+      server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      start_period: 5s
+      retries: 3

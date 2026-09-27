@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run typecheck build",
+    "build:bin": "turbo run build:bin",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "smoke": "turbo run smoke",

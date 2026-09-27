@@ -1,0 +1,14 @@
+**/node_modules
+**/.turbo
+**/dist
+**/.vite
+**/*.tsbuildinfo
+**/*.log
+**/.DS_Store
+.git
+.claude
+.env
+.env.*
+**/.env
+**/.env.*
+docker-compose*.yaml

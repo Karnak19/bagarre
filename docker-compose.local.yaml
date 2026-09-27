@@ -1,0 +1,6 @@
+# Local only: publishes the client on http://localhost:8080. Not used on
+# Coolify (its proxy reaches the client over the Docker network).
+services:
+  client:
+    ports:
+      - "${CLIENT_PORT:-8080}:80"
