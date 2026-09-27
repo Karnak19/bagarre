@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "bun --env-file=../../.env.local --watch src/index.ts",
     "start": "bun --env-file=../../.env.local src/index.ts",
+    "build:bin": "bun build src/index.ts --compile --minify --bytecode --format=esm --outfile dist/bagarre-server",
     "typecheck": "tsc --noEmit -p .",
     "lint": "oxlint src smoke.ts smoke-accounts.ts",
     "smoke": "bun --env-file=../../.env.local smoke.ts"

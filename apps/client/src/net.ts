@@ -141,7 +141,9 @@ export async function joinGame(url: string, req: JoinRequest, options: Record<st
 
 /** The public games waiting for a second player (GET /games on the game server). */
 export async function fetchOpenGames(url: string, signal?: AbortSignal): Promise<OpenGame[]> {
-  const res = await fetch(new URL(GAMES_ROUTE, url), { signal });
+  // Appended, not `new URL(GAMES_ROUTE, url)`: that would drop a path prefix
+  // such as the production `/colyseus` (the route starts with "/").
+  const res = await fetch(`${url.replace(/\/$/, "")}${GAMES_ROUTE}`, { signal });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const body = (await res.json()) as { games?: OpenGame[] };
   return Array.isArray(body.games) ? body.games : [];
