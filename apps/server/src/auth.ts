@@ -27,7 +27,6 @@ import {
   FORGOT_PASSWORD_ROUTE,
   LEADERBOARD_ROUTE,
   PASSWORD_MIN,
-  PROFILE_ROUTE,
   RESET_PASSWORD_PAGE,
   RESET_PASSWORD_ROUTE,
   USERNAME_ROUTE,
@@ -35,7 +34,7 @@ import {
   type ResetPasswordResult,
 } from "@bagarre/shared";
 import { eq, sql } from "drizzle-orm";
-import { accountById, claimUsername, leaderboard, publicProfile, sessionUser, verifySession, type TokenPayload } from "./accounts.ts";
+import { accountById, claimUsername, leaderboard, sessionUser, verifySession, type TokenPayload } from "./accounts.ts";
 import { bootDatabase, users, type Database } from "./db.ts";
 
 /** Only for dev and tests: production refuses to start without JWT_SECRET. */
@@ -231,10 +230,6 @@ function gameEndpoints(db: Database): Record<string, Endpoint> {
 
   const top = createEndpoint(LEADERBOARD_ROUTE, { method: "GET" }, async () => ({ entries: await leaderboard() }));
 
-  const profile = createEndpoint(PROFILE_ROUTE, { method: "GET" }, async (ctx) => ({
-    profile: await publicProfile(String(ctx.params.username ?? "")),
-  }));
-
   return {
     "auth-forgot-password": forgotPassword,
     "auth-reset-password-post": resetPassword,
@@ -242,7 +237,6 @@ function gameEndpoints(db: Database): Record<string, Endpoint> {
     "account-get": account,
     "account-username": username,
     leaderboard: top,
-    "profile-get": profile,
   };
 }
 

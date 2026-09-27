@@ -128,8 +128,8 @@ and session tokens, and [`@colyseus/database`](https://docs.colyseus.io/database
   `@colyseus/auth`'s `POST /auth/register`, `POST /auth/login`,
   `GET /auth/userdata` and, with Discord, `GET /auth/provider/discord` (and
   its callback); ours: `GET /auth/providers`, `POST /auth/forgot-password`,
-  `POST /auth/reset-password`, `GET /account`, `POST /account/username`,
-  `GET /leaderboard` (top 10 by wins) and `GET /profiles/:username`. The
+  `POST /auth/reset-password`, `GET /account`, `POST /account/username`
+  and `GET /leaderboard` (top 10 by wins). The
   route names, the username rules and the answers' types are in
   `packages/shared/src/accounts.ts`.
 - **Password reset.** The email links to the client's

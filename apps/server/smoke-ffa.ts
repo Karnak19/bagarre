@@ -429,11 +429,11 @@ async function firstTo15(url: string, h: AccountsHarness): Promise<Lines> {
       row?.mode === "ffa" && row.placements?.map((p) => p.place).sort().join(",") === "1,2,3",
       `the match row keeps the mode and the placements (${JSON.stringify({ mode: row?.mode, placements: row?.placements })})`,
     );
-    const p1 = await h.profile("FfaPlayer1");
-    const p2 = await h.profile("FfaPlayer2");
+    const p1 = await h.stats("FfaPlayer1");
+    const p2 = await h.stats("FfaPlayer2");
     ok(
-      p1?.stats.wins === 1 && p1.stats.losses === 0 && p2?.stats.wins === 0 && p2.stats.losses === 1,
-      `stats: 1st is a win, 2nd a loss (${JSON.stringify(p1?.stats)}, ${JSON.stringify(p2?.stats)})`,
+      p1?.wins === 1 && p1.losses === 0 && p2?.wins === 0 && p2.losses === 1,
+      `stats: 1st is a win, 2nd a loss (${JSON.stringify(p1)}, ${JSON.stringify(p2)})`,
     );
     // The rematch moves to... the same map here (the room is pinned), with everyone reset.
     const again = await waitFor(() => state(a).phase === "playing", 12_000);

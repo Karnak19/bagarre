@@ -22,7 +22,6 @@ import {
   type ClaimResult,
   type GameMode,
   type LeaderboardEntry,
-  type Profile,
   type Stats,
 } from "@bagarre/shared";
 import { and, desc, eq, gt, isNotNull, sql } from "drizzle-orm";
@@ -133,17 +132,6 @@ export async function accountById(userId: string): Promise<Account | null> {
   const [row] = await db().drizzle.select().from(users).where(eq(users.id, userId)).limit(1);
   if (!row) return null;
   return { id: row.id, email: row.email, username: row.username, createdAt: row.createdAt.getTime(), stats: statsOf(row) };
-}
-
-/** Anyone's public profile by username (case-insensitive), or null. */
-export async function publicProfile(username: string): Promise<Profile | null> {
-  const [row] = await db()
-    .drizzle.select()
-    .from(users)
-    .where(eq(users.usernameKey, usernameKey(username.trim())))
-    .limit(1);
-  if (!row?.username) return null;
-  return { username: row.username, createdAt: row.createdAt.getTime(), stats: statsOf(row) };
 }
 
 /**

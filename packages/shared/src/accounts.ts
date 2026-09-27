@@ -39,9 +39,6 @@ export const ACCOUNT_ROUTE = "/account";
 export const USERNAME_ROUTE = "/account/username";
 /** GET: the top accounts by wins (`{ entries: LeaderboardEntry[] }`). */
 export const LEADERBOARD_ROUTE = "/leaderboard";
-/** GET: anyone's public profile by username, case-insensitive (`{ profile: Profile | null }`). */
-export const PROFILE_ROUTE = "/profiles/:username";
-export const profilePath = (username: string) => `/profiles/${encodeURIComponent(username)}`;
 
 /** The client's page the reset email links to, with `?token=`. */
 export const RESET_PASSWORD_PAGE = "/reset-password";
@@ -55,13 +52,6 @@ export interface Stats {
   wins: number;
   losses: number;
   matches: number;
-}
-
-export interface Profile {
-  username: string;
-  /** Milliseconds since the epoch. */
-  createdAt: number;
-  stats: Stats;
 }
 
 /** The signed-in player, as GET /account sees them. */

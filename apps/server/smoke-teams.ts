@@ -499,9 +499,9 @@ async function firstTo25(url: string, h: AccountsHarness): Promise<Lines> {
       row?.mode === "tdm" && row.placements?.filter((p) => p.team === TEAM_RED).length === 2,
       `the match row keeps the mode and the teams (${JSON.stringify({ mode: row?.mode, placements: row?.placements })})`,
     );
-    const p1 = await h.profile(`TdmPlayer${ids.indexOf(sub(red[0])) + 1}`);
-    const p4 = await h.profile(`TdmPlayer${ids.indexOf(sub(blue[0])) + 1}`);
-    ok(p1?.stats.wins === 1 && p4?.stats.losses === 1, `stats: a red player won, a blue one lost (${JSON.stringify(p1?.stats)}, ${JSON.stringify(p4?.stats)})`);
+    const p1 = await h.stats(`TdmPlayer${ids.indexOf(sub(red[0])) + 1}`);
+    const p4 = await h.stats(`TdmPlayer${ids.indexOf(sub(blue[0])) + 1}`);
+    ok(p1?.wins === 1 && p4?.losses === 1, `stats: a red player won, a blue one lost (${JSON.stringify(p1)}, ${JSON.stringify(p4)})`);
   } finally {
     await leaveAll(rooms);
   }

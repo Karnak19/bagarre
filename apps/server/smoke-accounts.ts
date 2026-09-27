@@ -21,18 +21,18 @@ import {
   ROOM_NAME,
   TICK_MS,
   USERNAME_ROUTE,
-  profilePath,
   usernameKey,
   type Account,
   type ClaimResult,
   type LeaderboardEntry,
   type PlayerView,
-  type Profile,
+  type Stats,
   type ResetPasswordResult,
   type RoomStateView,
 } from "@bagarre/shared";
 import { SignJWT } from "jose";
-import { accountHooks, db, matchRow, publicProfile, writeMatch, type MatchResult } from "./src/accounts.ts";
+import { eq } from "drizzle-orm";
+import { accountHooks, db, matchRow, writeMatch, type MatchResult } from "./src/accounts.ts";
 import { authConfigFromEnv, authHooks, discordRedirectUrl, jwtSecretFromEnv, restrictPostMessage } from "./src/auth.ts";
 import { users } from "./src/db.ts";
 
@@ -59,7 +59,8 @@ export interface AccountsHarness {
   /** Every match GameRoom recorded, in order. */
   recorded: { matchId: string; players: MatchResult[] }[];
   matchRow: typeof matchRow;
-  profile(username: string): Promise<Profile | null>;
+  /** An account's stats, straight from the database, by username (case-insensitive). */
+  stats(username: string): Promise<Stats | null>;
 }
 
 /** Call once the server is created (it sets up the database). */
@@ -71,7 +72,10 @@ export function setupTestAccounts(): AccountsHarness {
   return {
     recorded,
     matchRow,
-    profile: publicProfile,
+    async stats(username) {
+      const [row] = await db().drizzle.select().from(users).where(eq(users.usernameKey, usernameKey(username))).limit(1);
+      return row ? { kills: row.kills, deaths: row.deaths, wins: row.wins, losses: row.losses, matches: row.matches } : null;
+    },
     async account(username) {
       const id = generateId(21);
       await db()
@@ -129,8 +133,7 @@ async function joinedAs(url: string, token: string | undefined) {
   return out;
 }
 
-type Stats = { kills: number; deaths: number; wins: number; losses: number; matches: number };
-const sameStats = (a: Stats | undefined, b: Stats) =>
+const sameStats = (a: Stats | null | undefined, b: Stats) =>
   !!a && (Object.keys(b) as (keyof Stats)[]).every((k) => a[k] === b[k]);
 
 /** Configuration read from the environment: production refuses to start without its secrets. */
@@ -261,25 +264,25 @@ export async function accountChecks(url: string, h: AccountsHarness, check: Chec
       rec.players.some((p) => p.userId === victim.id && !p.won && p.kills === 0 && p.deaths === 5),
     `match end records both players (${JSON.stringify(rec?.players)})`,
   );
-  let heroProfile: Profile | null = null;
-  for (let i = 0; i < 50 && !heroProfile?.stats.matches; i++) {
-    heroProfile = await h.profile("smokehero");
-    if (!heroProfile?.stats.matches) await sleep(50);
+  let heroStats: Stats | null = null;
+  for (let i = 0; i < 50 && !heroStats?.matches; i++) {
+    heroStats = await h.stats("smokehero");
+    if (!heroStats?.matches) await sleep(50);
   }
-  const victimProfile = (await http<{ profile: Profile | null }>(url, profilePath("Smoke_Victim"))).data.profile;
+  const victimStats = await h.stats("Smoke_Victim");
   check(
-    sameStats(heroProfile?.stats, { kills: 5, deaths: 0, wins: 1, losses: 0, matches: 1 }) &&
-      sameStats(victimProfile?.stats, { kills: 0, deaths: 5, wins: 0, losses: 1, matches: 1 }),
-    `stats credited (hero ${JSON.stringify(heroProfile?.stats)}, victim ${JSON.stringify(victimProfile?.stats)})`,
+    sameStats(heroStats, { kills: 5, deaths: 0, wins: 1, losses: 0, matches: 1 }) &&
+      sameStats(victimStats, { kills: 0, deaths: 5, wins: 0, losses: 1, matches: 1 }),
+    `stats credited (hero ${JSON.stringify(heroStats)}, victim ${JSON.stringify(victimStats)})`,
   );
   const row = rec ? await h.matchRow(rec.matchId) : null;
   check(row?.mode === "duel" && row.placements.map((p) => p.place).sort().join(",") === "1,2", `the match row keeps the mode and the places (${JSON.stringify(row?.placements)})`);
   if (rec) {
     const retry = await writeMatch(rec.matchId, rec.players, "duel");
-    const after = await h.profile("SmokeHero");
+    const after = await h.stats("SmokeHero");
     check(
-      retry.status === "duplicate" && after?.stats.matches === 1 && after.stats.kills === 5,
-      `recording a match is idempotent per match id (retry: ${retry.status}, matches ${after?.stats.matches})`,
+      retry.status === "duplicate" && after?.matches === 1 && after.kills === 5,
+      `recording a match is idempotent per match id (retry: ${retry.status}, matches ${after?.matches})`,
     );
   }
   const board = await http<{ entries: LeaderboardEntry[] }>(url, LEADERBOARD_ROUTE);
