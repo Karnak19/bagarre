@@ -21,11 +21,13 @@ export const PLAYER_SPEED = 6;
 export const MAX_HP = 100;
 
 // --- Bullets (shared by every weapon) ---
-export const BULLET_RADIUS = 0.15;
+export const BULLET_RADIUS = 0.1;
 /** Height at which bullets travel (rendering only; the sim is 2D). */
 export const BULLET_HEIGHT = 1.0;
-/** Collision sub-steps per tick for bullets, so fast shots don't tunnel. */
+/** Minimum collision sub-steps per tick for bullets. */
 export const BULLET_SUBSTEPS = 3;
+/** Longest distance a bullet may travel in one sub-step, so fast shots can't tunnel through cover or players. */
+export const BULLET_MAX_SUBSTEP = 0.25;
 
 /** Seconds -> whole simulation ticks. All timers in the sim count ticks. */
 export const ticks = (seconds: number) => Math.max(1, Math.round(seconds * TICK_RATE));
@@ -61,10 +63,10 @@ export interface WeaponDef {
 /** Index = weapon id (sent over the wire, picked with keys 1-4). */
 export const WEAPONS: readonly WeaponDef[] = [
   //  name        damage  fireInterval  bulletSpeed  range  spread  pellets  magazine  reloadTime
-  { name: "Rifle",   damage: 20, fireInterval: 0.2, bulletSpeed: 22, range: 18, spread: 0.04, pellets: 1, magazine: 12, reloadTime: 1.5 },
-  { name: "Shotgun", damage: 12, fireInterval: 0.7, bulletSpeed: 18, range: 7, spread: 0.4, pellets: 6, magazine: 5, reloadTime: 2.0 },
-  { name: "Sniper",  damage: 70, fireInterval: 1.2, bulletSpeed: 45, range: 30, spread: 0, pellets: 1, magazine: 4, reloadTime: 2.5 },
-  { name: "SMG",     damage: 11, fireInterval: 0.1, bulletSpeed: 20, range: 12, spread: 0.16, pellets: 1, magazine: 30, reloadTime: 1.8 },
+  { name: "Rifle",   damage: 20, fireInterval: 0.2, bulletSpeed: 45, range: 18, spread: 0.04, pellets: 1, magazine: 12, reloadTime: 1.5 },
+  { name: "Shotgun", damage: 12, fireInterval: 0.7, bulletSpeed: 36, range: 7, spread: 0.4, pellets: 6, magazine: 5, reloadTime: 2.0 },
+  { name: "Sniper",  damage: 70, fireInterval: 1.2, bulletSpeed: 90, range: 30, spread: 0, pellets: 1, magazine: 4, reloadTime: 2.5 },
+  { name: "SMG",     damage: 11, fireInterval: 0.1, bulletSpeed: 40, range: 12, spread: 0.16, pellets: 1, magazine: 30, reloadTime: 1.8 },
 ];
 export const DEFAULT_WEAPON = 0;
 

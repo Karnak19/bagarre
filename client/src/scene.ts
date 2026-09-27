@@ -218,7 +218,8 @@ export class GameScene {
   readonly camera: THREE.OrthographicCamera;
   private cameraTarget = new THREE.Vector3();
   private bullets = new Map<string, DrawnBullet>();
-  private bulletGeo = new THREE.SphereGeometry(BULLET_RADIUS * 1.3, 10, 8);
+  // A thin tracer along +Z, turned to face the direction of travel.
+  private bulletGeo = new THREE.BoxGeometry(BULLET_RADIUS * 0.8, BULLET_RADIUS * 0.8, 0.7);
   private bulletMats = PLAYER_COLORS.map(
     (c) => new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: c, emissiveIntensity: 1.6 }),
   );
@@ -372,6 +373,7 @@ export class GameScene {
         d.z = b.z;
       }
       d.mesh.position.set(b.x, BULLET_HEIGHT, b.z);
+      if (d.x !== d.px || d.z !== d.pz) d.mesh.lookAt(b.x + (d.x - d.px), BULLET_HEIGHT, b.z + (d.z - d.pz));
     }
   }
 

@@ -6,6 +6,7 @@
 import { ARENA_HALF, OBSTACLES, type Box } from "./arena.ts";
 import {
   BULLET_RADIUS,
+  BULLET_MAX_SUBSTEP,
   BULLET_SUBSTEPS,
   PLAYER_RADIUS,
   PLAYER_SPEED,
@@ -149,8 +150,9 @@ export function stepBullet(
   onSubstep?: (x: number, z: number) => boolean,
   dt: number = TICK_DT,
 ): boolean {
-  const sdt = dt / BULLET_SUBSTEPS;
-  for (let i = 0; i < BULLET_SUBSTEPS; i++) {
+  const steps = Math.max(BULLET_SUBSTEPS, Math.ceil((Math.hypot(b.vx, b.vz) * dt) / BULLET_MAX_SUBSTEP));
+  const sdt = dt / steps;
+  for (let i = 0; i < steps; i++) {
     b.x += b.vx * sdt;
     b.z += b.vz * sdt;
     if (bulletBlocked(b.x, b.z)) return false;
