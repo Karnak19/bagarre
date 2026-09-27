@@ -12,6 +12,7 @@
 import {
   INTERP_DELAY_MS,
   KILL_GRENADE,
+  MAX_HP,
   NO_TEAM,
   SHIELD,
   TICK_MS,
@@ -27,6 +28,7 @@ import {
   type PlayerView,
   type Vec2,
 } from "@bagarre/shared";
+import { getShowNames } from "./display.ts";
 import { WEAPON_SFX, isMuted, play, setListener, type PlayOptions, type SfxName } from "./audio.ts";
 import { LocalBullets } from "./bullets.ts";
 import type { FfaHud, Hud, HudModel, KillFeedLine, TeamHud } from "./hud.ts";
@@ -268,6 +270,7 @@ export class Match {
     m.dispose();
     this.meshes.delete(id);
     this.lastView.delete(id);
+    this.scene.plates.release(id);
   }
 
   /**
@@ -556,7 +559,10 @@ export class Match {
       }
       const mine = this.meshFor(sessionId, paintOf(meServer));
       mine.set(pos.x, pos.z, this.aim, meServer.alive, meServer.weapon);
-      mine.setShield(meServer.shieldTicks > 0 ? meServer.shieldHp / SHIELD.absorb : 0);
+      const shield = meServer.shieldTicks > 0 ? meServer.shieldHp / SHIELD.absorb : 0;
+      mine.setShield(shield);
+      // Our own plate: the bar alone, at the predicted position like the body.
+      scene.plates.set(sessionId, pos.x, pos.z, meServer.name, paintOf(meServer), meServer.hp / MAX_HP, shield, meServer.alive, meServer.connected, false);
       scene.follow(pos.x, pos.z, dt, !this.cameraSnapped);
       this.cameraSnapped = true;
     }
@@ -567,6 +573,7 @@ export class Match {
     const drawn: Vec2[] = [];
     const allies: { x: number; z: number; slot: number }[] = [];
     const myTeam = meServer?.team ?? NO_TEAM;
+    const showNames = getShowNames();
     latest?.players.forEach((p, id) => {
       if (id === sessionId) return;
       opponent = p;
@@ -574,7 +581,10 @@ export class Match {
       if (!s) return;
       const m = this.meshFor(id, paintOf(s));
       m.set(s.x, s.z, s.aim, s.alive, s.weapon);
-      m.setShield(s.shieldTicks > 0 ? s.shieldHp / SHIELD.absorb : 0);
+      const shield = s.shieldTicks > 0 ? s.shieldHp / SHIELD.absorb : 0;
+      m.setShield(shield);
+      // Their plate follows the interpolated body, and shows what it shows (hits land when drawn).
+      scene.plates.set(id, s.x, s.z, s.name, paintOf(s), s.hp / MAX_HP, shield, s.alive, s.connected, showNames);
       if (!s.alive) return;
       // Our predicted bullets stop on whoever they can hurt, and fly through
       // teammates, like the server's (canDamage).

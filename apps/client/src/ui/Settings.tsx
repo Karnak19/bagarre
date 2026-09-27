@@ -1,16 +1,19 @@
-// Settings: master volume and mute, on the audio.ts API (both are
-// remembered). Read when the panel opens; M can't toggle mute meanwhile (the
-// game's keys are off while a panel is up), so nothing goes stale.
+// Settings: master volume and mute, on the audio.ts API, and whether the
+// other players' names show over their heads (display.ts). All remembered.
+// Read when the panel opens; M can't toggle mute meanwhile (the game's keys
+// are off while a panel is up), so nothing goes stale.
 
 import { Switch } from "@astryxdesign/core/Switch";
 import { Slider } from "@astryxdesign/core/Slider";
 import { VStack } from "@astryxdesign/core/Layout";
 import { useState } from "react";
 import { getMasterVolume, isMuted, setMasterVolume, setMuted } from "../audio.ts";
+import { getShowNames, setShowNames } from "../display.ts";
 
 export function Settings() {
   const [volume, setVolume] = useState(() => Math.round(getMasterVolume() * 100));
   const [muted, setMutedState] = useState(isMuted);
+  const [names, setNames] = useState(getShowNames);
 
   const onVolume = (v: number) => {
     setVolume(v);
@@ -24,6 +27,10 @@ export function Settings() {
   const onMute = (m: boolean) => {
     setMuted(m);
     setMutedState(m);
+  };
+  const onNames = (on: boolean) => {
+    setShowNames(on);
+    setNames(on);
   };
 
   return (
@@ -48,6 +55,15 @@ export function Settings() {
         labelPosition="start"
         labelSpacing="spread"
         data-testid="settings-mute"
+      />
+      <Switch
+        label="Show names"
+        description="Over the other players' heads. Health bars always show."
+        value={names}
+        onChange={onNames}
+        labelPosition="start"
+        labelSpacing="spread"
+        data-testid="settings-names"
       />
     </VStack>
   );
