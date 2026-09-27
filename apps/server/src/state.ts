@@ -31,6 +31,7 @@ export const Player = schema(
     grenadeSeen: t.uint32().default(0),
     shieldSeen: t.uint32().default(0),
     reloadSeen: t.uint32().default(0),
+    burstLeft: t.uint8().default(0),
 
     weapon: t.uint8().default(DEFAULT_WEAPON),
     pick: t.uint8().default(DEFAULT_WEAPON),

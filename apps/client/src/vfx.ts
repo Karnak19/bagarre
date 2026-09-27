@@ -353,6 +353,9 @@ const MUZZLE: { cell: number; w: number; h: number }[] = [
   { cell: Cell.MuzzleRound, w: 0.95, h: 1.05 }, // shotgun
   { cell: Cell.MuzzleLong, w: 0.6, h: 1.5 }, // sniper
   { cell: Cell.MuzzleSmall, w: 0.35, h: 0.6 }, // SMG
+  { cell: Cell.MuzzleRound, w: 0.55, h: 0.7 }, // revolver
+  { cell: Cell.MuzzleSmall, w: 0.3, h: 0.45 }, // burst pistol
+  { cell: Cell.MuzzleLong, w: 0.5, h: 1.15 }, // DMR
 ];
 
 /** All the sprite effects: muzzle flashes, impact sparks, explosions, dust. */

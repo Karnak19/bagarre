@@ -16,7 +16,7 @@ const MODEL_SCALE = 0.82;
  */
 const RUN_CLIP_SPEED = 3.8;
 /** Weapon id -> gun node in the character file. */
-const GUN_NODES = ["AK", "Shotgun", "Sniper", "SMG"];
+const GUN_NODES = ["AK", "Shotgun", "Sniper", "SMG", "Revolver", "Pistol", "Sniper_2"];
 const GUN_SCALE = 0.75;
 
 const DEG = Math.PI / 180;

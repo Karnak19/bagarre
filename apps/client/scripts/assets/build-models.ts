@@ -11,7 +11,7 @@
 // <kit glTF dir> holds Soldier.gltf and Enemy.gltf (Characters/glTF), plus
 // env/ (Environment/glTF) and guns/ (Guns/glTF).
 //
-// Characters: keeps the body and the 4 guns we use (they hang off the right
+// Characters: keeps the body and the 7 guns we use (they hang off the right
 // hand, visibility toggled in game), and the 6 clips we play. Props: one file
 // with every prop as a named top-level node. Then prune, dedup, resample and
 // meshopt compression (decoded by MeshoptDecoder in GLTFLoader).
@@ -25,7 +25,7 @@ if (!SRC || !OUT) throw new Error("usage: bun build-models.ts <kit glTF dir> <ou
 await MeshoptEncoder.ready;
 const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies({ "meshopt.encoder": MeshoptEncoder });
 
-const KEEP_MESH = new Set(["Body", "Head", "ShoulderPad.L", "ShoulderPad.R", "Character_Enemy", "Character_Enemy_Head", "AK", "Shotgun", "SMG", "Sniper"]);
+const KEEP_MESH = new Set(["Body", "Head", "ShoulderPad.L", "ShoulderPad.R", "Character_Enemy", "Character_Enemy_Head", "AK", "Shotgun", "SMG", "Sniper", "Revolver", "Pistol", "Sniper_2"]);
 const KEEP_ANIM = new Set(["Idle", "Idle_Shoot", "Run", "Run_Shoot", "HitReact", "Death"]);
 
 async function finish(doc: Document, out: string) {

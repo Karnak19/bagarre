@@ -14,8 +14,8 @@ anyway. The one font is under the SIL Open Font License.
 
 | File | Size | What's in it |
 | --- | --- | --- |
-| `apps/client/public/models/enemy.glb` | 428 KB | Quaternius "Enemy" (player slot 0, tinted orange) |
-| `apps/client/public/models/soldier.glb` | 440 KB | Quaternius "Soldier" (player slot 1, tinted blue) |
+| `apps/client/public/models/enemy.glb` | 474 KB | Quaternius "Enemy" (player slot 0, tinted orange) |
+| `apps/client/public/models/soldier.glb` | 488 KB | Quaternius "Soldier" (player slot 1, tinted blue) |
 | `apps/client/public/models/props.glb` | 128 KB | Arena props, one named node each |
 | `apps/client/public/vfx/particles.png` | 212 KB | 4 x 4 greyscale atlas of Kenney particles |
 | `apps/client/public/fonts/black-ops-one.woff2` | 23 KB | Black Ops One, Latin subset (the Google Fonts woff2) |
@@ -26,7 +26,7 @@ About 1.2 MB in total.
 
 From the kit's `Characters/glTF` folder: `Enemy.gltf` and `Soldier.gltf`.
 They share one 43-bone rig. Each file ships with 14 guns attached to the
-right hand; we keep the 4 we use (AK for the rifle, Shotgun, Sniper, SMG) and
+right hand; we keep the 7 we use (AK for the rifle, Shotgun, Sniper, SMG, Revolver, Pistol for the burst pistol, Sniper_2 for the DMR) and
 6 of the 17 clips (Idle, Idle_Shoot, Run, Run_Shoot, HitReact, Death).
 
 ### Props

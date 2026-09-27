@@ -12,7 +12,15 @@ import * as stylex from "@stylexjs/stylex";
 import type { ReactNode } from "react";
 import { shared } from "../styles.ts";
 
-const WEAPON_ROLES = ["All-rounder", "Close range", "Long range", "Mid range, fast"];
+const WEAPON_ROLES = [
+  "All-rounder",
+  "Close range",
+  "Long range",
+  "Mid range, fast",
+  "Six heavy, precise shots",
+  "Three rounds per click",
+  "Long range, semi-auto",
+];
 
 const k = (keys: string) => <Kbd keys={keys} />;
 
@@ -86,7 +94,7 @@ export function HowToPlay() {
             description={WEAPON_ROLES[i]}
             endContent={
               <Text type="supporting" color="secondary" xstyle={shared.tabular}>
-                {w.pellets > 1 ? `${w.pellets} × ${w.damage}` : w.damage} dmg · {w.range} m · {w.magazine} rounds
+                {w.pellets > 1 || w.burst ? `${w.burst ?? w.pellets} × ${w.damage}` : w.damage} dmg · {w.range} m · {w.magazine} rounds
               </Text>
             }
           />

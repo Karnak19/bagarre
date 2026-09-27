@@ -1,4 +1,4 @@
-// The four weapons as toggle buttons (keys 1-4 do the same), for the waiting
+// The weapons as toggle buttons (keys 1-7 do the same), for the waiting
 // and result cards. Only live while picks are accepted (dead, waiting, or
 // between matches).
 
@@ -11,7 +11,8 @@ import { countRender } from "../../renders.ts";
 import { shallowEqual, useEngine, useSelector } from "../hooks.ts";
 
 const styles = stylex.create({
-  group: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "6px", width: "100%" },
+  // Wraps: the seven weapons sit on two rows in the card.
+  group: { display: "flex", flexWrap: "wrap", gap: "6px", width: "100%" },
 });
 
 export function WeaponPicker() {

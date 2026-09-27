@@ -43,7 +43,8 @@ export const ticks = (seconds: number) => Math.max(1, Math.round(seconds * TICK_
 // Times are in seconds (converted to ticks with `ticks()`), distances in
 // metres, angles in radians. Time-to-kill (100 HP, no shield) at ideal range:
 //   rifle 5 hits = 0.8 s, SMG 10 hits = 0.9 s, shotgun 2 blasts = 0.7 s,
-//   sniper 2 hits = 1.2 s (but one hit + anything finishes).
+//   sniper 2 hits = 1.2 s (but one hit + anything finishes),
+//   revolver 3 hits = 0.93 s, burst pistol 3 bursts = 1.07 s, DMR 3 hits = 1.0 s.
 // =============================================================================
 
 export interface WeaponDef {
@@ -64,15 +65,27 @@ export interface WeaponDef {
   magazine: number;
   /** Seconds to reload a magazine. */
   reloadTime: number;
+  /**
+   * Burst fire: rounds one trigger pull fires (default 1). A burst runs to the
+   * end even if the button is released, unless the magazine runs dry, a reload
+   * starts or the player dies. `fireInterval` is then the time from the start
+   * of one burst to the start of the next.
+   */
+  burst?: number;
+  /** Seconds between the rounds of a burst. */
+  burstInterval?: number;
 }
 
-/** Index = weapon id (sent over the wire, picked with keys 1-4). */
+/** Index = weapon id (sent over the wire, picked with keys 1-7). */
 export const WEAPONS: readonly WeaponDef[] = [
   //  name        damage  fireInterval  bulletSpeed  range  spread  pellets  magazine  reloadTime
   { name: "Rifle",   damage: 20, fireInterval: 0.2, bulletSpeed: 45, range: 18, spread: 0.04, pellets: 1, magazine: 12, reloadTime: 1.5 },
   { name: "Shotgun", damage: 12, fireInterval: 0.7, bulletSpeed: 36, range: 7, spread: 0.4, pellets: 6, magazine: 5, reloadTime: 2.0 },
   { name: "Sniper",  damage: 70, fireInterval: 1.2, bulletSpeed: 90, range: 30, spread: 0, pellets: 1, magazine: 4, reloadTime: 2.5 },
   { name: "SMG",     damage: 11, fireInterval: 0.1, bulletSpeed: 40, range: 12, spread: 0.16, pellets: 1, magazine: 30, reloadTime: 1.8 },
+  { name: "Revolver", damage: 34, fireInterval: 0.45, bulletSpeed: 70, range: 20, spread: 0, pellets: 1, magazine: 6, reloadTime: 2.2 },
+  { name: "Burst pistol", damage: 12, fireInterval: 0.45, bulletSpeed: 42, range: 15, spread: 0.05, pellets: 1, magazine: 15, reloadTime: 1.2, burst: 3, burstInterval: 0.06 },
+  { name: "DMR",     damage: 40, fireInterval: 0.5, bulletSpeed: 80, range: 26, spread: 0.01, pellets: 1, magazine: 8, reloadTime: 2.0 },
 ];
 export const DEFAULT_WEAPON = 0;
 
