@@ -44,7 +44,7 @@ export const ticks = (seconds: number) => Math.max(1, Math.round(seconds * TICK_
 // metres, angles in radians. Time-to-kill (100 HP, no shield) at ideal range:
 //   rifle 5 hits = 0.8 s, SMG 10 hits = 0.9 s, shotgun 2 blasts = 0.7 s,
 //   sniper 2 hits = 1.2 s (but one hit + anything finishes),
-//   revolver 3 hits = 0.93 s, burst pistol 3 bursts = 1.07 s, DMR 3 hits = 1.0 s.
+//   revolver 3 hits = 0.93 s, burst pistol 3 bursts = 1.07 s, DMR 3 hits = 1.13 s.
 // =============================================================================
 
 export interface WeaponDef {

@@ -20,7 +20,7 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release
@@ -49,6 +49,9 @@ jobs:
     needs: ci
     runs-on: ubuntu-latest
     environment: production
+    # Only this job writes: it creates the GitHub release.
+    permissions:
+      contents: write
     env:
       COOLIFY_URL: ${{ secrets.COOLIFY_URL }}
       COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
@@ -56,8 +59,6 @@ jobs:
       PUBLIC_URL: ${{ vars.PUBLIC_URL }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Pin Coolify to the tagged commit
         run: |
@@ -66,6 +67,8 @@ jobs:
             -d "{\"git_commit_sha\": \"$GITHUB_SHA\"}" > /dev/null
 
       - name: Deploy and wait
+        # bash implies -eo pipefail: a failed curl in `curl | jq` fails the step.
+        shell: bash
         run: |
           id=$(curl -fsS "$COOLIFY_URL/api/v1/deploy?uuid=$APP&force=false" \
             -H "Authorization: Bearer $COOLIFY_TOKEN" | jq -r '.deployments[0].deployment_uuid')
