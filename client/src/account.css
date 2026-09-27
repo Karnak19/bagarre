@@ -1,0 +1,74 @@
+/* Account widget, bottom-right corner. Uses the HUD tokens from style.css. */
+
+#account {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 10;
+  max-width: min(340px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text, #f2f2f2);
+  user-select: text;
+}
+
+#account > * {
+  background: var(--panel, rgba(12, 14, 20, 0.6));
+  border-radius: 8px;
+  padding: 7px 10px;
+}
+#account [hidden] { display: none !important; }
+
+#account .acc-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  align-self: flex-end;
+}
+#account .acc-line { opacity: 0.9; }
+#account[data-status="disabled"] .acc-line,
+#account[data-status="error"] .acc-line { opacity: 0.65; }
+#account .acc-line strong { font-weight: 700; }
+#account .acc-user { display: flex; }
+
+#account button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border: 0;
+  border-radius: 5px;
+  padding: 3px 9px;
+  background: rgba(255, 255, 255, 0.14);
+}
+#account button:hover { background: rgba(255, 255, 255, 0.24); }
+#account button:disabled { opacity: 0.5; cursor: default; }
+#account .acc-signin { background: var(--p1, #4ab8ff); color: #0b1620; font-weight: 600; }
+#account .acc-signin:hover { background: #7ccbff; }
+#account .acc-rename { font-size: 12px; padding: 2px 7px; opacity: 0.8; }
+
+#account .acc-form { display: flex; flex-direction: column; gap: 6px; }
+#account .acc-form label { font-weight: 600; }
+#account .acc-field { display: flex; gap: 6px; }
+#account .acc-field input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  color: inherit;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 5px;
+  padding: 4px 8px;
+  outline: none;
+}
+#account .acc-field input:focus { border-color: var(--p1, #4ab8ff); }
+#account .acc-field button[type="submit"] { background: var(--p1, #4ab8ff); color: #0b1620; font-weight: 600; }
+#account .acc-error { color: #ff9a85; font-size: 12px; min-height: 15px; }
+#account .acc-error:empty { display: none; }
+
+#account .acc-hint,
+#account .acc-notice { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+#account .acc-notice { color: #ffd24a; }
+#account .acc-dismiss { padding: 0 6px; background: transparent; }

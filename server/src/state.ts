@@ -36,6 +36,9 @@ export const Player = schema(
     pick: t.uint8().default(DEFAULT_WEAPON),
     shieldTicks: t.uint16().default(0),
     shieldHp: t.uint8().default(0),
+
+    /** Display name (username or "Guest-1234"), set by the server at join. */
+    name: t.string().default(""),
   },
   "Player",
 );

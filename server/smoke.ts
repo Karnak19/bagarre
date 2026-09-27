@@ -4,7 +4,8 @@
 // Part 1 is the original duel (join, move, predict, shoot, kill, leave,
 // rejoin) plus dash and weapon-pick checks. Part 2 runs several extra rooms in
 // parallel, one per scenario: each weapon's fire rate / damage / spread, the
-// grenade, and the shield.
+// grenade, and the shield. Part 3 (smoke-accounts.ts, run alongside part 2)
+// covers guest names, Clerk token checks and match stats in Convex.
 
 import { Client, type Room } from "@colyseus/sdk";
 import {
@@ -38,6 +39,7 @@ import {
   type Vec2,
 } from "@bagarre/shared";
 import { createServer } from "./src/app.ts";
+import { accountChecks, liveConvexChecks, setupTestAccounts } from "./smoke-accounts.ts";
 
 const PORT = 2599;
 const URL = `http://localhost:${PORT}`;
@@ -575,6 +577,7 @@ async function shieldDuel() {
 
 // ---------------------------------------------------------------------------
 
+const accounts = await setupTestAccounts();
 const server = createServer({ gracefullyShutdown: false });
 await server.listen(PORT);
 
@@ -583,8 +586,11 @@ try {
   pureChecks();
   await mainDuel();
 
-  console.log("\n-- parallel rooms: weapons, grenade, shield --");
+  console.log("\n-- parallel rooms: weapons, grenade, shield, accounts --");
+  const accountLines: [boolean, string][] = [];
   const results = await Promise.allSettled([
+    accountChecks(URL, accounts, (c, l) => accountLines.push([c, `[accounts] ${l}`])).then(() => accountLines),
+    liveConvexChecks((c, l) => accountLines.push([c, `[accounts] ${l}`])).then(() => [] as [boolean, string][]),
     ...WEAPONS.map((_, i) => weaponDuel(i)),
     grenadeDuel(),
     shieldDuel(),

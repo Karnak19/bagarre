@@ -1,4 +1,4 @@
-import { Room, type Client } from "@colyseus/core";
+import { ErrorCode, Room, ServerError, type AuthContext, type Client } from "@colyseus/core";
 import {
   BULLET_RADIUS,
   GRENADE_FUSE_TICKS,
@@ -35,13 +35,25 @@ import {
   type Phase,
   type Vec2,
 } from "@bagarre/shared";
+import { AuthRejected, guestName, recordMatch, resolveIdentity, type Identity, type MatchResult } from "./accounts.ts";
 import { Bullet, DuelState, Grenade, Player } from "./state.ts";
+
+/**
+ * Error code of a join refused for a bad Clerk token: Colyseus' own
+ * AUTH_FAILED (it doubles as the HTTP status, so it must stay in 200-599).
+ * The client then falls back to guest.
+ */
+export const AUTH_REJECTED_CODE = ErrorCode.AUTH_FAILED;
 
 /** Server-only bookkeeping per player. Never synced. */
 interface PlayerInternal {
   queue: InputMessage[];
   /** Input budget, see INPUT_BURST. */
   tokens: number;
+  /** Who this is, from onAuth. */
+  identity: Identity;
+  /** Deaths in the current match (kills are synced on Player). */
+  deaths: number;
 }
 
 /** Server-only bookkeeping per bullet. */
@@ -97,6 +109,22 @@ export class DuelRoom extends Room<{ state: DuelState }> {
   private grenadeInternals = new Map<string, GrenadeInternal>();
   private nextGrenadeId = 0;
   private matchResetTicks = 0;
+  /** Unique per match, so a retried stats write is applied once. */
+  private matchId = "";
+
+  /**
+   * Runs before a seat is reserved (Colyseus 0.18 only calls the static
+   * version). The token is the one the client put in `client.auth.token`,
+   * sent as an Authorization header. What we return becomes `client.auth`.
+   */
+  static async onAuth(token: string | undefined, _options: unknown, _context: AuthContext): Promise<Identity> {
+    try {
+      return await resolveIdentity(token || undefined);
+    } catch (err) {
+      if (err instanceof AuthRejected) throw new ServerError(AUTH_REJECTED_CODE, err.message);
+      throw err;
+    }
+  }
 
   onCreate() {
     this.onMessage(MSG_INPUT, (client, raw: unknown) => {
@@ -136,16 +164,25 @@ export class DuelRoom extends Room<{ state: DuelState }> {
 
   onJoin(client: Client) {
     const taken = new Set<number>();
-    this.state.players.forEach((p) => taken.add(p.slot));
+    const names = new Set<string>();
+    this.state.players.forEach((p) => {
+      taken.add(p.slot);
+      names.add(p.name);
+    });
     const slot = taken.has(0) ? 1 : 0;
+    const identity: Identity = (client.auth as Identity | undefined) ?? { kind: "guest", name: guestName() };
+    // Two guests could draw the same number.
+    let name = identity.name;
+    if (names.has(name) && !(identity.kind === "account" && identity.username)) name = guestName(names);
 
     const spawn = SPAWN_POINTS[slot];
     const player = new Player();
     player.slot = slot;
+    player.name = name;
     writeSim(player, spawnSim(spawn.x, spawn.z, player.weapon));
     player.aim = slot === 0 ? Math.PI / 4 : (-3 * Math.PI) / 4;
     this.state.players.set(client.sessionId, player);
-    this.internals.set(client.sessionId, { queue: [], tokens: INPUT_BURST });
+    this.internals.set(client.sessionId, { queue: [], tokens: INPUT_BURST, identity, deaths: 0 });
 
     if (this.state.players.size === MAX_PLAYERS) this.startMatch();
   }
@@ -172,6 +209,8 @@ export class DuelRoom extends Room<{ state: DuelState }> {
   private startMatch() {
     this.clearProjectiles();
     this.state.winner = "";
+    this.matchId = `${this.roomId}:${crypto.randomUUID()}`;
+    this.internals.forEach((i) => (i.deaths = 0));
     this.state.players.forEach((p) => {
       const spawn = SPAWN_POINTS[p.slot];
       this.spawnAt(p, spawn.x, spawn.z);
@@ -397,7 +436,10 @@ export class DuelRoom extends Room<{ state: DuelState }> {
     target.shieldHp = 0;
     // Waiting mode (alone in the room) still lets you shoot, but kills only
     // count during a real match.
-    if (this.state.phase !== "playing" || attackerId === targetId) return;
+    if (this.state.phase !== "playing") return;
+    const targetInternal = this.internals.get(targetId);
+    if (targetInternal) targetInternal.deaths++;
+    if (attackerId === targetId) return;
 
     const shooter = this.state.players.get(attackerId);
     if (!shooter) return;
@@ -407,7 +449,20 @@ export class DuelRoom extends Room<{ state: DuelState }> {
       this.setPhase("ended");
       this.matchResetTicks = ticks(MATCH_END_DELAY);
       this.clearProjectiles();
+      this.recordStats(attackerId);
     }
+  }
+
+  /** Sends the finished match to Convex for the account players (guests are skipped). */
+  private recordStats(winnerId: string) {
+    const results: MatchResult[] = [];
+    this.state.players.forEach((p, id) => {
+      const internal = this.internals.get(id);
+      if (internal?.identity.kind !== "account") return;
+      results.push({ clerkId: internal.identity.clerkId, kills: p.kills, deaths: internal.deaths, won: id === winnerId });
+    });
+    // Fire and forget: the game loop never waits on Convex.
+    void recordMatch(this.matchId, results);
   }
 
   /** Respawns at the spawn point farthest from the opponent. */

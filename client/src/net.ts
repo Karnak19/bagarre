@@ -1,4 +1,4 @@
-import { Client, type Room } from "@colyseus/sdk";
+import { Client, ErrorCode, type Room } from "@colyseus/sdk";
 import {
   MSG_INPUT,
   MSG_PICK,
@@ -11,6 +11,7 @@ import {
   type PlayerView,
   type RoomStateView,
 } from "@bagarre/shared";
+import { account } from "./auth.ts";
 
 /** A plain copy of the room state at one server tick, stamped on arrival. */
 export interface Snapshot {
@@ -74,16 +75,36 @@ export class Net {
     else setTimeout(fn, half);
   }
 
+  /**
+   * Joins with the Clerk token when signed in (sent as the Colyseus auth
+   * header, read by DuelRoom.onAuth), or without one as a guest. If the server
+   * refuses the token, joins again as a guest and says so.
+   */
+  private async join(url: string): Promise<Room> {
+    const token = await account.getJoinToken();
+    const client = new Client(url);
+    if (token) client.auth.token = token;
+    try {
+      return await client.joinOrCreate(ROOM_NAME);
+    } catch (err) {
+      if (!token || (err as { code?: number }).code !== ErrorCode.AUTH_FAILED) throw err;
+      console.warn("[net] session token refused, joining as guest:", err);
+      account.setNotice("Your session couldn't be verified, so you're playing as a guest.");
+      return await new Client(url).joinOrCreate(ROOM_NAME);
+    }
+  }
+
   async connect(url: string) {
     try {
-      const client = new Client(url);
-      const room = await client.joinOrCreate(ROOM_NAME);
+      const room = await this.join(url);
       this.room = room;
       this.sessionId = room.sessionId;
       this.status = "connected";
       room.onStateChange((state) => {
         // Copy now (the live state object keeps mutating), deliver later.
         const snap = capture(state as unknown as RoomStateView);
+        const mine = snap.players.get(room.sessionId);
+        if (mine?.name) account.setPlayingAs(mine.name);
         this.delay(() => this.onSnapshot({ ...snap, t: performance.now() }));
       });
       room.onLeave(() => {

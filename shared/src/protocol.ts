@@ -103,6 +103,11 @@ export interface PlayerView extends PlayerSim {
   /** Shield bubble: ticks left and damage it can still absorb. */
   shieldTicks: number;
   shieldHp: number;
+  /**
+   * Display name, decided by the server: the account's username, or a
+   * generated "Guest-1234". Never taken from the client.
+   */
+  name: string;
 }
 
 export const PLAYER_VIEW_KEYS = [
@@ -118,6 +123,7 @@ export const PLAYER_VIEW_KEYS = [
   "pick",
   "shieldTicks",
   "shieldHp",
+  "name",
 ] as const satisfies readonly (keyof PlayerView)[];
 
 /**

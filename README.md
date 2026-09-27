@@ -14,9 +14,29 @@ Other scripts:
 
 | Command         | What it does                                                      |
 | --------------- | ----------------------------------------------------------------- |
-| `bun run build` | Type-checks shared + server, then type-checks and builds the client |
-| `bun run smoke` | Boots a real server, connects two headless clients, checks the game loop |
+| `bun run build` | Type-checks shared, convex/ and server, then type-checks and builds the client |
+| `bun run smoke` | Boots a real server, connects headless clients, checks the game loop and accounts |
 | `bun run start` | Runs the server alone (no watch)                                  |
+
+## Accounts (optional)
+
+You can always play right away as a guest (`Guest-4821`). Signing in (Clerk)
+keeps a username and stats (Convex). Copy `.env.example` to `.env.local` at the
+repo root and fill it in; with no keys at all the game stays guest-only and the
+corner widget says sign-in isn't configured. `bun run dev` also runs
+`convex dev`.
+
+- The client sends its Clerk token when joining (`client.auth.token`). The
+  server checks it in `DuelRoom.onAuth` (networkless, against `CLERK_JWT_KEY`),
+  reads the username from Convex, and puts it in the synced player state. A
+  bad token is refused, and the client joins again as a guest.
+- At the end of a match the server sends each account player's kills, deaths
+  and result to `matches.record`, which only accepts calls carrying
+  `GAME_SERVER_SECRET` and ignores a match id it has already seen.
+- Signing in or out takes effect on the next join (the page reloads).
+
+Code: `convex/` (schema, `users.ts`, `matches.ts`, `auth.config.ts`),
+`server/src/accounts.ts`, `client/src/auth.ts` and `client/src/accountUi.ts`.
 
 ## Play against yourself
 
