@@ -8,7 +8,7 @@ an authoritative Colyseus server, Bun everywhere.
 
 ```sh
 bun install
-bun run dev      # server on ws://localhost:2567, client on http://localhost:5173, plus convex dev
+bun run dev      # server on ws://localhost:2567, client on http://localhost:5173
 ```
 
 http://localhost:5173 opens the menu: the game's own scene slowly circling
@@ -27,11 +27,11 @@ what it can (a second `bun run build` with nothing changed is instant).
 
 | Command                 | What it does                                                        |
 | ----------------------- | ------------------------------------------------------------------- |
-| `bun run dev`           | Client (Vite), game server (watch mode) and `convex dev` together, output prefixed per package |
+| `bun run dev`           | Client (Vite) and game server (watch mode) together, output prefixed per package |
 | `bun run build`         | Type-checks every package, then builds the client into `apps/client/dist` |
 | `bun run typecheck`     | Type-checks every package                                          |
 | `bun run lint`          | oxlint on every package                                             |
-| `bun run smoke`         | Boots a real server, connects headless clients, checks the game loop, accounts, reconnection and shutdown |
+| `bun run smoke`         | Boots a real server, connects headless clients, checks the game loop, accounts, reconnection and shutdown (port 2599, or `SMOKE_PORT`) |
 | `bun run e2e`           | The Playwright suite: real browsers playing against a real server (see [End-to-end tests](#end-to-end-tests)) |
 | `bun run maps:validate` | Checks every map and prints its stats (see [docs/maps.md](docs/maps.md)) |
 | `bun run start`         | Runs the server alone (no watch)                                    |
@@ -60,7 +60,8 @@ The first run may need the browser: `bunx playwright install chromium` in
 - `playwright.config.ts` boots its own servers on their own ports, so it
   never meets `bun run dev`: the game server `server.ts` on 2610, and the
   client on 5610, built in development mode (the `__bagarre` dev handle stays
-  in) and served by `vite preview`. Guests only: no Clerk key, no `.env.local`.
+  in) and served by `vite preview`. No `.env.local`: the game server keeps
+  its accounts in an in-memory database, fresh on every run.
 - `server.ts` is the real `createServer()` with shorter rules (a duel is won
   at 2 kills, the FFA and team countdowns are 2 s) and a test-only control API on 2611:
   `POST /kill` kills a player through the room's own damage path, so a test
@@ -90,47 +91,94 @@ is uploaded when it fails.
 
 ## Accounts (optional)
 
-You can always play right away as a guest (`Guest-4821`). Signing in (Clerk)
-keeps a username and stats (Convex). Copy `.env.example` to `.env.local` at the
-repo root and fill it in; with no keys at all the game stays guest-only and the
-corner widget says sign-in isn't configured. `bun run dev` also runs
-`convex dev`.
+You can always play right away as a guest (`Guest-4821`). An account keeps a
+username and stats: sign up with an email and a password, or with Discord
+when it's configured. The accounts live in the game server itself:
+[`@colyseus/auth`](https://docs.colyseus.io/auth/module) for sign-up, sign-in
+and session tokens, and [`@colyseus/database`](https://docs.colyseus.io/database)
+(Drizzle) for the data. There is no other service to run.
 
-That one root `.env.local` is read by everything: Vite (`envDir` points at the
-root, only `VITE_*` reach the browser), the game server
-(`bun --env-file=../../.env.local`) and the Convex CLI, which runs from
-`packages/backend`. The Convex CLI only ever reads and writes `.env.local` in
-the folder it runs from, so `packages/backend/.env.local` is a symlink to the
-root file, created automatically by `packages/backend/scripts/link-env.ts`
-before each of that package's Convex scripts. Other Convex commands go through
-the same script, for example:
+- **Database.** `DATABASE_URL` picks it: set, a Postgres (production, see
+  `docker-compose.yaml`); unset, PGlite, an embedded Postgres, in
+  `apps/server/.data/pglite` for `bun run dev` (it survives restarts; delete
+  the folder to start over) and in memory for the smoke and e2e servers. So
+  dev, the tests and CI need no Docker and no secrets. Production refuses to
+  start without `DATABASE_URL`.
+- **Tables and migrations.** `@colyseus/auth`'s `colyseus_users`, extended
+  with `username`, `username_key` (unique, lowercased) and the stats
+  (`kills`, `deaths`, `wins`, `losses`, `matches`), and our own
+  `bagarre_matches` (one row per recorded match: mode, time, each account
+  player's place, kills, deaths and team). The binary creates and updates
+  them itself at every boot, before it listens (`src/db.ts`):
+  `@colyseus/database`'s `migrations: "auto"` creates missing tables,
+  columns and indexes, and `BAGARRE_MIGRATIONS` holds our own idempotent
+  statements. Nothing is ever dropped or retyped: a change like that needs a
+  new statement there.
+- **Session tokens.** A JWT signed with `JWT_SECRET` (a fixed dev-only
+  secret outside production, which refuses to start without it), carrying
+  only the account id and its token version, valid 30 days. The client sends
+  it when joining (`client.auth.token`); `GameRoom.onAuth` checks it and
+  reads the username from the database. No token, or a bad, expired or
+  revoked one, joins as a guest: playing never needs an account. A guest
+  keeps the `Guest-4821` name the menu shows (drawn once per browser; the
+  server only accepts names in that exact format, and draws another if
+  someone in the room has the same one). An account without a username yet
+  plays under a guest name too, and its matches aren't counted.
+- **Routes** (on the game server, so `/colyseus/...` in production):
+  `@colyseus/auth`'s `POST /auth/register`, `POST /auth/login`,
+  `GET /auth/userdata` and, with Discord, `GET /auth/provider/discord` (and
+  its callback); ours: `GET /auth/providers`, `POST /auth/forgot-password`,
+  `POST /auth/reset-password`, `GET /account`, `POST /account/username`,
+  `GET /leaderboard` (top 10 by wins) and `GET /profiles/:username`. The
+  route names, the username rules and the answers' types are in
+  `packages/shared/src/accounts.ts`.
+- **Password reset.** The email links to the client's
+  `/reset-password?token=...` page. It goes out through Resend (one `fetch`
+  to its API) when `RESEND_API_KEY` and `MAIL_FROM` are set; otherwise the
+  link is printed in the server's console, which is what you use in dev. The
+  link works for 30 minutes and once, and a reset signs out every session.
+- **Discord**, only when `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET` are
+  set (the button is hidden otherwise). Register this redirect in the
+  Discord developer portal (your app, OAuth2, Redirects):
+  `<PUBLIC_URL>/colyseus/auth/provider/discord/callback`, so
+  `https://ghj9pktfasrpthjvvpg2gehp.big-server.basile.vernouillet.dev/colyseus/auth/provider/discord/callback`
+  in production, and `http://localhost:2567/auth/provider/discord/callback`
+  for a dev app. The server builds it from `PUBLIC_URL` (the site's public
+  origin, required in production) plus `/colyseus`, or from
+  `PUBLIC_SERVER_URL` when set. A new Discord account picks a username like
+  any other.
+- **Stats.** At the end of a match the server records each account player's
+  kills, deaths and result, once per match id, in one transaction
+  (`writeMatch` in `apps/server/src/accounts.ts`).
 
-```sh
-cd packages/backend
-bun run convex env set GAME_SERVER_SECRET=<value>
-bun run push        # one-off push of the functions (convex dev --once)
-```
+Every variable is listed in `.env.example` (dev, all optional: copy it to
+`.env.local` at the repo root, which Vite and the server both read) and
+`.env.production.example` (production).
 
-- The client sends its Clerk token when joining (`client.auth.token`). The
-  server checks it in `GameRoom.onAuth` (networkless, against `CLERK_JWT_KEY`),
-  reads the username from Convex, and puts it in the synced player state. A
-  bad token is refused, and the client joins again as a guest.
-- At the end of a match the server sends each account player's kills, deaths
-  and result to `matches.record`, which only accepts calls carrying
-  `GAME_SERVER_SECRET` and ignores a match id it has already seen.
-- Signing in and out happen from the menu's account panel (Clerk's modal
-  and user button), and apply to the next game you join, with no reload: each
-  join reads a fresh token. A guest keeps the `Guest-4821` name the menu
-  shows (drawn once per browser; the server only accepts names in that exact
-  format, and draws another if the opponent has the same one).
+On the client, `apps/client/src/auth.ts` is a plain store (`getState` /
+`subscribe`) around one long-lived `@colyseus/sdk` Client, pointed at the
+same game server as the rooms (`resolveServerUrl()` in `config.ts`).
+`client.auth.*` signs up, in and out, runs the Discord popup and asks for
+reset links, and keeps the session token in localStorage
+(`colyseus-auth-token`); `client.http` calls the game's own routes with it.
+Its `status` is `loading`, `signedIn`, `signedOut` or `error` (a session is
+saved but the server can't be reached), and `account` is the fresh `Account`
+from `GET /account` (a 401 there signs out, with a notice). It reads the
+account again after signing in, when the account panel opens and back on the
+menu after a game. Each join sends the saved token (`getJoinToken()`); if the
+room says we're not an account while we're signed in with a username, a
+notice says we're playing as a guest. The screens, all in the account panel
+(the chip on the menu opens it): sign in, sign up, forgot password, choose a
+username (it opens by itself for a signed-in account without one, a new
+Discord account included), your stats, sign out. The emailed link opens
+`/reset-password?token=` (`src/routes/reset-password.tsx`). The menu's
+Leaderboard link opens the top 10 (`src/ui/menu/Leaderboard.tsx`).
 
-Code: `packages/backend/convex/` (schema, `users.ts`, `matches.ts`,
-`auth.config.ts`), `apps/server/src/accounts.ts`, `apps/client/src/auth.ts`
-(the account store) and `apps/client/src/ui/account/` (the chip, the panel,
-and `ClerkRoot.tsx`: `@clerk/react` and `convex/react`, loaded as its own
-chunk only when `VITE_CLERK_PUBLISHABLE_KEY` is set). The client and the server import the Convex
-API from the `@bagarre/backend` package (`@bagarre/backend/api`,
-`@bagarre/backend/username`), never by relative path.
+Code: `apps/server/src/db.ts` (schema, driver, migrations), `accounts.ts`
+(identity at join time, profiles, usernames, stats, leaderboard), `auth.ts`
+(the auth routes and their settings), `apps/client/src/auth.ts` (the account
+store) and `apps/client/src/ui/account/` (the chip, the panel, the auth
+screens).
 
 ## Play against yourself
 
@@ -212,14 +260,24 @@ TypeScript: React never runs per frame and there is no React Three Fiber.
 - `src/keys.ts` holds the app keys (Esc, Tab, M and 1-7 on cards) and the
   input isolation rules; `src/uiState.ts` says which panel is open, so the
   loop keeps the game's input off meanwhile.
-- `src/ui/`: `Shell.tsx` (root layout: theme, cards, Tab scoreboard, panels,
-  the lazy Clerk root), `menu/`, `game/` (HUD, cards, scoreboard, weapon
+- `src/ui/`: `Shell.tsx` (root layout: theme, cards, Tab scoreboard, panels),
+  `menu/`, `game/` (HUD, cards, scoreboard, weapon
   picker), `account/`, `Panels.tsx` and `Settings.tsx`.
 - Stable `data-testid`s mark the pieces tests drive: `play`, `private-game`,
   `open-games`, `open-game`, `invite-link`, `copy-invite`, `waiting-card`,
   `scoreboard`, `scoreboard-row`, `esc-menu`, `esc-resume`, `esc-settings`,
   `esc-leave`, `result-card`, `rematch`, `main-menu`, `notice`,
-  `notice-retry`, `notice-back`, `account-chip`, `account-panel`,
+  `notice-retry`, `notice-back`, `account-chip`, `account-panel`, the
+  account screens' `sign-in`, `sign-up`, `forgot-password`, `auth-email`,
+  `auth-password`, `auth-submit`, `auth-error`, `auth-sent`,
+  `auth-to-sign-up`, `auth-to-sign-in`, `auth-forgot`, `auth-discord`,
+  `sign-out`, `account-email`, `account-retry`, `username-form`,
+  `username-input`, `username-save`, `rename`, the reset page's
+  `reset-password`, `reset-password-form`, `reset-password-input`,
+  `reset-password-confirm`, `reset-password-submit`, `reset-password-error`,
+  `reset-password-done`, `reset-password-sign-in`, `reset-password-back`, the
+  leaderboard's `open-leaderboard`, `panel-leaderboard`, `leaderboard` (with
+  `data-state`) and `leaderboard-row` (with `data-username`, `data-you`),
   `settings-volume`, `settings-mute`, `settings-names`, and the HUD's `hud-*`. The free for
   all adds `play-ffa`, `private-ffa`, `ffa-countdown`, `ffa-players`,
   `placement-row`, `result-winner`, `scoreboard-time`, `hud-ffa`,
@@ -303,9 +361,9 @@ Duel maps stay duel-only, and FFA maps never show up in a duel.
 - **After the match**: the placement table for 8 s (`FFA_END_DELAY`), then a
   rematch in the same room on another FFA map, if 3 players are still
   connected; otherwise back to waiting.
-- **Stats**: `matches.record` gets FFA matches too. First place is a win,
+- **Stats**: FFA matches are recorded too. First place is a win,
   every other place a loss; each account player's place is
-  kept on the match's `recordedMatches` row, with the mode.
+  kept on the match's `bagarre_matches` row, with the mode.
 
 In a game: the HUD adds your rank ("2nd of 5 · 7 kills"), the top three, the
 time left, a kill feed (killer, weapon, victim) and a minimap in the bottom
@@ -364,13 +422,12 @@ into a red side and a blue side. The rules are `TEAM_RULES` in
   the FFA checks: valid and disjoint indices, at least 6 spawns a side, the
   same mean and closest distance to the hub (within 1 m), and no spawn within
   10 m of an enemy one.
-- **Stats**: `matches.record` gets `mode: "tdm"` and each account player's
+- **Stats**: the recorded match gets `mode: "tdm"` and each account player's
   `team`: a win for every player on the winning team, a loss for the others.
   Every player gets their own place: the winning team's players first, then
   the others, each team in `rank` order of its players' own kills,
   damage and so on (so 1st to 4th are the winners of a 4v4, 5th to 8th the
-  losers). The Convex fields are optional, so older rows and the other modes are
-  untouched.
+  losers).
 
 In a game, the team colours (theme `--bagarre-p6` red and `--bagarre-p7`
 blue, paint 6 and 7 in `apps/client/src/paint.ts`) replace the seat colours
@@ -640,8 +697,8 @@ apps/
     public/           models (glTF, meshopt-compressed), particle atlas and sounds, see ASSETS.md
     scripts/          asset rebuild scripts (assets/, sfx/)
   server/             @bagarre/server: Colyseus on Bun
-    src/              the Colyseus room for both modes (GameRoom: DuelRoom, FfaRoom), synced state schema, accounts, bootstrap
-                      and the GET /games route (app.ts)
+    src/              the Colyseus room for every mode (GameRoom: DuelRoom, FfaRoom, TeamRoom), synced state schema,
+                      accounts (db.ts, accounts.ts, auth.ts), bootstrap and the GET /games route (app.ts)
     smoke.ts          headless end-to-end test (smoke-accounts.ts: its account part, smoke-ffa.ts: the free for all)
 packages/
   shared/             @bagarre/shared: TypeScript source, no build step
@@ -650,14 +707,11 @@ packages/
                       combat.ts: the player step with dash, weapons, abilities),
                       line of sight and the respawn rule (sight.ts)
     scripts/          map validator and preview renderer
-  backend/            @bagarre/backend: the Convex functions
-    convex/           schema, users, matches, Clerk auth config, _generated/
-    testing.ts        the functions as a module map, for convex-test in the smoke test
 docs/                 design notes (maps.md)
 turbo.json            task graph and caching
 ```
 
-`@bagarre/shared` and `@bagarre/backend` are "internal packages": their
+`@bagarre/shared` is an "internal package": its
 `exports` point straight at TypeScript source, and Vite, Bun and `tsc` read it
 as is. Only the client has a build output.
 

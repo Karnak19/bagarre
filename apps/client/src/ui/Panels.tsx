@@ -1,4 +1,4 @@
-// The panels: How to play, Settings and Account, one at a time, in Astryx's
+// The panels: How to play, Settings, Account and Leaderboard, one at a time, in Astryx's
 // Dialog (a native modal <dialog>: focus stays inside, Esc and the close
 // button close it, focus goes back to what opened it). Which one is open is
 // uiState.ts' `ui.panel`, so the game loop can keep the input off meanwhile.
@@ -10,12 +10,14 @@ import { closePanel, ui, type PanelName } from "../uiState.ts";
 import { AccountPanel } from "./account/AccountPanel.tsx";
 import { useSelector } from "./hooks.ts";
 import { HowToPlay } from "./menu/HowToPlay.tsx";
+import { Leaderboard } from "./menu/Leaderboard.tsx";
 import { Settings } from "./Settings.tsx";
 
 const TITLES: Record<PanelName, string> = {
   howto: "How to play",
   settings: "Settings",
   account: "Account",
+  leaderboard: "Leaderboard",
 };
 
 export function Panels() {
@@ -47,6 +49,7 @@ export function Panels() {
             {name === "howto" && <HowToPlay />}
             {name === "settings" && <Settings />}
             {name === "account" && <AccountPanel />}
+            {name === "leaderboard" && <Leaderboard />}
           </LayoutContent>
         }
       />

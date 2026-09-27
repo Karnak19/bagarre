@@ -1,5 +1,5 @@
-// The menu screen (`/`): title, Play (quick duel), Free for all, Team deathmatch, Private game (duel, FFA or teams), How to play
-// and Settings, the account chip and the open games list. The live 3D scene
+// The menu screen (`/`): title, Play (quick duel), Free for all, Team deathmatch, Private game (duel, FFA or teams), How to play,
+// Settings and the leaderboard, the account chip and the open games list. The live 3D scene
 // behind it is attract.ts. Shown while the flow is on the menu; during a
 // quick match's join the joining card takes over (ui/game/Cards.tsx).
 
@@ -183,7 +183,7 @@ function Menu({ focusPlay }: { focusPlay: boolean }) {
     return () => lobby.watch(false);
   }, [lobby]);
 
-  const panel = (name: "howto" | "settings") => () => {
+  const panel = (name: "howto" | "settings" | "leaderboard") => () => {
     gesture();
     openPanel(name);
   };
@@ -283,6 +283,13 @@ function Menu({ focusPlay }: { focusPlay: boolean }) {
           <HStack gap={1} xstyle={styles.links}>
             <Button label="How to play" variant="ghost" aria-haspopup="dialog" data-testid="open-howto" onClick={panel("howto")} />
             <Button label="Settings" variant="ghost" aria-haspopup="dialog" data-testid="open-settings" onClick={panel("settings")} />
+            <Button
+              label="Leaderboard"
+              variant="ghost"
+              aria-haspopup="dialog"
+              data-testid="open-leaderboard"
+              onClick={panel("leaderboard")}
+            />
           </HStack>
           {progress !== null && (
             <Text type="supporting" xstyle={[styles.loading, shared.tabular]} data-testid="menu-loading">

@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from "./routes/__root";
 import { Route as IndexRouteImport } from "./routes/index";
 import { Route as SplatRouteImport } from "./routes/$";
+import { Route as ResetPasswordRouteImport } from "./routes/reset-password";
 import { Route as GameCodeRouteImport } from "./routes/game.$code";
 import { Route as GameCodeWatchRouteImport } from "./routes/game.$code_.watch";
 
@@ -22,6 +23,11 @@ const IndexRoute = IndexRouteImport.update({
 const SplatRoute = SplatRouteImport.update({
   id: "/$",
   path: "/$",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const ResetPasswordRoute = ResetPasswordRouteImport.update({
+  id: "/reset-password",
+  path: "/reset-password",
   getParentRoute: () => rootRouteImport,
 } as any);
 const GameCodeRoute = GameCodeRouteImport.update({
@@ -38,12 +44,14 @@ const GameCodeWatchRoute = GameCodeWatchRouteImport.update({
 export interface FileRoutesByFullPath {
   "/": typeof IndexRoute;
   "/$": typeof SplatRoute;
+  "/reset-password": typeof ResetPasswordRoute;
   "/game/$code": typeof GameCodeRoute;
   "/game/$code/watch": typeof GameCodeWatchRoute;
 }
 export interface FileRoutesByTo {
   "/": typeof IndexRoute;
   "/$": typeof SplatRoute;
+  "/reset-password": typeof ResetPasswordRoute;
   "/game/$code": typeof GameCodeRoute;
   "/game/$code/watch": typeof GameCodeWatchRoute;
 }
@@ -51,20 +59,29 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport;
   "/": typeof IndexRoute;
   "/$": typeof SplatRoute;
+  "/reset-password": typeof ResetPasswordRoute;
   "/game/$code": typeof GameCodeRoute;
   "/game/$code_/watch": typeof GameCodeWatchRoute;
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath;
-  fullPaths: "/" | "/$" | "/game/$code" | "/game/$code/watch";
+  fullPaths:
+    "/" | "/$" | "/reset-password" | "/game/$code" | "/game/$code/watch";
   fileRoutesByTo: FileRoutesByTo;
-  to: "/" | "/$" | "/game/$code" | "/game/$code/watch";
-  id: "__root__" | "/" | "/$" | "/game/$code" | "/game/$code_/watch";
+  to: "/" | "/$" | "/reset-password" | "/game/$code" | "/game/$code/watch";
+  id:
+    | "__root__"
+    | "/"
+    | "/$"
+    | "/reset-password"
+    | "/game/$code"
+    | "/game/$code_/watch";
   fileRoutesById: FileRoutesById;
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute;
   SplatRoute: typeof SplatRoute;
+  ResetPasswordRoute: typeof ResetPasswordRoute;
   GameCodeRoute: typeof GameCodeRoute;
   GameCodeWatchRoute: typeof GameCodeWatchRoute;
 }
@@ -83,6 +100,13 @@ declare module "@tanstack/react-router" {
       path: "/$";
       fullPath: "/$";
       preLoaderRoute: typeof SplatRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/reset-password": {
+      id: "/reset-password";
+      path: "/reset-password";
+      fullPath: "/reset-password";
+      preLoaderRoute: typeof ResetPasswordRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/game/$code": {
@@ -105,6 +129,7 @@ declare module "@tanstack/react-router" {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SplatRoute: SplatRoute,
+  ResetPasswordRoute: ResetPasswordRoute,
   GameCodeRoute: GameCodeRoute,
   GameCodeWatchRoute: GameCodeWatchRoute,
 };

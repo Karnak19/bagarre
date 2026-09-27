@@ -1,29 +1,38 @@
-// Player identity (Clerk) and match stats (Convex), from the game server's side.
+// Player identity and match stats, from the game server's side.
 //
 // The server never trusts a name sent by the client. At join time it gets the
-// Clerk token from the Colyseus auth header and:
+// @colyseus/auth token from the Colyseus auth header and:
 //   - no token            -> a guest with a generated name;
-//   - a valid token       -> an account: clerkId from the token's `sub`, the
-//                            username read from Convex (`users.me`, called with
-//                            that same token);
-//   - an invalid token    -> the join is refused (the client retries as guest).
+//   - a valid token       -> an account: the user id from the token, the
+//                            username read from the database;
+//   - an invalid token    -> a guest too (bad signature, expired, revoked, or
+//                            the account is gone): playing never needs an
+//                            account, so a stale session never blocks a join.
 //
-// Token verification is networkless: `verifyToken` from @clerk/backend checks
-// the RS256 signature against CLERK_JWT_KEY (the instance's PEM public key),
-// plus exp/nbf/iat, `aud: "convex"` and, when set, `iss` and `azp`.
-// CLERK_SECRET_KEY is only a fallback (it makes verifyToken fetch the JWKS).
+// The accounts live in the game's own database (db.ts). At the end of a match
+// GameRoom sends each account player's result to `recordMatch`.
 
-import { verifyToken } from "@clerk/backend";
-import { ConvexHttpClient } from "convex/browser";
-import { api } from "@bagarre/backend/api";
-import type { GameMode } from "@bagarre/shared";
+import { JWT } from "@colyseus/auth";
+import {
+  LEADERBOARD_SIZE,
+  usernameError,
+  usernameKey,
+  type Account,
+  type ClaimResult,
+  type GameMode,
+  type LeaderboardEntry,
+  type Profile,
+  type Stats,
+} from "@bagarre/shared";
+import { and, desc, eq, gt, isNotNull, sql } from "drizzle-orm";
+import { matches, users, type Database, type Placement } from "./db.ts";
 
 export type Identity =
   | { kind: "guest"; name: string }
-  | { kind: "account"; name: string; clerkId: string; username: string | null };
+  | { kind: "account"; name: string; userId: string; username: string | null };
 
 export interface MatchResult {
-  clerkId: string;
+  userId: string;
   kills: number;
   deaths: number;
   /** First place, or on the winning team with teams. There is always exactly one winner (or winning team). */
@@ -37,85 +46,27 @@ export interface MatchResult {
   team?: number;
 }
 
-export interface AccountsConfig {
-  /** PEM public key for networkless verification. */
-  jwtKey?: string;
-  /** Fallback when there is no jwtKey: verifyToken fetches the JWKS with it. */
-  secretKey?: string;
-  /** Expected `iss` claim (the Clerk Frontend API URL). Unchecked when unset. */
-  issuer?: string;
-  /** Allowed `azp` origins. Unchecked when empty. */
-  authorizedParties?: string[];
-  /** Username of an account, or null (no username yet, or Convex unreachable). */
-  lookupUsername: (clerkId: string, token: string) => Promise<string | null>;
-  /** Credits a finished match. Must be idempotent per matchId. */
-  recordMatch: (matchId: string, players: MatchResult[], mode: GameMode) => Promise<void>;
+/** What a session token carries (see auth.ts, `onGenerateToken`). */
+export interface TokenPayload {
+  id: string;
+  tokenVersion: number;
 }
 
-/** Thrown from onAuth; its message reaches the client. */
-export class AuthRejected extends Error {}
+let database: Database | null = null;
 
-const env = (name: string) => {
-  const v = process.env[name]?.trim();
-  return v ? v : undefined;
-};
-
-/** PEM keys often come from .env files with literal "\n" sequences. */
-const pem = (v: string | undefined) => v?.replace(/\\n/g, "\n");
-
-function convexFromEnv(): Pick<AccountsConfig, "lookupUsername" | "recordMatch"> {
-  const url = env("CONVEX_URL");
-  const secret = env("GAME_SERVER_SECRET");
-  return {
-    async lookupUsername(_clerkId, token) {
-      if (!url) return null;
-      try {
-        const client = new ConvexHttpClient(url, { auth: token });
-        const me = await client.query(api.users.me, {});
-        return me?.username ?? null;
-      } catch (err) {
-        console.warn("[accounts] username lookup failed:", err instanceof Error ? err.message : err);
-        return null;
-      }
-    },
-    async recordMatch(matchId, players, mode) {
-      if (!url || !secret) {
-        console.warn("[accounts] CONVEX_URL or GAME_SERVER_SECRET unset, match not recorded");
-        return;
-      }
-      const client = new ConvexHttpClient(url);
-      await client.mutation(api.matches.record, { secret, matchId, mode, players });
-    },
-  };
+/** Set once by createServer, after which every function below reads and writes it. */
+export function useDatabase(db: Database) {
+  database = db;
 }
 
-/** The production configuration, entirely from the environment. */
-export function accountsFromEnv(): AccountsConfig {
-  return {
-    jwtKey: pem(env("CLERK_JWT_KEY")),
-    secretKey: env("CLERK_SECRET_KEY"),
-    issuer: env("CLERK_JWT_ISSUER_DOMAIN"),
-    authorizedParties: env("CLERK_AUTHORIZED_PARTIES")
-      ?.split(",")
-      .map((s) => s.trim())
-      .filter(Boolean),
-    ...convexFromEnv(),
-  };
+/** The database createServer gave us (the smoke test reads and writes it directly). */
+export function db(): Database {
+  if (!database) throw new Error("[accounts] no database (createServer sets it)");
+  return database;
 }
 
-let config: AccountsConfig = accountsFromEnv();
-
-/**
- * Replaces the configuration. Only for tests (the smoke test signs its own
- * tokens with a throwaway key): refused when NODE_ENV is "production", and the
- * real entry point (index.ts) never calls it.
- */
-export function configureAccountsForTests(overrides: Partial<AccountsConfig>) {
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("Test account configuration is not allowed in production");
-  }
-  config = { ...accountsFromEnv(), ...overrides };
-}
+/** Test hook: called with every match recorded (the smoke test watches it). */
+export const accountHooks: { onRecord?: (matchId: string, players: MatchResult[], mode: GameMode) => void } = {};
 
 export function guestName(taken: Set<string> = new Set()): string {
   for (;;) {
@@ -124,43 +75,201 @@ export function guestName(taken: Set<string> = new Set()): string {
   }
 }
 
-/** Verifies a Clerk token and resolves the player's identity. Throws AuthRejected. */
+/**
+ * Checks a session token: its signature and expiry, then that it hasn't been
+ * revoked (the account's token version moves on a password reset). Returns
+ * the account's id, or null.
+ */
+export async function verifySession(token: string | undefined): Promise<string | null> {
+  if (!token) return null;
+  try {
+    return await sessionUser(await JWT.verify(token));
+  } catch {
+    return null;
+  }
+}
+
+/** The account id of an already verified token's payload, or null when it has been revoked. */
+export async function sessionUser(payload: unknown): Promise<string | null> {
+  const p = payload as Partial<TokenPayload> | null;
+  if (typeof p?.id !== "string" || typeof p.tokenVersion !== "number") return null;
+  const [row] = await db()
+    .drizzle.select({ tokenVersion: users.tokenVersion })
+    .from(users)
+    .where(eq(users.id, p.id))
+    .limit(1);
+  return row && row.tokenVersion === p.tokenVersion ? p.id : null;
+}
+
+/** Resolves the player's identity from the join token. Never throws for a bad token. */
 export async function resolveIdentity(token: string | undefined): Promise<Identity> {
   if (!token) return { kind: "guest", name: guestName() };
-
-  if (!config.jwtKey && !config.secretKey) {
-    throw new AuthRejected("Accounts are not configured on this server");
+  const userId = await verifySession(token);
+  if (!userId) {
+    console.warn("[accounts] invalid or expired session token, joining as a guest");
+    return { kind: "guest", name: guestName() };
   }
-  let clerkId: string;
+  const username = await usernameOf(userId);
+  return { kind: "account", userId, username, name: username ?? guestName() };
+}
+
+async function usernameOf(userId: string): Promise<string | null> {
   try {
-    // Throws on a bad signature, wrong audience/azp, or an expired token.
-    const payload: { iss?: unknown; sub?: unknown } = await verifyToken(token, {
-      jwtKey: config.jwtKey,
-      secretKey: config.jwtKey ? undefined : config.secretKey,
-      audience: "convex",
-      authorizedParties: config.authorizedParties?.length ? config.authorizedParties : undefined,
-    });
-    if (config.issuer && payload.iss !== config.issuer) throw new Error(`unexpected issuer ${payload.iss}`);
-    if (typeof payload.sub !== "string" || !payload.sub) throw new Error("no subject");
-    clerkId = payload.sub;
+    const [row] = await db().drizzle.select({ username: users.username }).from(users).where(eq(users.id, userId)).limit(1);
+    return row?.username ?? null;
   } catch (err) {
-    console.warn("[accounts] token rejected:", err instanceof Error ? err.message : err);
-    throw new AuthRejected("Invalid or expired session token");
+    console.warn("[accounts] username lookup failed:", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+type UserRow = typeof users.$inferSelect;
+
+const statsOf = (r: UserRow): Stats => ({ kills: r.kills, deaths: r.deaths, wins: r.wins, losses: r.losses, matches: r.matches });
+
+/** The signed-in player's account, or null when it doesn't exist (anymore). */
+export async function accountById(userId: string): Promise<Account | null> {
+  const [row] = await db().drizzle.select().from(users).where(eq(users.id, userId)).limit(1);
+  if (!row) return null;
+  return { id: row.id, email: row.email, username: row.username, createdAt: row.createdAt.getTime(), stats: statsOf(row) };
+}
+
+/** Anyone's public profile by username (case-insensitive), or null. */
+export async function publicProfile(username: string): Promise<Profile | null> {
+  const [row] = await db()
+    .drizzle.select()
+    .from(users)
+    .where(eq(users.usernameKey, usernameKey(username.trim())))
+    .limit(1);
+  if (!row?.username) return null;
+  return { username: row.username, createdAt: row.createdAt.getTime(), stats: statsOf(row) };
+}
+
+/**
+ * Sets the player's username: the first one, or a new one. Expected failures
+ * (invalid, taken) come back as a result so the form can show them inline.
+ */
+export async function claimUsername(userId: string, username: string): Promise<ClaimResult> {
+  const name = username.trim();
+  const invalid = usernameError(name);
+  if (invalid) return { ok: false, reason: "invalid", message: invalid };
+  const key = usernameKey(name);
+  const taken: ClaimResult = { ok: false, reason: "taken", message: "That name is taken." };
+
+  const [holder] = await db().drizzle.select({ id: users.id }).from(users).where(eq(users.usernameKey, key)).limit(1);
+  if (holder && holder.id !== userId) return taken;
+  try {
+    const updated = await db()
+      .drizzle.update(users)
+      .set({ username: name, usernameKey: key, updatedAt: new Date() })
+      .where(eq(users.id, userId))
+      .returning({ id: users.id });
+    if (updated.length === 0) throw new Error("No such account");
+  } catch (err) {
+    // Two players claiming the same name at once: the unique index decides.
+    if (isUniqueViolation(err)) return taken;
+    throw err;
+  }
+  return { ok: true, username: name };
+}
+
+function isUniqueViolation(err: unknown): boolean {
+  for (let e: unknown = err; e; e = (e as { cause?: unknown }).cause) {
+    if ((e as { code?: unknown }).code === "23505") return true;
+  }
+  return false;
+}
+
+/** The top accounts by wins (then kills), among those that have played. */
+export async function leaderboard(limit = LEADERBOARD_SIZE): Promise<LeaderboardEntry[]> {
+  const rows = await db()
+    .drizzle.select()
+    .from(users)
+    .where(and(isNotNull(users.username), gt(users.matches, 0)))
+    .orderBy(desc(users.wins), desc(users.kills), users.matches, users.createdAt)
+    .limit(limit);
+  return rows.map((r, i) => ({ rank: i + 1, username: r.username!, ...statsOf(r) }));
+}
+
+/** Most players a match of each mode can have. */
+const MAX_PLAYERS: Record<GameMode, number> = { duel: 2, ffa: 6, tdm: 8 };
+const MAX_MATCH_PLAYERS = MAX_PLAYERS.tdm;
+
+/**
+ * Writes a finished match: one row for the match, and each account player's
+ * stats. Idempotent per `matchId`: recording it again changes nothing.
+ *
+ * Every mode alike: `won` is a win, anything else a loss. In a duel and a
+ * free-for-all a win is first place; in a team deathmatch it is being on the
+ * winning team. A match is never a draw (see `rank` in @bagarre/shared). An
+ * account that never picked a username gets its place on the match row, but
+ * no stats.
+ */
+export async function writeMatch(
+  matchId: string,
+  players: MatchResult[],
+  mode: GameMode,
+): Promise<{ status: "recorded" | "duplicate"; updated: number }> {
+  if (matchId.length === 0 || matchId.length > 128) throw new Error("Bad matchId");
+  const most = MAX_PLAYERS[mode];
+  if (players.length > most) throw new Error(`A ${mode} has at most ${most} players`);
+  for (const p of players) {
+    for (const n of [p.kills, p.deaths]) {
+      if (!Number.isInteger(n) || n < 0 || n > 1000) throw new Error("Bad counter");
+    }
+    if (!Number.isInteger(p.place) || p.place < 1 || p.place > MAX_MATCH_PLAYERS) throw new Error("Bad place");
+    if (p.team !== undefined && p.team !== 0 && p.team !== 1) throw new Error("Bad team");
   }
 
-  const username = await config.lookupUsername(clerkId, token);
-  return { kind: "account", clerkId, username, name: username ?? guestName() };
+  const placements: Placement[] = players.map((p) => ({
+    userId: p.userId,
+    place: p.place,
+    kills: p.kills,
+    deaths: p.deaths,
+    ...(p.team !== undefined ? { team: p.team } : {}),
+  }));
+  return db().drizzle.transaction(async (tx) => {
+    const inserted = await tx
+      .insert(matches)
+      .values({ matchId, mode, placements })
+      .onConflictDoNothing()
+      .returning({ matchId: matches.matchId });
+    if (inserted.length === 0) return { status: "duplicate" as const, updated: 0 };
+    let updated = 0;
+    for (const p of players) {
+      const rows = await tx
+        .update(users)
+        .set({
+          kills: sql`${users.kills} + ${p.kills}`,
+          deaths: sql`${users.deaths} + ${p.deaths}`,
+          wins: sql`${users.wins} + ${p.won ? 1 : 0}`,
+          losses: sql`${users.losses} + ${p.won ? 0 : 1}`,
+          matches: sql`${users.matches} + 1`,
+        })
+        .where(and(eq(users.id, p.userId), isNotNull(users.username)))
+        .returning({ id: users.id });
+      updated += rows.length;
+    }
+    return { status: "recorded" as const, updated };
+  });
+}
+
+/** The recorded row of a match, or null (the smoke test reads it back). */
+export async function matchRow(matchId: string) {
+  const [row] = await db().drizzle.select().from(matches).where(eq(matches.matchId, matchId)).limit(1);
+  return row ?? null;
 }
 
 /**
  * Records a finished match for its account players, retrying a few times.
- * Safe to retry because matches.record is idempotent per matchId.
+ * Safe to retry because writeMatch is idempotent per matchId.
  */
 export async function recordMatch(matchId: string, players: MatchResult[], mode: GameMode): Promise<void> {
   if (players.length === 0) return;
+  accountHooks.onRecord?.(matchId, players, mode);
   for (let attempt = 1; ; attempt++) {
     try {
-      await config.recordMatch(matchId, players, mode);
+      await writeMatch(matchId, players, mode);
       return;
     } catch (err) {
       if (attempt >= 3) {

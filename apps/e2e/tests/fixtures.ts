@@ -48,6 +48,8 @@ export interface PlayerState {
   players: {
     id: string;
     name: string;
+    /** The server saw an account with a username (false: a guest). */
+    account: boolean;
     kills: number;
     deaths: number;
     weapon: number;
@@ -98,6 +100,7 @@ export class Player {
         players.push({
           id,
           name: String(p.name),
+          account: !!p.account,
           kills: Number(p.kills),
           deaths: Number(p.deaths),
           weapon: Number(p.weapon),

@@ -9,24 +9,25 @@
   "scripts": {
     "dev": "bun --env-file=../../.env.local --watch src/index.ts",
     "start": "bun --env-file=../../.env.local src/index.ts",
-    "build:bin": "bun build src/index.ts --compile --minify --bytecode --format=esm --outfile dist/bagarre-server",
+    "build:bin": "bun build src/index.ts --compile --minify --bytecode --format=esm --external @electric-sql/pglite --external drizzle-orm/pglite --external 'drizzle-orm/pglite/*' --outfile dist/bagarre-server",
     "typecheck": "tsc --noEmit -p .",
     "lint": "oxlint src smoke.ts smoke-accounts.ts smoke-ffa.ts smoke-spectate.ts smoke-teams.ts",
     "smoke": "bun --env-file=../../.env.local smoke.ts"
   },
   "dependencies": {
-    "@bagarre/backend": "workspace:*",
     "@bagarre/shared": "workspace:*",
-    "@clerk/backend": "^3.20.1",
+    "@colyseus/auth": "0.18.3",
     "@colyseus/core": "^0.18.17",
+    "@colyseus/database": "0.18.4",
     "@colyseus/schema": "^5.0.34",
     "@colyseus/ws-transport": "^0.18.4",
-    "convex": "^1.46.0"
+    "@electric-sql/pglite": "^0.5.8",
+    "drizzle-orm": "1.0.0-rc.2",
+    "postgres": "^3.4.7"
   },
   "devDependencies": {
     "@colyseus/sdk": "^0.18.4",
     "@types/node": "^26.6.3",
-    "convex-test": "^0.0.60",
     "jose": "^6.2.12",
     "typescript": "^7.0.2"
   }

@@ -5,7 +5,7 @@
 
 import { Store } from "./store.ts";
 
-export type PanelName = "howto" | "settings" | "account";
+export type PanelName = "howto" | "settings" | "account" | "leaderboard";
 
 export interface UiState {
   panel: PanelName | null;
@@ -21,9 +21,4 @@ export function openPanel(panel: PanelName) {
 
 export function closePanel() {
   if (ui.getState().panel) ui.patch({ panel: null });
-}
-
-/** Clerk's sign-in modal or user menu is open: its keys are its own. */
-export function clerkOpen(): boolean {
-  return !!document.querySelector(".cl-modalBackdrop, .cl-userButtonPopoverCard");
 }

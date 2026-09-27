@@ -5,7 +5,8 @@
 // rejoin) plus dash and weapon-pick checks. Part 2 runs several extra rooms in
 // parallel, one per scenario: each weapon's fire rate / damage / spread, the
 // grenade, and the shield. Part 3 (smoke-accounts.ts, run alongside part 2)
-// covers guest names, Clerk token checks and match stats in Convex. Part 4
+// covers accounts: sign up and in, usernames, session tokens at join time,
+// match stats, password reset, the leaderboard and Discord's redirect. Part 4
 // covers game pages (private rooms, the open games list, joins by id, room
 // metadata, guest names) and part 5 the scoreboard counters and ping. Part 6
 // covers reconnection (a dropped client keeps its seat for a grace period),
@@ -73,7 +74,7 @@ import {
 } from "@bagarre/shared";
 import { createServer, openGames } from "./src/app.ts";
 import { DuelRoom } from "./src/GameRoom.ts";
-import { accountChecks, liveConvexChecks, setupTestAccounts } from "./smoke-accounts.ts";
+import { SMOKE_PUBLIC_URL, accountChecks, setupTestAccounts } from "./smoke-accounts.ts";
 import { ffaChecks, registerFfaRooms } from "./smoke-ffa.ts";
 import { registerSpectateRooms, spectatorChecks } from "./smoke-spectate.ts";
 import { registerTeamRooms, teamChecks } from "./smoke-teams.ts";
@@ -1466,7 +1467,15 @@ async function shutdownCheck() {
   const url = `http://localhost:${port}`;
   const child = spawn(process.execPath, ["src/index.ts"], {
     cwd: dirname(fileURLToPath(import.meta.url)),
-    env: { ...process.env, PORT: String(port), NODE_ENV: "production" },
+    env: {
+      ...process.env,
+      PORT: String(port),
+      NODE_ENV: "production",
+      // Production refuses to start without these; PGlite in memory stands in for Postgres.
+      DATABASE_URL: "pglite://:memory:",
+      JWT_SECRET: "smoke-sigterm",
+      PUBLIC_URL: "http://localhost",
+    },
     stdio: "ignore",
   });
   const exited = new Promise<number | null>((r) => child.once("exit", (code) => r(code)));
@@ -1503,8 +1512,21 @@ async function shutdownCheck() {
 
 // ---------------------------------------------------------------------------
 
-const accounts = await setupTestAccounts();
-const server = createServer({ gracefullyShutdown: false, mapId: "yard", watchAnyRoom: true });
+const server = createServer({
+  gracefullyShutdown: false,
+  mapId: "yard",
+  watchAnyRoom: true,
+  // A fresh in-memory database; Discord on with fake keys (the account checks
+  // follow its redirect, never Discord itself); reset links to the console.
+  database: "memory",
+  auth: {
+    publicUrl: SMOKE_PUBLIC_URL,
+    backendUrl: URL,
+    discord: { clientId: "smoke-client-id", clientSecret: "smoke-client-secret" },
+    mail: null,
+  },
+});
+const accounts = setupTestAccounts();
 await server.listen(PORT);
 // Extra room types for the map checks: one unpinned (random maps), one pinned per wall case.
 matchMaker.defineRoomType("duel_random", DuelRoom);
@@ -1524,7 +1546,6 @@ try {
   const accountLines: [boolean, string][] = [];
   const results = await Promise.allSettled([
     accountChecks(URL, accounts, (c, l) => accountLines.push([c, `[accounts] ${l}`])).then(() => accountLines),
-    liveConvexChecks((c, l) => accountLines.push([c, `[accounts] ${l}`])).then(() => [] as [boolean, string][]),
     ...WEAPONS.map((_, i) => weaponDuel(i)),
     burstDuel(),
     grenadeDuel(),

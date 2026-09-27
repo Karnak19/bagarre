@@ -18,15 +18,10 @@
   "dependencies": {
     "@astryxdesign/core": "^0.6.3",
     "@astryxdesign/theme-neutral": "^0.6.3",
-    "@bagarre/backend": "workspace:*",
     "@bagarre/shared": "workspace:*",
-    "@clerk/clerk-js": "^6.34.1",
-    "@clerk/react": "^6.17.2",
-    "@clerk/ui": "^1.36.0",
     "@colyseus/sdk": "^0.18.4",
     "@stylexjs/stylex": "^0.19.1",
     "@tanstack/react-router": "^1.170.39",
-    "convex": "^1.46.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "three": "^0.186.1"

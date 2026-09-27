@@ -1,10 +1,13 @@
-# Production: two containers.
+# Production: three containers.
 #   client  Caddy on :80, the only service reachable from outside. Serves the
 #           static build and proxies /colyseus/* to the game server.
-#   server  The compiled game server, on the internal network only.
+#   server  The compiled game server, on the internal network only. It also
+#           holds the accounts (sign-in, usernames, stats) in the database.
+#   db      Postgres, on the internal network only, its data in the `pgdata`
+#           volume. The server creates and updates the tables itself at boot.
 #
 # On Coolify, give the `client` service the domain (port 80); Coolify's proxy
-# adds TLS in front. Leave `server` without a domain.
+# adds TLS in front. Leave `server` and `db` without a domain.
 # Locally: docker compose --env-file .env.production.local \
 #   -f docker-compose.yaml -f docker-compose.local.yaml up --build
 # Every variable is listed in .env.production.example.
@@ -20,12 +23,17 @@ services:
     environment:
       NODE_ENV: production
       PORT: "2567"
-      CONVEX_URL: ${CONVEX_URL}
-      GAME_SERVER_SECRET: ${GAME_SERVER_SECRET}
-      CLERK_JWT_KEY: ${CLERK_JWT_KEY}
-      CLERK_JWT_ISSUER_DOMAIN: ${CLERK_JWT_ISSUER_DOMAIN}
-      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
-      CLERK_AUTHORIZED_PARTIES: ${CLERK_AUTHORIZED_PARTIES:-}
+      DATABASE_URL: postgres://bagarre:${POSTGRES_PASSWORD}@db:5432/bagarre
+      PUBLIC_URL: ${PUBLIC_URL}
+      JWT_SECRET: ${JWT_SECRET}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+    depends_on:
+      db:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "/app/bagarre-server", "--healthcheck"]
       interval: 15s
@@ -38,11 +46,7 @@ services:
       context: .
       dockerfile: apps/client/Dockerfile
       args:
-        VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY}
-        VITE_CONVEX_URL: ${VITE_CONVEX_URL}
         VITE_SERVER_URL: ${VITE_SERVER_URL:-/colyseus}
-        # Optional: deploys the Convex functions to production during the build.
-        CONVEX_DEPLOY_KEY: ${CONVEX_DEPLOY_KEY:-}
     restart: unless-stopped
     expose:
       - "80"
@@ -55,3 +59,24 @@ services:
       timeout: 5s
       start_period: 5s
       retries: 3
+
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    expose:
+      - "5432"
+    environment:
+      POSTGRES_USER: bagarre
+      POSTGRES_DB: bagarre
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bagarre -d bagarre"]
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+      retries: 10
+
+volumes:
+  pgdata:

@@ -236,7 +236,7 @@ player**:
 
 - `createMatch(net)` builds the spectator variant when `net.role === "spectator"`, with `new Spectator({ rig: sceneRig(scene), colorOf, followViewHeight })`. Use 22 for a duel and about 26 for the FFA maps.
 - The game's `Input`: `input.enabled = false` for the whole spectating session. In the frame loop that is `v.card === "none" && !panel && !v.spectating`. The game's keys (Space, Q grenade, E shield, R, 1-4) can then never produce an `InputMessage`. That matters here: Q and E mean grenade and shield in play, but previous and next player when watching.
-- `installSpectatorControls({ canvas, actions: spectator, enabled })` runs when the spectator match is made and is uninstalled in its `dispose()`, where `enabled = () => !ui.getState().panel && !app.getState().paused && !clerkOpen()`.
+- `installSpectatorControls({ canvas, actions: spectator, enabled })` runs when the spectator match is made and is uninstalled in its `dispose()`, where `enabled = () => !ui.getState().panel && !app.getState().paused`.
 - `window.__bagarre.spectator`: a getter returning `{ followId, mode, ui: spectator.ui.getState() }` for the tests.
 
 ### `apps/client/src/keys.ts` (input isolation)

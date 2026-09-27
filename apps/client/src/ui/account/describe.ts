@@ -15,13 +15,16 @@ export interface AccountSummary {
 }
 
 export function describeAccount(s: AccountState): AccountSummary {
-  const profile = s.status === "signedIn" ? s.profile : null;
-  const name = profile?.username ?? guestName;
+  const acc = s.status === "signedIn" ? s.account : null;
+  const name = acc?.username ?? guestName;
   switch (s.status) {
-    case "disabled":
-      return { name, line: "Playing as a guest. Sign-in isn't set up on this server.", chipSub: "Guest", needsUsername: false };
     case "error":
-      return { name, line: "Playing as a guest. Sign-in couldn't load.", chipSub: "Guest", needsUsername: false };
+      return {
+        name,
+        line: "Playing as a guest for now: the account server couldn't be reached.",
+        chipSub: "Offline",
+        needsUsername: false,
+      };
     case "loading":
       return { name, line: "Playing as a guest.", chipSub: "Checking sign-in…", needsUsername: false };
     case "signedOut":
@@ -32,15 +35,12 @@ export function describeAccount(s: AccountState): AccountSummary {
         needsUsername: false,
       };
     case "signedIn":
-      if (s.backendError)
-        return { name, line: `Signed in, but your profile didn't load: ${s.backendError}`, chipSub: "Signed in", needsUsername: false };
-      if (!s.profileLoaded) return { name, line: "Signed in. Loading your profile…", chipSub: "Signed in", needsUsername: false };
-      if (!profile)
+      if (!acc?.username)
         return { name, line: "Signed in. Pick a username to play under it.", chipSub: "Choose a username", needsUsername: true };
       return {
         name,
         line: "Signed in. Your stats count in every game.",
-        chipSub: `${profile.stats.wins} W · ${profile.stats.losses} L · K/D ${kd(profile.stats.kills, profile.stats.deaths)}`,
+        chipSub: `${acc.stats.wins} W · ${acc.stats.losses} L · K/D ${kd(acc.stats.kills, acc.stats.deaths)}`,
         needsUsername: false,
       };
   }

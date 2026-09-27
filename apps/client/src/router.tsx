@@ -1,6 +1,7 @@
 // TanStack Router, file-based (src/routes/, compiled to routeTree.gen.ts by
-// the Vite plugin). Three pages: `/` is the menu, `/game/$code` is one game's
-// page (the code is the Colyseus room id), `/game/$code/watch` watches it. The query string's dev switches
+// the Vite plugin). `/` is the menu, `/game/$code` is one game's page (the
+// code is the Colyseus room id), `/game/$code/watch` watches it, and
+// `/reset-password` is where the password reset email lands. The query string's dev switches
 // (`?lag=`, `?map=`, `?server=`) ride along on every navigation, minus the
 // one-shot dev `?play`.
 //

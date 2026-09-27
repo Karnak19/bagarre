@@ -27,7 +27,7 @@ export interface SpectatorControlsOptions {
   /** The canvas drags and the wheel apply to. */
   canvas: HTMLElement;
   actions: SpectatorControlActions;
-  /** False while a panel, the Esc menu or Clerk's modal is up. */
+  /** False while a panel or the Esc menu is up. */
   enabled: () => boolean;
   /** Where listeners go; `window` by default (tests pass an EventTarget). */
   target?: Pick<Window, "addEventListener" | "removeEventListener">;
