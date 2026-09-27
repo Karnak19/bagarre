@@ -62,6 +62,8 @@ export interface HudModel {
   debug: string;
   /** Sound muted (M toggles). */
   muted: boolean;
+  /** Spectators watching the game (shown small in a corner when there are any). */
+  spectators: number;
 }
 
 export class Hud implements Readable<HudModel | null> {

@@ -10,10 +10,13 @@
 // through a dropped connection (onDrop / onReconnect, RECONNECT_GRACE_S) and
 // freed in `onLeave`. The player cap is enforced on seats, never through
 // `maxClients`, which leaves SPECTATOR_ROOM clients of room for spectators:
-// clients with no seat and no player entity. Every handler already ignores a
-// client without a seat (no input, no pick, no ping), so a spectator only
-// needs its branch in `onJoin` (see `wantsSeat`) and a way in past the seat
-// lock (see `hasReachedMaxClients`). Nothing builds spectating yet.
+// clients with no seat and no player entity (`spectators`, a set of session
+// ids). A spectator joins with `spectate: true` (see `wantsSeat`), through
+// the watch route (app.ts), which gets past the seat lock with a
+// reservation the seat count doesn't apply to (see `admitting`). It gets the
+// full state (no StateView), sends nothing that counts (every handler drops
+// its messages), keeps its place through rematches and map changes, and can
+// take a free seat on the same connection (MSG_TAKE_SEAT).
 
 import {
   CloseCode,
@@ -43,6 +46,9 @@ import {
   MSG_PICK,
   MSG_PING,
   MSG_PONG,
+  MSG_TAKE_SEAT,
+  CLOSE_NO_PLAYERS,
+  SPECTATOR_IDLE_S,
   PLAYER_RADIUS,
   RECONNECT_GRACE_S,
   SHIELD,
@@ -68,6 +74,7 @@ import {
   parseInput,
   parsePick,
   parsePong,
+  parseTakeSeat,
   ticks,
   weaponDef,
   writeSim,
@@ -140,13 +147,11 @@ function requestedGuestName(options: unknown): string | null {
 }
 
 /**
- * Whether this join takes a player seat. Always, for now. The seam for
- * spectators: a `spectate: true` join option would return false here, and
- * onJoin would then register the client with no Player (every handler
- * already ignores clients without a seat).
+ * Whether this join takes a player seat: every join but a `spectate: true`
+ * one, which onJoin registers with no Player.
  */
-function wantsSeat(_options: unknown): boolean {
-  return true;
+function wantsSeat(options: unknown): boolean {
+  return optionsRecord(options).spectate !== true;
 }
 
 /** The map's own spawns for the match start of a duel slot. */
@@ -163,6 +168,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   maxMessagesPerSecond = MAX_MESSAGES_PER_SECOND;
   /** Seconds a dropped player's seat is held. A property so the smoke test can shorten it in a subclass. */
   protected reconnectGrace = RECONNECT_GRACE_S;
+  /** Seconds a room with spectators and no player stays open. Shortened by the smoke test like `reconnectGrace`. */
+  protected spectatorIdle = SPECTATOR_IDLE_S;
 
   /**
    * Every client message. Each payload goes through its parser from
@@ -172,6 +179,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
    */
   messages = {
     [MSG_INPUT]: (client: Client, raw: unknown) => {
+      // Spectators first, before any parsing: dropped, never an error.
+      if (this.spectators.has(client.sessionId)) return;
       const input = parseInput(raw);
       const internal = this.internals.get(client.sessionId);
       const player = this.state.players.get(client.sessionId);
@@ -183,6 +192,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     // Weapon pick: only valid ids, only while dead or between matches. It is
     // stored as `pick` and only put in hand on the next (re)spawn.
     [MSG_PICK]: (client: Client, raw: unknown) => {
+      if (this.spectators.has(client.sessionId)) return;
       const pick = parsePick(raw);
       const player = this.state.players.get(client.sessionId);
       if (!pick || !player) return;
@@ -194,6 +204,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     // round trip becomes the player's synced `ping`. Only the probe in flight
     // is accepted, so a client can't make its ping up.
     [MSG_PONG]: (client: Client, raw: unknown) => {
+      if (this.spectators.has(client.sessionId)) return;
       const pong = parsePong(raw);
       const internal = this.internals.get(client.sessionId);
       const player = this.state.players.get(client.sessionId);
@@ -203,12 +214,30 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       internal.ping = null;
     },
 
+    // A spectator takes a free seat, on the same connection (see takeSeat).
+    [MSG_TAKE_SEAT]: (client: Client, raw: unknown) => {
+      if (!parseTakeSeat(raw)) return;
+      this.takeSeat(client);
+    },
+
     // Any other type is dropped. Without this fallback Colyseus closes the
     // sender's connection in production (and answers with an error in dev).
     "*": () => {},
   };
 
   private internals = new Map<string, PlayerInternal>();
+  /**
+   * Clients with no seat, by session id, with their join options (the guest
+   * name, used if they take a seat). Never in `state.players`.
+   */
+  private spectators = new Map<string, unknown>();
+  /** Seconds the room has had spectators and no player (see `spectatorIdle`). */
+  private emptyFor = 0;
+  /**
+   * True while Colyseus reserves a spectator's place: the seat count is left
+   * out of `hasReachedMaxClients` for that one call (see the constructor).
+   */
+  private admitting = false;
   private bulletInternals = new Map<string, BulletInternal>();
   private grenadeInternals = new Map<string, GrenadeInternal>();
   private nextGrenadeId = 0;
@@ -269,6 +298,27 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     } as unknown as T;
   }
 
+  constructor() {
+    super();
+    // Colyseus reserves every place through `_reserveSeat(sessionId, options,
+    // ...)`, which asks `hasReachedMaxClients()` first, synchronously. The
+    // seat count must not refuse a spectator (their route is the only way
+    // into a full room), so it is left out while a spectator's options go
+    // through. `_reserveSeat` is private in the typings, hence the cast; it
+    // is looked up on the instance (MatchMaker.remoteRoomCall), so an own
+    // property wraps it.
+    const self = this as unknown as { _reserveSeat: (id: string, options: unknown, ...rest: unknown[]) => Promise<boolean> };
+    const reserve = self._reserveSeat.bind(this);
+    self._reserveSeat = (id, options, ...rest) => {
+      this.admitting = !wantsSeat(options);
+      try {
+        return reserve(id, options, ...rest);
+      } finally {
+        this.admitting = false;
+      }
+    };
+  }
+
   /** Set by `pinnedTo`: every match of this room is on that map. */
   protected pinnedMap: MapDef | null = null;
 
@@ -309,6 +359,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     this.syncListing();
 
     this.clock.setInterval(() => this.probeLatency(), PING_INTERVAL_MS);
+    this.clock.setInterval(() => this.everySecond(), 1000);
 
     // Fixed-timestep loop with an accumulator (Colyseus runs a whole number of
     // steps per interval from the measured time), so the long-run tick rate is
@@ -341,13 +392,18 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
 
   /**
    * Seats taken plus seats promised: reservations made by the matchmaker for
-   * clients that haven't joined yet. A held reconnection is already a seat
-   * (its player is still in `state.players`), so it is not counted twice.
+   * clients that haven't joined yet. A held reconnection (the entry's 4th
+   * field) is never a new seat: a player's is already in `state.players`, a
+   * spectator's holds none, and one whose grace just ran out is on its way
+   * out (onLeave).
    */
   private claimedSeats(): number {
-    const reserved = (this as unknown as { _reservedSeats: Record<string, [unknown, ...unknown[]]> })._reservedSeats;
+    const reserved = (this as unknown as { _reservedSeats: Record<string, [unknown, unknown, unknown, unknown]> })._reservedSeats;
     let pending = 0;
-    for (const id of Object.keys(reserved)) if (!this.state.players.has(id) && wantsSeat(reserved[id]?.[0])) pending++;
+    for (const id of Object.keys(reserved)) {
+      const [options, , , reconnection] = reserved[id] ?? [];
+      if (!reconnection && !this.state.players.has(id) && wantsSeat(options)) pending++;
+    }
     return this.seats + pending;
   }
 
@@ -359,12 +415,33 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
    * `maxClients` free for spectators; two joins racing for the last seat are
    * settled here too (the second gets a new room from quick match).
    *
-   * For spectators later: a spectator must get past this lock (it also
-   * blocks joinById on a locked room), so its join needs its own entry, e.g.
-   * a seat reserved by a room method that skips the seat count.
+   * A spectator's reservation skips the seat count (`admitting`): it only
+   * needs a client slot. The lock itself is kept explicit (see
+   * `updateSeatLock`), so a spectator leaving never unlocks a full room.
    */
   override hasReachedMaxClients(): boolean {
-    return super.hasReachedMaxClients() || this.claimedSeats() >= this.rules.maxPlayers;
+    return super.hasReachedMaxClients() || (!this.admitting && this.claimedSeats() >= this.rules.maxPlayers);
+  }
+
+  /**
+   * Locks the room by hand while every seat is taken, and unlocks it when
+   * one frees (and none is promised to a join in flight). By hand, because
+   * Colyseus' own lock is lifted by any client leaving, a spectator
+   * included, which would let quick match land in a full room.
+   */
+  private updateSeatLock() {
+    if (this.seats >= this.rules.maxPlayers) void this.lock();
+    else if (this.claimedSeats() < this.rules.maxPlayers && this.locked) void this.unlock();
+  }
+
+  /** Once a second: the seat lock (a promised seat may have expired) and the spectators-only timeout. */
+  private everySecond() {
+    this.updateSeatLock();
+    if (this.state.players.size > 0 || this.spectators.size === 0) {
+      this.emptyFor = 0;
+      return;
+    }
+    if (++this.emptyFor >= this.spectatorIdle) void this.disconnect(CLOSE_NO_PLAYERS);
   }
 
   /** The lowest seat number nobody holds. */
@@ -377,12 +454,47 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   }
 
   onJoin(client: Client, options?: unknown) {
-    if (!wantsSeat(options)) return; // Spectators, later: no Player, no internals.
-    // The seat lock settles races, so this only trips on a bug; refuse
-    // rather than seat a 7th player.
-    if (this.seats >= this.rules.maxPlayers)
-      throw new ServerError(ErrorCode.MATCHMAKE_INVALID_ROOM_ID, `room "${this.roomId}" is full`);
+    // The seat lock settles races, so a player arriving with every seat taken
+    // is a lost race: they watch rather than be thrown out (their client sees
+    // it isn't in `state.players`).
+    if (!wantsSeat(options) || this.seats >= this.rules.maxPlayers) {
+      this.addSpectator(client, options);
+      return;
+    }
+    this.seat(client, options);
+    this.maybeStart();
+    this.syncListing();
+    this.updateSeatLock();
+  }
 
+  private addSpectator(client: Client, options: unknown) {
+    this.spectators.set(client.sessionId, options);
+    this.state.spectators = Math.min(255, this.spectators.size);
+    this.syncListing();
+  }
+
+  /**
+   * MSG_TAKE_SEAT: a spectator takes a free seat, through the same code as a
+   * player's join. Refused (silently) for a player, when no seat is free (a
+   * join in flight counts), or mid-match in a mode without drop-in. The
+   * client keeps its Room; its role flips when `state.players` gains it.
+   */
+  private takeSeat(client: Client) {
+    const id = client.sessionId;
+    if (!this.spectators.has(id) || this.claimedSeats() >= this.rules.maxPlayers) return;
+    if (!this.rules.dropIn && this.state.phase !== "waiting") return;
+    const options = this.spectators.get(id);
+    this.spectators.delete(id);
+    this.state.spectators = Math.min(255, this.spectators.size);
+    // A dev `?map=` is only read at the first join.
+    this.seat(client, { guestName: optionsRecord(options).guestName });
+    this.maybeStart();
+    this.syncListing();
+    this.updateSeatLock();
+  }
+
+  /** Gives this client a seat: a Player on a spawn, and its internals. The caller checked that one is free. */
+  private seat(client: Client, options: unknown) {
     // A dev `?map=` from a later player pins the room too, unless a match is
     // running (a duel can't be mid-match here: the room holds two). A
     // server-pinned map wins.
@@ -422,9 +534,6 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     this.state.players.set(client.sessionId, player);
     this.internals.set(client.sessionId, { queue: [], tokens: INPUT_BURST, identity, deaths: 0, ping: null, baselined: false });
     this.joinOrder.push(client.sessionId);
-
-    this.maybeStart();
-    this.syncListing();
   }
 
   /**
@@ -440,6 +549,12 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
    */
   onDrop(client: Client, code: number) {
     if (code === CloseCode.WITH_ERROR || code === CloseCode.SERVER_SHUTDOWN) return;
+    // A spectator holds nothing, but gets the same grace so the SDK's retry
+    // (or a reload's `client.reconnect`) brings them back.
+    if (this.spectators.has(client.sessionId)) {
+      this.allowReconnection(client, this.reconnectGrace).catch(() => {});
+      return;
+    }
     const player = this.state.players.get(client.sessionId);
     const internal = this.internals.get(client.sessionId);
     if (!player || !internal) return;
@@ -488,8 +603,14 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   /** Gone for good: a Leave, the grace period running out, or a shutdown. Frees the seat. */
   onLeave(client: Client) {
     const id = client.sessionId;
-    if (!this.state.players.has(id)) return; // No seat (a refused join, later a spectator).
+    if (this.spectators.delete(id)) {
+      this.state.spectators = Math.min(255, this.spectators.size);
+      this.syncListing();
+      return;
+    }
+    if (!this.state.players.has(id)) return; // No seat (a refused join).
     this.state.players.delete(id);
+    this.updateSeatLock();
     this.internals.delete(id);
     this.joinOrder = this.joinOrder.filter((s) => s !== id);
 
@@ -563,6 +684,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       phase: this.state.phase as Phase,
       players: this.seats,
       maxPlayers: this.rules.maxPlayers,
+      spectators: this.spectators.size,
       createdAt: this.createdAt,
     };
     const key = JSON.stringify(meta);

@@ -2,6 +2,12 @@
 // meshes and sound triggers for a single room. main.ts makes one per room it
 // joins and disposes it on leave, so going menu -> game -> menu any number of
 // times leaves nothing behind (no room, no mesh, no pending timer).
+//
+// Watching (no seat: we aren't in `state.players`) runs the same match with
+// no local player: nothing is predicted or sent, everyone is interpolated
+// like a remote player, and the camera and the sound listener come from the
+// spectator (spectate/spectator.ts). Taking a seat mid-way flips back to the
+// player path on the first snapshot that has us, on the same Match.
 
 import {
   INTERP_DELAY_MS,
@@ -27,8 +33,16 @@ import { SnapshotBuffer } from "./interpolation.ts";
 import type { Minimap } from "./minimap.ts";
 import type { Net, Snapshot } from "./net.ts";
 import { Predictor } from "./prediction.ts";
-import { GameScene, PlayerMesh, playerColor } from "./scene.ts";
+import { GameScene, PLAYER_CSS_COLORS, PlayerMesh, playerColor } from "./scene.ts";
 import { clock, secondsLeft } from "./scoreboard.ts";
+import { sceneRig } from "./spectate/camera.ts";
+import type { SpectatorControlActions } from "./spectate/controls.ts";
+import type { CameraMode } from "./spectate/model.ts";
+import { Spectator } from "./spectate/spectator.ts";
+
+/** The spectator's Follow zoom: the game's own in a duel, a little wider on the bigger FFA maps. */
+const FOLLOW_VIEW_HEIGHT = { duel: 22, ffa: 26 } as const;
+const slotCss = (slot: number) => PLAYER_CSS_COLORS[slot % PLAYER_CSS_COLORS.length];
 
 // Our own actions play the moment they are predicted (in the tick loop below),
 // never from reconcile: it replays pending inputs and would play them again.
@@ -139,6 +153,26 @@ export class Match {
   /** Fire button state on the previous tick, for the empty-click on a fresh press. */
   private wasFiring = false;
   private disposed = false;
+  /**
+   * The spectator view (camera, player list), made on the first snapshot
+   * without us in it, once the mode is known. Kept after a seat is taken
+   * (unused then), so a later switch back reuses it.
+   */
+  spectator: Spectator | null = null;
+  /** Highest kill feed number already handed to the spectator (its "switch to the killer"). */
+  private lastKillN = -1;
+  /** The previous frame was a spectator's: the frustum must go back to the game's when we get a seat. */
+  private spectatedLastFrame = false;
+  /** Where a player was drawn this frame (their mesh, interpolated): the spectator camera's target. No allocation. */
+  private readonly drawnAt = (id: string, out: { x: number; z: number }): boolean => {
+    const m = this.meshes.get(id);
+    if (!m) return false;
+    out.x = m.group.position.x;
+    out.z = m.group.position.z;
+    return true;
+  };
+  /** Called by `dispose()`: the engine's spectator controls go with the match. */
+  onDispose: () => void = () => {};
 
   constructor(deps: MatchDeps) {
     this.net = deps.net;
@@ -164,6 +198,25 @@ export class Match {
   get me(): PlayerView | null {
     return this.latest?.players.get(this.net.sessionId) ?? null;
   }
+
+  /** Watching: a snapshot has come in and we aren't in it. */
+  get spectating(): boolean {
+    return !!this.latest && this.net.role === "spectator";
+  }
+
+  /**
+   * What the spectator controls and overlay call. Stable for the match's
+   * life (the Spectator itself only exists from the first snapshot).
+   */
+  readonly spectateActions: SpectatorControlActions & { follow(id: string): void } = {
+    cycle: (dir) => this.spectator?.cycle(dir),
+    setMode: (mode: CameraMode) => this.spectator?.setMode(mode),
+    mode: () => this.spectator?.mode() ?? "follow",
+    pan: (x, y) => this.spectator?.pan(x, y),
+    drag: (dx, dy) => this.spectator?.drag(dx, dy),
+    zoom: (dy) => this.spectator?.zoom(dy),
+    follow: (id) => this.spectator?.follow(id),
+  };
 
   get opponent(): PlayerView | null {
     let out: PlayerView | null = null;
@@ -232,6 +285,7 @@ export class Match {
     this.localBullets.setMap(map);
     this.scene.setMap(map);
     this.minimap.setMap(map);
+    this.spectator?.setMap(map);
     this.scene.clearProjectiles();
     this.blasts.length = 0;
     this.remoteShots.length = 0;
@@ -288,8 +342,10 @@ export class Match {
     const sessionId = this.net.sessionId;
     // Still in the `?lag=` queue from before a reconnection: stale.
     if (s.epoch < this.epoch) return;
-    if (s.epoch !== this.epoch) this.resync(s);
+    const newEpoch = s.epoch !== this.epoch;
+    if (newEpoch) this.resync(s);
     else if (s.mapId !== this.mapId) this.switchMap(s.mapId);
+    const resynced = newEpoch || this.lastKillN < 0;
     this.buffer.push(s);
     const me = s.players.get(sessionId);
     if (me) {
@@ -297,16 +353,19 @@ export class Match {
       this.localBullets.reconcile(s, me.lastSeq);
     }
 
+    const now = performance.now();
+    this.spectate(s, now, !me, resynced);
+
     if (s.phase !== this.phase) {
       if (s.phase === "playing") this.mapCardLeft = MAP_CARD_MS;
       if (s.phase === "ended") {
         this.endedAt = performance.now();
-        this.sfx(s.winner === sessionId ? "match_win" : "match_lose");
+        // A spectator has no side: no win or lose sting.
+        if (me) this.sfx(s.winner === sessionId ? "match_win" : "match_lose");
       }
       this.phase = s.phase;
     }
 
-    const now = performance.now();
     s.grenades.forEach((g, id) => {
       // Our own throws were already heard from the prediction.
       if (!this.seenGrenades.has(id)) {
@@ -362,6 +421,40 @@ export class Match {
 
     // Drop meshes of players who left.
     for (const id of this.meshes.keys()) if (!s.players.has(id)) this.dropMesh(id);
+  }
+
+  /**
+   * Feeds the spectator one snapshot (and makes it on the first one we
+   * watch). The kills since the last snapshot come from the synced kill
+   * feed, so the camera can move to the killer; a self-kill (killer "")
+   * names the victim, which the model reads as "no killer". `reset`: the
+   * first snapshot or a reconnect's resync, whose feed is history, and whose
+   * players' state isn't a change.
+   */
+  private spectate(s: Snapshot, now: number, watching: boolean, reset: boolean) {
+    let kills: { victim: string; killer: string }[] | undefined;
+    let top = this.lastKillN;
+    for (const k of s.feed) {
+      if (k.n <= this.lastKillN) continue;
+      top = Math.max(top, k.n);
+      if (!reset) (kills ??= []).push({ victim: k.victim, killer: k.killer || k.victim });
+    }
+    this.lastKillN = Math.max(top, 0);
+    if (!watching) return;
+    if (!this.spectator) {
+      const mode = s.mode === "ffa" ? "ffa" : "duel";
+      this.spectator = new Spectator({ rig: sceneRig(this.scene), colorOf: slotCss, followViewHeight: FOLLOW_VIEW_HEIGHT[mode] });
+      const map = findMap(s.mapId);
+      if (map) this.spectator.setMap(map);
+      // Follow in a duel, the whole map in a free for all.
+      if (mode === "ffa") this.spectator.setMode("overview");
+      reset = true;
+    }
+    this.spectator.onSnapshot(
+      { players: s.players, spectators: s.spectators, maxPlayers: s.maxPlayers, kills },
+      now,
+      reset,
+    );
   }
 
   /** One frame: send this frame's inputs, draw everyone, update the HUD. */
@@ -422,6 +515,12 @@ export class Match {
     }
 
     // 2. Local player: predicted position, smoothed between ticks.
+    if (meServer && this.spectatedLastFrame) {
+      // A seat was just taken: back to the game's own framing.
+      this.spectatedLastFrame = false;
+      scene.resize();
+      this.cameraSnapped = false;
+    }
     if (meServer) {
       const pos = predictor.render(this.accumulator / TICK_MS, dt);
       setListener(pos.x, pos.z);
@@ -457,6 +556,16 @@ export class Match {
       if (s.alive) drawn.push({ x: s.x, z: s.z });
     });
     this.opponentsDrawn = drawn;
+
+    // Watching: the camera follows the spectator's pick (its drawn,
+    // interpolated position) or frames the map, and the sounds are heard
+    // from where it looks.
+    const spectator = this.spectator;
+    if (!meServer && latest && spectator) {
+      this.spectatedLastFrame = true;
+      spectator.frame(now, dt, this.drawnAt);
+      setListener(spectator.listenerX, spectator.listenerZ);
+    }
     const shots = this.remoteShots;
     for (let i = shots.length - 1; i >= 0; i--) {
       if (shots[i].at > now) continue;
@@ -530,6 +639,7 @@ export class Match {
       mapCard,
       debug: debugParts.join("  |  "),
       muted: isMuted(),
+      spectators: latest?.spectators ?? 0,
     });
   }
 
@@ -589,6 +699,7 @@ export class Match {
     if (this.disposed) return;
     this.disposed = true;
     this.net.onSnapshot = () => {};
+    this.onDispose();
     for (const id of this.meshes.keys()) this.dropMesh(id);
     this.scene.clearProjectiles();
     this.minimap.setMap(null);

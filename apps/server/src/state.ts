@@ -126,6 +126,8 @@ export const GameState = schema(
     grenades: t.map(Grenade),
     /** The last KILL_FEED_SIZE deaths, oldest first. */
     feed: t.array(KillEvent),
+    /** Spectators connected (clients with no seat), capped at 255 for the sync. */
+    spectators: t.uint8().default(0),
   },
   "GameState",
 );

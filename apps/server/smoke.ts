@@ -12,7 +12,9 @@
 // malformed messages and the message rate limit, and part 7 a SIGTERM on a
 // server running in a child process. Part 8 (smoke-ffa.ts) is the free for
 // all: countdown, drop-in, kill credit, the end conditions, seats,
-// reconnection and the recorded placements.
+// reconnection and the recorded placements. Part 9 (smoke-spectate.ts) is
+// spectating: the watch route, no inputs, not counted, a free seat taken,
+// rematches, reconnection.
 
 import { spawn } from "node:child_process";
 import { dirname } from "node:path";
@@ -70,6 +72,7 @@ import { createServer, openGames } from "./src/app.ts";
 import { DuelRoom } from "./src/GameRoom.ts";
 import { accountChecks, liveConvexChecks, setupTestAccounts } from "./smoke-accounts.ts";
 import { ffaChecks, registerFfaRooms } from "./smoke-ffa.ts";
+import { registerSpectateRooms, spectatorChecks } from "./smoke-spectate.ts";
 
 const PORT = Number(process.env.SMOKE_PORT) || 2599; // SMOKE_PORT: run next to another smoke
 const URL = `http://localhost:${PORT}`;
@@ -1097,7 +1100,8 @@ async function lobbyChecks() {
   await waitFor(() => state(quick).phase === "playing", 3000);
   const [quickMeta] = await matchMaker.query({ roomId: quick.roomId });
   check(quickMeta?.private === false, "[games] { private: true } from a joiner is ignored");
-  check(!(await openGames()).some((g) => g.roomId === quick.roomId), "[games] a full room leaves the open games list");
+  const fullListed = (await openGames()).find((g) => g.roomId === quick.roomId);
+  check(!!fullListed && !fullListed.joinable, "[games] a full room is listed to watch, no longer to join");
 
   // The host leaves: the room is listed again, under the remaining player's name.
   const guestName = me(guest)?.name ?? "";
@@ -1496,13 +1500,14 @@ async function shutdownCheck() {
 // ---------------------------------------------------------------------------
 
 const accounts = await setupTestAccounts();
-const server = createServer({ gracefullyShutdown: false, mapId: "yard" });
+const server = createServer({ gracefullyShutdown: false, mapId: "yard", watchAnyRoom: true });
 await server.listen(PORT);
 // Extra room types for the map checks: one unpinned (random maps), one pinned per wall case.
 matchMaker.defineRoomType("duel_random", DuelRoom);
 for (const c of WALL_CASES) matchMaker.defineRoomType(`duel_${c.map}`, DuelRoom.pinnedTo(c.map));
 matchMaker.defineRoomType("duel_short_grace", ShortGraceRoom);
 registerFfaRooms();
+registerSpectateRooms();
 
 let exitCode = 0;
 try {
@@ -1537,6 +1542,9 @@ try {
 
   console.log("\n-- free for all --");
   for (const group of await ffaChecks(URL, accounts)) for (const [c, l] of group) check(c, l);
+
+  console.log("\n-- spectators --");
+  for (const group of await spectatorChecks(URL)) for (const [c, l] of group) check(c, l);
 
   console.log("\n-- reconnection, malformed messages, rate limit --");
   const netResults = await Promise.allSettled([reconnectAuto(), reconnectReload(), reconnectExpired(), malformedMessages(), messageFlood(), pressBaseline()]);

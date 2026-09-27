@@ -6,7 +6,9 @@
 //
 // Input isolation, all in one place:
 // - the game's input (input.ts) is off whenever a card or a panel is up
-//   (engine.ts' frame loop) and ignores keys typed in text fields;
+//   (engine.ts' frame loop) and for the whole of a spectating session, and
+//   ignores keys typed in text fields; a spectator's keys (Q / E, arrows,
+//   1-3, WASD) are spectate/controls.ts', which reach no InputMessage;
 // - here, nothing fires while a text field has focus or Clerk's modal is
 //   open, Esc is left to an open panel (the dialog closes itself), and Tab
 //   only holds the scoreboard while the game has the input, so Tab moves
@@ -40,8 +42,11 @@ export function installAppKeys({ app, input, view }: { app: App; input: Input; v
       }
       if (s.screen !== "game" || isEditable(e) || clerkOpen()) return;
       // Tab holds the scoreboard, but only while the game has the input (no
-      // card, no panel): everywhere else Tab moves focus as usual.
-      if (e.code === "Tab" && input.enabled) {
+      // card, no panel), or while watching with no card or panel up:
+      // everywhere else Tab moves focus as usual.
+      const v = view.getState();
+      const watching = !!v?.spectating && v.card === "none" && !panel;
+      if (e.code === "Tab" && (input.enabled || watching)) {
         e.preventDefault();
         app.holdScoreboard(true);
         return;
@@ -49,7 +54,7 @@ export function installAppKeys({ app, input, view }: { app: App; input: Input; v
       // With a card up the game's input is off; M and 1-7 still work on the
       // waiting and result cards (they have a weapon picker).
       if (input.enabled || panel || e.repeat) return;
-      const card = view.getState()?.card;
+      const card = v?.card;
       if (e.code === "KeyM") setMuted(!isMuted());
       else if (/^Digit[1-7]$/.test(e.code) && (card === "waiting" || card === "result")) app.pick(Number(e.code.slice(5)) - 1);
     },

@@ -82,6 +82,7 @@ const styles = stylex.create({
   mapTitle: { fontSize: "26px", fontWeight: 800, letterSpacing: "0.02em" },
   mapSub: { marginBlockStart: "4px", fontSize: "14px", opacity: 0.8 },
   debug: { position: "absolute", bottom: "10px", left: "12px", fontSize: "12px", opacity: 0.6 },
+  watchers: { position: "absolute", bottom: "32px", left: "12px", fontSize: "12px", opacity: 0.7 },
   bottom: { position: "absolute", bottom: "16px", left: "50%", transform: "translateX(-50%)" },
   weapon: { minWidth: "130px", paddingInline: "12px" },
   wname: { fontSize: "13px", fontWeight: 600, opacity: 0.85 },
@@ -141,8 +142,22 @@ export function Hud() {
         <Ability kind="shield" keyLabel="E" label="Shield" />
         <Sound />
       </HStack>
+      <Watchers />
       <Debug />
     </VStack>
+  );
+}
+
+/** How many are watching, small in the corner: players see they have an audience. Nothing when nobody is. */
+function Watchers() {
+  countRender("hud.watchers");
+  const { hud } = useEngine();
+  const n = useSelector(hud, (m) => m?.spectators ?? 0);
+  if (n <= 0) return null;
+  return (
+    <Text xstyle={[shared.tabular, styles.watchers]} aria-label={`${n} watching`} data-testid="hud-spectators" data-count={n}>
+      👁 {n}
+    </Text>
   );
 }
 

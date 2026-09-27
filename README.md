@@ -106,8 +106,9 @@ server, and a game's link can be shared.
   opens a new one, then goes to its page.
 - **Private game** creates a room that is never listed and never
   quick-matched; the waiting card shows its invite link with a copy button.
-- **Open games** lists the public games waiting for an opponent (host name,
-  map, age), refreshed every 3 seconds while the menu is up. It reads
+- **Open games** lists the public games with a free seat (**Join**: host
+  name, map, age), then the ones under way or full (**Watch**, with how many
+  are watching), refreshed every 3 seconds while the menu is up. It reads
   `GET /games` on the game server, built from each room's matchmaking
   metadata (host, map, phase, players, creation time), which the room keeps up
   to date on every join, leave, phase and map change.
@@ -137,8 +138,9 @@ The flow (screens, joining and leaving, the per-game flags) lives in
 TypeScript stores with `getState()` / `subscribe()`. The pages are TanStack
 Router routes (`src/routes/`): entering `/` or `/game/$code` calls the flow's
 `routeMenu()` / `routeGame(code)` (the route's `onEnter` / `onStay`), so
-Back, Forward and pasted links all go through the same join and leave. See
-[Client UI](#client-ui) below.
+Back, Forward and pasted links all go through the same join and leave;
+`/game/$code/watch` calls `routeWatch(code)` (see [Spectating](#spectating)).
+See [Client UI](#client-ui) below.
 
 ## Client UI
 
@@ -172,7 +174,11 @@ TypeScript: React never runs per frame and there is no React Three Fiber.
   all adds `play-ffa`, `private-ffa`, `ffa-countdown`, `ffa-players`,
   `placement-row`, `result-winner`, `scoreboard-time`, `hud-ffa`,
   `hud-ffa-rank`, `hud-ffa-top`, `hud-ffa-time`, `hud-killfeed`,
-  `hud-killfeed-row` and `hud-minimap`.
+  `hud-killfeed-row` and `hud-minimap`. Spectating adds `spectate-bar`,
+  `spectate-watching`, `spectate-mode` (and `spectate-mode-{follow,overview,free}`),
+  `spectate-hints`, `spectate-count`, `spectate-join`, `spectate-leave`,
+  `spectate-players`, `spectate-player`, `spectate-status` and the players'
+  `hud-spectators`; open games rows carry `data-action="join"` or `"watch"`.
 
 Astryx conventions (the agent cheat sheet `astryx init` wrote is
 `apps/client/.claude/CLAUDE.md`; `bun run astryx docs <topic>` and
@@ -269,7 +275,7 @@ limit, the countdown, the sudden death flag and the kill feed (the last 5
 deaths, with names and seats copied so a line stays readable after its
 players leave).
 
-### Seats and clients (the seam for spectators)
+### Seats and clients
 
 A client is not a player. A **seat** is a player: an entry in
 `state.players` plus its server-side bookkeeping, and the seat number is the
@@ -278,21 +284,72 @@ player's `slot` (its colour, 0-5, and its bullet ids). A seat is taken in
 and freed in `onLeave`.
 
 - The player cap is on seats, never on `maxClients`: `maxClients` is the
-  seats plus `SPECTATOR_ROOM` (20), room left for future spectators.
+  seats plus `SPECTATOR_ROOM` (20), the room left for spectators.
 - `GameRoom.hasReachedMaxClients()` counts seats taken plus seats promised
-  to joins in flight, and Colyseus locks the room while it's full: quick
-  match skips it (and two joins racing for the last seat are settled there),
-  and a join by id says "This game is full". It unlocks when a seat frees.
-  `onJoin` also refuses a seat past the cap.
-- Every message handler (input, weapon pick, ping) and `onDrop`, `onReconnect`
-  and `onLeave` do nothing for a client without a seat.
+  to joins in flight, which refuses a player's reservation past the cap (two
+  joins racing for the last seat are settled there). The room locks itself
+  by hand (`updateSeatLock`) while every seat is taken, so quick match skips
+  it and a join by id says "This game is full", and unlocks when a seat
+  frees. By hand, because Colyseus' own lock is lifted by any client
+  leaving, a spectator included.
+- A client that joins with `spectate: true` (`wantsSeat()` false) is a
+  spectator: see [Spectating](#spectating).
 
-To add spectators later: a `spectate: true` join option makes `wantsSeat()`
-return false, and `onJoin` then registers the client with no player (the
-client draws the match from the state, with no prediction). The one piece to
-build is a way in past the seat lock, since a locked room refuses
-`joinById`: for example a small HTTP route that reserves a seat for a
-spectator through a room method that skips the seat count.
+## Spectating
+
+Anyone can watch a game without playing in it: a friend's duel from its
+link, or a free for all under way. Spectators see everything: the full
+state, no delay, the whole map in every mode (decided: it's a game for
+friends, so nothing stops a spectator from calling out positions).
+
+- **Getting in.** The open games list shows **Watch** on full games and on
+  duels under way, which opens `/game/<code>/watch` (the route file is
+  `routes/game.$code_.watch.tsx`: the `_` keeps it from nesting under the
+  player page, which would join as a player first). That page joins through
+  `POST /games/<code>/watch` on the game server: it runs the room's `onAuth`
+  like any join, then reserves a place with `spectate: true` (set by the
+  server, never read from the request) through `matchMaker.reserveSeatFor`,
+  which checks the client slots but not the lock. A spectator's reservation
+  skips the seat count (`GameRoom.admitting`). The client consumes the
+  reservation like a join.
+- **In the room** a spectator is a session id in `spectators`, never an
+  entry in `state.players`: nothing is spawned, and every handler (input,
+  weapon pick, ping) drops their messages quietly, before parsing, without
+  closing the connection (the flood limit still applies). They are not
+  counted for the seat cap, the match start, the listing's `players` or the
+  rematch. `state.spectators` (synced) and the metadata's `spectators` count
+  them; players see the count small in the HUD's bottom-left corner
+  ("👁 2") when anyone is watching.
+- **Rematches and map changes** only touch players, so spectators stay.
+- **Taking a seat.** "Join the game" shows while a seat is free and sends
+  `MSG_TAKE_SEAT`; the room moves the session into a new player through the
+  same code as a join (`seat()`), so the same connection becomes a player
+  and the page is replaced with `/game/<code>`. A duel only has a free seat
+  while waiting; a free for all takes them mid-match (drop-in). Refused
+  silently for a player, with no free seat, or mid-duel. Two joins racing
+  for the last seat are settled at the reservation (the second is told the
+  game is full); should one still arrive with every seat taken, it is
+  seated as a spectator, and its page moves to the watch page.
+- **Reconnection** works as for players: `onDrop` gives spectators the same
+  grace period, so the SDK's retry and a reload's resume (the
+  sessionStorage token) both bring them back watching.
+- **An empty room**: spectators alone keep a room alive, so after
+  `SPECTATOR_IDLE_S` (60 s) with no player it closes with `CLOSE_NO_PLAYERS`
+  (4012), which the client shows as "The game ended".
+
+The client (`apps/client/src/spectate/`): a spectator's `Match` runs with
+no local player: no prediction, nothing sent (`Net.sendInput` refuses too),
+everyone interpolated like a remote player. The camera and the sound
+listener come from the `Spectator` (`spectator.ts`, `camera.ts`,
+`model.ts`), which has three modes: **Follow** (the default in a duel)
+glides after a player and, when they die, moves on to their killer (read
+from the synced kill feed) or the leader; **Overview** (the default in FFA)
+fits the whole map; **Free** pans with WASD or a drag and zooms with the
+wheel. The game's own input is off for the whole session, so Q / E and ← / →
+switch players and 1 / 2 / 3 pick the camera mode (`controls.ts`) without
+ever reaching the server. Tab still holds the scoreboard, Esc opens the
+match menu ("Stop watching"), M mutes. The overlay is
+`spectate/ui/` (top bar, player list, the phase line between matches).
 
 ## Controls
 

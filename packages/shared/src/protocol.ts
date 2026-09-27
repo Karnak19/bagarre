@@ -14,6 +14,15 @@ export const MSG_PICK = "pick";
 // the Colyseus SDK only warns about unhandled types without it.
 export const MSG_PING = "__latency";
 export const MSG_PONG = "latency:ack";
+/** Spectator -> room: take a free seat, on the same connection. Payload `{}`. */
+export const MSG_TAKE_SEAT = "seat";
+/**
+ * Close code: the room has had spectators but no player for
+ * SPECTATOR_IDLE_S, so it closes. 4000-4010 are Colyseus'; ours are 4011+.
+ */
+export const CLOSE_NO_PLAYERS = 4012;
+/** Seconds a room with only spectators in it stays open. */
+export const SPECTATOR_IDLE_S = 60;
 
 export interface PingMessage {
   n: number;
@@ -254,6 +263,8 @@ export interface RoomStateView {
   grenades: MapLike<GrenadeView>;
   /** The last KILL_FEED_SIZE deaths, oldest first. */
   feed: { forEach(cb: (k: KillView, i: number) => void): void; length: number };
+  /** Spectators connected right now (clients with no seat, see GameRoom). */
+  spectators: number;
 }
 
 /**
@@ -270,6 +281,8 @@ export interface RoomMeta {
   /** Player seats taken (dropped players waiting to reconnect included), and the seat count. */
   players: number;
   maxPlayers: number;
+  /** Spectators watching. */
+  spectators: number;
   /** Date.now() when the room was created. */
   createdAt: number;
 }
@@ -282,13 +295,30 @@ export interface JoinOptions {
   map?: string;
   /** The guest name the menu shows (`Guest-` and four digits, anything else is ignored). Accounts use their username. */
   guestName?: string;
-  // The mode is the room name ("duel" or "ffa"), never an option. A future
-  // `spectate?: boolean` goes here: a client that joins without a player
-  // seat (see the seat model in GameRoom and the README).
+  /**
+   * Join as a spectator: no seat, no player, no inputs (see the seat model
+   * in GameRoom). The client joins through the watch route (WATCH_ROUTE),
+   * which sets it, so a room whose seats are full can still be watched. The mode is the room name
+   * ("duel" or "ffa"), never an option.
+   */
+  spectate?: boolean;
 }
 
-/** HTTP route of the game server listing the public games with a free seat (duels waiting, FFA waiting or playing). */
+/**
+ * HTTP route of the game server listing the public games: the ones with a
+ * free seat (duels waiting, FFA waiting or playing), then the ones to watch
+ * (full, or a duel under way).
+ */
 export const GAMES_ROUTE = "/games";
+
+/**
+ * HTTP route (POST) that reserves a spectator's place in a room, past the
+ * seat lock: `joinById` refuses a locked (full) room. It answers with a seat
+ * reservation for `client.consumeSeatReservation()`. The body may carry
+ * `guestName` (JoinOptions); `spectate` is always set by the server.
+ */
+export const WATCH_ROUTE = "/games/:roomId/watch";
+export const watchPath = (roomId: string) => `/games/${encodeURIComponent(roomId)}/watch`;
 
 /** One entry of GET /games. */
 export interface OpenGame {
@@ -300,5 +330,8 @@ export interface OpenGame {
   /** Seats taken and seats in all ("3/6 players"). */
   players: number;
   maxPlayers: number;
+  spectators: number;
+  /** A seat can be taken now (Join); otherwise the game can only be watched. */
+  joinable: boolean;
   createdAt: number;
 }

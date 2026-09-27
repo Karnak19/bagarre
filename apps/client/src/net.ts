@@ -6,8 +6,11 @@ import {
   MSG_PICK,
   MSG_PING,
   MSG_PONG,
+  MSG_TAKE_SEAT,
   PLAYER_VIEW_KEYS,
   ROOM_NAME,
+  rulesOf,
+  watchPath,
   type OpenGame,
   type BulletView,
   type GameMode,
@@ -50,6 +53,10 @@ export interface Snapshot {
   grenades: Map<string, GrenadeView>;
   /** The last few deaths, oldest first. */
   feed: KillView[];
+  /** Spectators watching the room right now. */
+  spectators: number;
+  /** Seats in this game (the mode's cap). */
+  maxPlayers: number;
 }
 
 function capture(state: RoomStateView): Omit<Snapshot, "t" | "epoch"> {
@@ -104,6 +111,8 @@ function capture(state: RoomStateView): Omit<Snapshot, "t" | "epoch"> {
     bullets,
     grenades,
     feed,
+    spectators: state.spectators ?? 0,
+    maxPlayers: rulesOf(state.mode).maxPlayers,
   };
 }
 
@@ -160,10 +169,18 @@ export function resumeFor(roomId: string): ResumeRecord | null {
 }
 
 /**
- * How to get into a game: quick match or a new private game of a mode, or a
- * given room of either mode (its /game/<code> page).
+ * How to get into a game: quick match or a new private game of a mode, a
+ * given room of either mode (its /game/<code> page), or watching one (its
+ * /game/<code>/watch page).
  */
-export type JoinRequest = { kind: "quick"; mode: GameMode } | { kind: "private"; mode: GameMode } | { kind: "id"; roomId: string };
+export type JoinRequest =
+  | { kind: "quick"; mode: GameMode }
+  | { kind: "private"; mode: GameMode }
+  | { kind: "id"; roomId: string }
+  | { kind: "watch"; roomId: string };
+
+/** A player in a seat, or a spectator (no seat: nothing we send counts). */
+export type NetRole = "player" | "spectator";
 
 /** The matchmaking room name of a mode. */
 const roomName = (mode: GameMode) => (mode === "ffa" ? FFA_ROOM_NAME : ROOM_NAME);
@@ -194,6 +211,9 @@ function toJoinError(err: unknown): JoinError {
   const e = err as { code?: number; message?: string };
   const message = String(e?.message ?? err);
   if (e?.code === INVALID_ROOM_ID) return new JoinError(/locked|full/i.test(message) ? "full" : "gone", message);
+  // The watch route answers over plain HTTP: 404 for a missing room, 409 when even the spectator places are taken.
+  if (e?.code === 404) return new JoinError("gone", message);
+  if (e?.code === 409) return new JoinError("full", message);
   // fetch() failing (server down, wrong ?server=) has no Colyseus code.
   if (e?.code === undefined && (err instanceof TypeError || /fetch|network|connect/i.test(message)))
     return new JoinError("unreachable", message);
@@ -212,7 +232,8 @@ function toJoinError(err: unknown): JoinError {
  */
 export async function joinGame(url: string, req: JoinRequest, options: Record<string, unknown> = {}): Promise<Room> {
   // This tab was in that game a moment ago (a reload): take the held seat back.
-  const resume = req.kind === "id" ? resumeFor(req.roomId) : null;
+  // Watching resumes the same way (spectators get a grace period too).
+  const resume = req.kind === "id" || req.kind === "watch" ? resumeFor(req.roomId) : null;
   if (resume) {
     try {
       return await new Client(url).reconnect(resume.token);
@@ -226,6 +247,7 @@ export async function joinGame(url: string, req: JoinRequest, options: Record<st
   const attempt = (client: Client) => {
     if (req.kind === "quick") return client.joinOrCreate(roomName(req.mode), options);
     if (req.kind === "private") return client.create(roomName(req.mode), { ...options, private: true });
+    if (req.kind === "watch") return watch(client, req.roomId, options);
     return client.joinById(req.roomId, options);
   };
   const client = new Client(url);
@@ -244,7 +266,21 @@ export async function joinGame(url: string, req: JoinRequest, options: Record<st
   }
 }
 
-/** The public games with a free seat, both modes (GET /games on the game server). */
+/**
+ * A spectator's place in a room, through the watch route (POST
+ * /games/<id>/watch): it gets past the seat lock of a full room, which
+ * `joinById` can't. The route answers with a seat reservation, consumed
+ * like any join (the auth token rides along in both requests).
+ */
+async function watch(client: Client, roomId: string, options: Record<string, unknown>): Promise<Room> {
+  const res = await client.http.post(watchPath(roomId), {
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: { guestName: options.guestName },
+  });
+  return client.consumeSeatReservation(res.data as Parameters<Client["consumeSeatReservation"]>[0]);
+}
+
+/** The public games, both modes: the joinable ones first, then the ones to watch (GET /games on the game server). */
 export async function fetchOpenGames(url: string, signal?: AbortSignal): Promise<OpenGame[]> {
   // Appended, not `new URL(GAMES_ROUTE, url)`: that would drop a path prefix
   // such as the production `/colyseus` (the route starts with "/").
@@ -277,18 +313,25 @@ export class Net {
   epoch = 0;
   readonly lagMs: number;
   readonly isPrivate: boolean;
+  /**
+   * Whether we hold a seat, from each snapshot (`state.players` has us or
+   * not). Before the first one, what we asked for. It flips to "player" when
+   * a spectator takes a seat, on the same Room.
+   */
+  role: NetRole;
   onSnapshot: (s: Snapshot) => void = () => {};
   /** The server closed the connection, or it dropped for good (not called after `leave()`). */
   onClosed: (code: number) => void = () => {};
   private closed = false;
   private timers = new Set<ReturnType<typeof setTimeout>>();
 
-  constructor(room: Room, lagMs: number, opts: { isPrivate?: boolean } = {}) {
+  constructor(room: Room, lagMs: number, opts: { isPrivate?: boolean; role?: NetRole } = {}) {
     this.room = room;
     this.sessionId = room.sessionId;
     this.roomId = room.roomId;
     this.lagMs = Math.max(0, lagMs);
     this.isPrivate = opts.isPrivate ?? false;
+    this.role = opts.role ?? "player";
     // Retry every 2 s at most (the default backs off to 5 s): with the SDK's
     // 15 attempts that is about 25 s, a little past the server's grace period,
     // after which the server answers FAILED_TO_RECONNECT (4003) at once.
@@ -300,6 +343,7 @@ export class Net {
       const snap = capture(state as unknown as RoomStateView);
       const mine = snap.players.get(room.sessionId);
       if (mine?.name) account.setPlayingAs(mine.name);
+      this.role = mine ? "player" : "spectator";
       const epoch = this.epoch;
       this.delay(() => this.onSnapshot({ ...snap, epoch, t: performance.now() }));
     });
@@ -365,14 +409,21 @@ export class Net {
     if (this.status === "connected") this.room.send(type, payload);
   }
 
+  /** A spectator's input would be dropped by the server anyway; it never leaves. */
   sendInput(input: InputMessage) {
-    if (this.status !== "connected") return;
+    if (this.status !== "connected" || this.role === "spectator") return;
     this.delay(() => this.send(MSG_INPUT, input));
   }
 
   sendPick(weapon: number) {
-    if (this.status !== "connected") return;
+    if (this.status !== "connected" || this.role === "spectator") return;
     this.delay(() => this.send(MSG_PICK, { weapon }));
+  }
+
+  /** Spectator: take the free seat (the role flips on the snapshot that has us in `players`). */
+  takeSeat() {
+    if (this.role !== "spectator") return;
+    this.delay(() => this.send(MSG_TAKE_SEAT, {}));
   }
 
   /** Leaves the room for good. Safe to call twice. */

@@ -1,6 +1,6 @@
 // TanStack Router, file-based (src/routes/, compiled to routeTree.gen.ts by
-// the Vite plugin). Two pages: `/` is the menu, `/game/$code` is one game's
-// page (the code is the Colyseus room id). The query string's dev switches
+// the Vite plugin). Three pages: `/` is the menu, `/game/$code` is one game's
+// page (the code is the Colyseus room id), `/game/$code/watch` watches it. The query string's dev switches
 // (`?lag=`, `?map=`, `?server=`) ride along on every navigation, minus the
 // one-shot dev `?play`.
 //
@@ -40,8 +40,16 @@ declare module "@tanstack/react-router" {
 /** The flow's page moves (app.ts' Navigator) on a router that is created later. */
 export function routerNavigator(get: () => AppRouter): Navigator {
   return {
-    toGame(code) {
-      void get().navigate({ to: "/game/$code", params: { code }, state: { fromMenu: true } });
+    toGame(code, opts) {
+      // A replace (a seat taken while watching) keeps the entry's `fromMenu`.
+      const r = get();
+      const state = opts?.replace ? { fromMenu: r.state.location.state.fromMenu } : { fromMenu: true };
+      void r.navigate({ to: "/game/$code", params: { code }, state, replace: opts?.replace });
+    },
+    toWatch(code, opts) {
+      const r = get();
+      const state = opts?.replace ? { fromMenu: r.state.location.state.fromMenu } : { fromMenu: true };
+      void r.navigate({ to: "/game/$code/watch", params: { code }, state, replace: opts?.replace });
     },
     toMenu() {
       const r = get();
@@ -58,6 +66,11 @@ export function routerNavigator(get: () => AppRouter): Navigator {
       const server = new URLSearchParams(location.search).get("server");
       const q = server ? `?${new URLSearchParams({ server })}` : "";
       return `${location.origin}/game/${encodeURIComponent(code)}${q}`;
+    },
+    watchUrl(code) {
+      const server = new URLSearchParams(location.search).get("server");
+      const q = server ? `?${new URLSearchParams({ server })}` : "";
+      return `${location.origin}/game/${encodeURIComponent(code)}/watch${q}`;
     },
   };
 }

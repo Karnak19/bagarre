@@ -1,7 +1,8 @@
-// The open games list on the menu: public games with a free seat, duels
-// waiting for a second player and free-for-alls (waiting, or in progress:
-// FFA takes players mid-match). lobby.ts polls them while the menu is up. A
-// click joins through the game's page.
+// The open games list on the menu: public games with a free seat first
+// (duels waiting for a second player, free-for-alls waiting or in progress:
+// FFA takes players mid-match), then the ones to watch (full, or a duel
+// under way). lobby.ts polls them while the menu is up. A click joins
+// through the game's page, or watches through its watch page.
 
 import { Heading } from "@astryxdesign/core/Heading";
 import { VStack } from "@astryxdesign/core/Layout";
@@ -32,6 +33,7 @@ const styles = stylex.create({
     backgroundColor: "rgba(255, 255, 255, 0.06)",
   },
   join: { color: "var(--color-text-blue)", fontWeight: 700 },
+  watch: { color: "var(--color-text-secondary)", fontWeight: 700 },
   state: { marginInline: "2px" },
   error: { color: "#ffab98" },
 });
@@ -46,7 +48,7 @@ export function OpenGames() {
         Open games
       </Heading>
       <Text type="supporting" color="secondary" xstyle={styles.hint}>
-        Games with a free seat. Pick one to join.
+        Join a game with a free seat, or watch one under way.
       </Text>
       {games.length > 0 && (
         <List density="compact" aria-live="polite" data-testid="open-games-list">
@@ -56,23 +58,27 @@ export function OpenGames() {
             const ffa = g.mode === "ffa";
             const mode = ffa ? "Free for all" : "Duel";
             const seats = `${g.players}/${g.maxPlayers} players`;
-            // A free-for-all takes players mid-match.
-            const live = ffa && g.phase !== "waiting";
-            const details = [mode, seats, map, live ? "in progress" : when].filter(Boolean).join(" · ");
+            // A free-for-all takes players mid-match; a duel under way is full.
+            const live = g.phase !== "waiting";
+            const watching = (g.spectators ?? 0) > 0 ? `${g.spectators} watching` : "";
+            const details = [mode, seats, map, live ? "in progress" : when, watching].filter(Boolean).join(" · ");
+            const verb = g.joinable ? "Join" : "Watch";
             return (
               <ListItem
                 key={g.roomId}
                 label={g.hostName || "Someone"}
                 description={details}
-                endContent={<Text xstyle={styles.join}>Join</Text>}
-                aria-label={`Join ${g.hostName || "a player"}'s ${mode.toLowerCase()} on ${map}, ${seats}, ${live ? "in progress" : `waiting ${when}`}`}
+                endContent={<Text xstyle={g.joinable ? styles.join : styles.watch}>{verb}</Text>}
+                aria-label={`${verb} ${g.hostName || "a player"}'s ${mode.toLowerCase()} on ${map}, ${seats}, ${live ? "in progress" : `waiting ${when}`}`}
                 data-testid="open-game"
                 data-room={g.roomId}
                 data-mode={g.mode}
+                data-action={g.joinable ? "join" : "watch"}
                 xstyle={styles.item}
                 onClick={() => {
                   gesture();
-                  app.joinListed(g.roomId);
+                  if (g.joinable) app.joinListed(g.roomId);
+                  else app.watchListed(g.roomId);
                 }}
               />
             );
@@ -86,7 +92,7 @@ export function OpenGames() {
           xstyle={[styles.state, error && styles.error]}
           data-testid="open-games-empty"
         >
-          {error ? "Can't reach the game server right now." : "No one is waiting right now. Press Play to open a game others can join."}
+          {error ? "Can't reach the game server right now." : "No games right now. Press Play to open a game others can join."}
         </Text>
       )}
     </VStack>

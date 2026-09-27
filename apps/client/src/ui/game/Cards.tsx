@@ -435,6 +435,7 @@ function FfaWaitingCard() {
 function PauseCard() {
   countRender("card.pause");
   const { app, gesture } = useEngine();
+  const spectating = useSelector(app, (s) => s.spectating);
   return (
     <CardBox name="pause">
       <VStack data-testid="esc-menu">
@@ -464,7 +465,7 @@ function PauseCard() {
             }}
           />
           <Button
-            label="Leave match"
+            label={spectating ? "Stop watching" : "Leave match"}
             variant="destructive"
             xstyle={[styles.stackButton, styles.danger]}
             data-testid="esc-leave"

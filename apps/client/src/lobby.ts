@@ -1,4 +1,4 @@
-// The open games list's data: public games waiting for a second player,
+// The open games list's data: public games to join or watch,
 // polled from the game server while someone is watching (the menu is up and
 // the tab is visible). No DOM here; menu.ts renders it.
 

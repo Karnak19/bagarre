@@ -17,9 +17,10 @@ import { Lobby } from "./lobby.ts";
 import { Match, type Bot, type SfxLogEntry } from "./match.ts";
 import { Minimap } from "./minimap.ts";
 import { GameScene, setAssets } from "./scene.ts";
+import { installSpectatorControls } from "./spectate/controls.ts";
 import { devRenders } from "./renders.ts";
 import { Store } from "./store.ts";
-import { ui } from "./uiState.ts";
+import { clerkOpen, ui } from "./uiState.ts";
 
 export interface Engine {
   app: App;
@@ -72,7 +73,17 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
         // seat's first counters as its baseline anyway). A resumed seat
         // lifts them back to the server's in Match.resync.
         Object.assign(input.presses, { dash: 0, grenade: 0, shield: 0, reload: 0 });
-        return new Match({ scene: scene!, input, hud, net, bot, sfxLog, minimap });
+        const match = new Match({ scene: scene!, input, hud, net, bot, sfxLog, minimap });
+        // The spectator's own keys (Q / E, arrows, 1-3, WASD pan), drag and
+        // wheel. Installed for every match, live only while watching; the
+        // game's Input is off then (the frame loop), so no key of theirs can
+        // make an InputMessage. Removed with the match.
+        match.onDispose = installSpectatorControls({
+          canvas,
+          actions: match.spectateActions,
+          enabled: () => match.spectating && !ui.getState().panel && !app.getState().paused && !clerkOpen(),
+        });
+        return match;
       },
     },
     { serverUrl: config.serverUrl, lagMs: config.lagMs, mapParam: config.mapParam, nav: config.nav },
@@ -109,7 +120,8 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
       view.set(v);
       if (m && v) {
         m.frame(now, dtMs);
-        input.enabled = v.card === "none" && !ui.getState().panel;
+        // Never while watching: a spectator's keys are spectate/controls.ts'.
+        input.enabled = v.card === "none" && !ui.getState().panel && !v.spectating;
       } else {
         input.enabled = false;
         attract?.frame(now);
@@ -156,6 +168,12 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
         },
         get buffer() {
           return app.match?.buffer ?? null;
+        },
+        /** The spectator view, while watching (null otherwise). */
+        get spectator() {
+          const m = app.match;
+          const s = m?.spectating ? m.spectator : null;
+          return s ? { followId: s.followId, mode: s.mode(), ui: s.ui.getState() } : null;
         },
         get predictor() {
           return app.match?.predictor ?? null;

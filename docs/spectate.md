@@ -1,5 +1,55 @@
 # Spectator mode
 
+> **Status: implemented** on `feat/ffa` (after the FFA work), and described
+> for users in the README's "Spectating" section. The plan below is kept as
+> it was written against `main`, before FFA; where the wiring went another
+> way, it is listed here.
+>
+> **Deviations from the plan**
+>
+> - **The room** is `GameRoom.ts` (both modes), not `DuelRoom.ts`. Capacity
+>   is the existing `SPECTATOR_ROOM` (20) on top of the seats, not a new
+>   `MAX_SPECTATORS = 8`.
+> - **The seat lock**: `hasReachedMaxClients()` still counts seats (so a
+>   player's reservation is refused past the cap), but skips the seat count
+>   while a spectator's reservation goes through (`admitting`, set by a
+>   wrapper round Colyseus' private `_reserveSeat`, which is where both the
+>   route's `reserveSeatFor` and `joinById` end up). The lock is also set by
+>   hand (`updateSeatLock`, on every seat change and once a second), since
+>   Colyseus lifts its own lock whenever any client leaves, a spectator
+>   included. Held reconnections are no longer counted as promised seats.
+> - **One way in**: the client always watches through
+>   `POST /games/:roomId/watch`, whether the room is locked or not, instead
+>   of trying `joinById` first. `joinById(id, { spectate: true })` still works
+>   on an unlocked room. The route answers 404 for a missing room and 409 when
+>   even the spectator places are taken.
+> - **No `MSG_KILL`**: the camera's switch to the killer reads the kill feed
+>   the FFA work already syncs (`state.feed`): the entries newer than the last
+>   snapshot become `SpectateSnapshot.kills` (a self-kill names the victim, so
+>   the model reads it as "no killer").
+> - **One `Match` for both roles** rather than a spectator variant: with no
+>   local player it predicts and sends nothing and interpolates everyone; the
+>   `Spectator` is made on the first snapshot we aren't in (so the mode's
+>   Follow zoom and default camera are known), and taking a seat flips back
+>   to the player path on the same match (the frustum is reset once).
+>   `Net.role` comes from each snapshot. The camera follows the followed
+>   player's drawn mesh, so there is no `samplePlayerInto`.
+> - **`scene.ts` is unchanged**: `sceneRig` still writes the frustum itself
+>   (only when the view height or the window size changes), and a window
+>   resize is picked up on the next frame.
+> - **Open games**: `OpenGame` gained `spectators` and `joinable` (no
+>   `watchable` field: every listed game can be watched). A row is either
+>   **Join** (a free seat you can take now, including a free for all under
+>   way) or **Watch** (full, or a duel under way); a running FFA with a free
+>   seat is joined, not watched, from the list (its watch link still works).
+> - **Not done** (see "Next steps" below): the lost-seat-race notice on the
+>   client, the invite panel's "Copy watch link", the Playwright checks, and
+>   smoke check 7 (the race itself).
+>
+> **Next steps**: a "Copy watch link" on the waiting card; the one-line
+> notice when a player is seated as a spectator after a lost race; the kill
+> feed in the spectator overlay; the Playwright checks listed at the end.
+
 Watching a game without playing in it: a friend's duel from its link, or an
 FFA already under way. This file is the contract the room has to honour and
 the plan for wiring it in. The client pieces already exist in

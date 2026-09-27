@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from "./routes/__root";
 import { Route as IndexRouteImport } from "./routes/index";
 import { Route as SplatRouteImport } from "./routes/$";
 import { Route as GameCodeRouteImport } from "./routes/game.$code";
+import { Route as GameCodeWatchRouteImport } from "./routes/game.$code_.watch";
 
 const IndexRoute = IndexRouteImport.update({
   id: "/",
@@ -28,35 +29,44 @@ const GameCodeRoute = GameCodeRouteImport.update({
   path: "/game/$code",
   getParentRoute: () => rootRouteImport,
 } as any);
+const GameCodeWatchRoute = GameCodeWatchRouteImport.update({
+  id: "/game/$code_/watch",
+  path: "/game/$code/watch",
+  getParentRoute: () => rootRouteImport,
+} as any);
 
 export interface FileRoutesByFullPath {
   "/": typeof IndexRoute;
   "/$": typeof SplatRoute;
   "/game/$code": typeof GameCodeRoute;
+  "/game/$code/watch": typeof GameCodeWatchRoute;
 }
 export interface FileRoutesByTo {
   "/": typeof IndexRoute;
   "/$": typeof SplatRoute;
   "/game/$code": typeof GameCodeRoute;
+  "/game/$code/watch": typeof GameCodeWatchRoute;
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport;
   "/": typeof IndexRoute;
   "/$": typeof SplatRoute;
   "/game/$code": typeof GameCodeRoute;
+  "/game/$code_/watch": typeof GameCodeWatchRoute;
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath;
-  fullPaths: "/" | "/$" | "/game/$code";
+  fullPaths: "/" | "/$" | "/game/$code" | "/game/$code/watch";
   fileRoutesByTo: FileRoutesByTo;
-  to: "/" | "/$" | "/game/$code";
-  id: "__root__" | "/" | "/$" | "/game/$code";
+  to: "/" | "/$" | "/game/$code" | "/game/$code/watch";
+  id: "__root__" | "/" | "/$" | "/game/$code" | "/game/$code_/watch";
   fileRoutesById: FileRoutesById;
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute;
   SplatRoute: typeof SplatRoute;
   GameCodeRoute: typeof GameCodeRoute;
+  GameCodeWatchRoute: typeof GameCodeWatchRoute;
 }
 
 declare module "@tanstack/react-router" {
@@ -82,6 +92,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof GameCodeRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/game/$code_/watch": {
+      id: "/game/$code_/watch";
+      path: "/game/$code/watch";
+      fullPath: "/game/$code/watch";
+      preLoaderRoute: typeof GameCodeWatchRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
   }
 }
 
@@ -89,6 +106,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SplatRoute: SplatRoute,
   GameCodeRoute: GameCodeRoute,
+  GameCodeWatchRoute: GameCodeWatchRoute,
 };
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

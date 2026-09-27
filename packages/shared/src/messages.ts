@@ -54,3 +54,8 @@ export function parsePong(raw: unknown): PingMessage | null {
   const m = record(raw);
   return m && counter(m.n) ? { n: m.n } : null;
 }
+
+/** MSG_TAKE_SEAT: a plain object; its fields are ignored. */
+export function parseTakeSeat(raw: unknown): Record<string, never> | null {
+  return record(raw) ? {} : null;
+}

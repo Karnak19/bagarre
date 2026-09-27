@@ -19,8 +19,12 @@
 //   room, unless it is the one we are already in.
 // - Play / Private game run on `/`; once the room is joined the store pushes
 //   its page (`nav.toGame`), whose `routeGame` is then a no-op.
+// - `/game/<code>/watch` entered: `routeWatch(code)` joins that room as a
+//   spectator. Taking a seat there ("Join the game") keeps the same room and
+//   replaces the page with `/game/<code>`, whose `routeGame` is a no-op; a
+//   player who lost the race for the last seat is moved the other way.
 
-import type { GameMode, Phase } from "@bagarre/shared";
+import { CLOSE_NO_PLAYERS, type GameMode, type Phase } from "@bagarre/shared";
 import { guestName } from "./auth.ts";
 import type { Match } from "./match.ts";
 import { CloseCode } from "@colyseus/sdk";
@@ -28,14 +32,18 @@ import { JoinError, Net, joinGame, resumeFor, type JoinRequest, type Snapshot } 
 
 /** How the flow moves between pages (implemented on TanStack Router in router.tsx). */
 export interface Navigator {
-  /** Pushes `/game/<code>` (a new history entry: Back returns to the menu). */
-  toGame(code: string): void;
+  /** Pushes `/game/<code>` (a new history entry: Back returns to the menu), or replaces the current entry. */
+  toGame(code: string, opts?: { replace?: boolean }): void;
+  /** Pushes (or replaces with) `/game/<code>/watch`. */
+  toWatch(code: string, opts?: { replace?: boolean }): void;
   /** Back to `/`: `history.back()` if this page was reached from the menu, else a replace. */
   toMenu(): void;
   /** The current page is a game page. */
   onGamePage(): boolean;
   /** The shareable link to a game. */
   inviteUrl(code: string): string;
+  /** The shareable link to watch a game. */
+  watchUrl(code: string): string;
 }
 
 /** Room ids are Colyseus' 9-character ids; anything else can't be a game. */
@@ -70,6 +78,8 @@ export interface AppState {
   roomId: string;
   inviteUrl: string;
   isPrivate: boolean;
+  /** We watch the current game (no seat). Follows the room: it flips when we take a seat. */
+  spectating: boolean;
 }
 
 /** What the game's cards need each frame, from the latest snapshot. */
@@ -82,6 +92,8 @@ export interface GameView {
   endedAt: number;
   pick: number;
   canPick: boolean;
+  /** Watching, not playing: no waiting or result card, the spectator overlay instead of the HUD. */
+  spectating: boolean;
 }
 
 /** The parts of the 3D side the flow drives. */
@@ -113,6 +125,7 @@ const initialState: AppState = {
   roomId: "",
   inviteUrl: "",
   isPrivate: false,
+  spectating: false,
 };
 
 /** What to say when the game's connection ends without us leaving. */
@@ -121,6 +134,12 @@ function closedNotice(code: number): Notice {
     return {
       title: "The game server is restarting",
       body: "An update is going out, so this match had to stop. Start a new game in a moment.",
+      retry: null,
+    };
+  if (code === CLOSE_NO_PLAYERS)
+    return {
+      title: "The game ended",
+      body: "Everyone left the game you were watching, so it closed. Find another one from the menu.",
       retry: null,
     };
   if (code === CloseCode.FAILED_TO_RECONNECT)
@@ -142,6 +161,7 @@ function joinLabels(req: JoinRequest): { title: string; sub: string } {
       title: req.mode === "ffa" ? "Creating your private free for all…" : "Creating your private game…",
       sub: req.mode === "ffa" ? "You'll get a link to send your friends." : "You'll get a link to send a friend.",
     };
+  if (req.kind === "watch") return { title: "Opening the game…", sub: `Watching game ${req.roomId}` };
   return { title: "Joining the game…", sub: `Game ${req.roomId}` };
 }
 
@@ -194,15 +214,34 @@ export class App {
       if (phase === "waiting" && (was === "playing" || was === "ended")) this.set({ opponentLeft: true });
       if (phase === "playing" && (this.state.opponentLeft || this.state.staying)) this.set({ opponentLeft: false, staying: false });
     }
+    const spectating = this.followRole(m);
     let card: GameCard = "none";
     if (m.net.status === "reconnecting") card = "reconnecting";
     else if (this.state.paused) card = "pause";
     else if (!snapshot) card = "loading";
+    // A spectator has no waiting or result card: the overlay shows the phase.
+    else if (spectating) card = "none";
     else if (phase === "waiting") card = "waiting";
     else if (phase === "ended") card = "result";
     if (card !== "none" && this.state.scoreboardHeld) this.set({ scoreboardHeld: false });
     const me = m.me;
-    return { card, phase, snapshot, you: m.net.sessionId, endedAt: m.endedAt, pick: me?.pick ?? 0, canPick: m.canPick };
+    return { card, phase, snapshot, you: m.net.sessionId, endedAt: m.endedAt, pick: me?.pick ?? 0, canPick: m.canPick, spectating };
+  }
+
+  /**
+   * Keeps `spectating` and the page in step with the room's say (net.role,
+   * from each snapshot): a seat taken moves `/game/<code>/watch` to
+   * `/game/<code>`, a lost seat race the other way. Both replace the page
+   * (same game, same room: the route is a no-op).
+   */
+  private followRole(m: Match): boolean {
+    const spectating = m.net.role === "spectator";
+    if (!m.latest || spectating === this.state.spectating) return this.state.spectating;
+    this.set({ spectating, scoreboardHeld: false });
+    const code = m.net.roomId;
+    if (spectating) this.config.nav.toWatch(code, { replace: true });
+    else this.config.nav.toGame(code, { replace: true });
+    return spectating;
   }
 
   // --- Actions -----------------------------------------------------------------------
@@ -229,6 +268,18 @@ export class App {
     void this.join({ kind: "id", roomId: code });
   }
 
+  /** Route lifecycle: `/game/<code>/watch` was entered (or its code changed). */
+  routeWatch(code: string) {
+    if (!GAME_CODE.test(code)) {
+      this.joinToken++;
+      this.leaveRoom();
+      this.showNotice({ title: "Nothing to watch", body: "That link isn't a game link. Find a game from the menu.", retry: null });
+      return;
+    }
+    if (this.current?.net.roomId === code) return;
+    void this.join({ kind: "watch", roomId: code });
+  }
+
   /** Play (duel) or Free for all: join an open game of that mode, or open one. */
   quickMatch(mode: GameMode = "duel") {
     void this.join({ kind: "quick", mode });
@@ -242,6 +293,16 @@ export class App {
   /** A game from the open games list: its page, whose route then joins it. */
   joinListed(roomId: string) {
     this.config.nav.toGame(roomId);
+  }
+
+  /** Watch a game from the open games list: its watch page, whose route then joins as a spectator. */
+  watchListed(roomId: string) {
+    this.config.nav.toWatch(roomId);
+  }
+
+  /** "Join the game" while watching: take the free seat, on the same connection. */
+  joinSeat() {
+    this.current?.net.takeSeat();
   }
 
   retry() {
@@ -317,7 +378,7 @@ export class App {
       // A reload that took its seat back (see resumeFor) keeps the private flag.
       const resumed = resumeFor(room.roomId);
       const isPrivate = req.kind === "private" || (resumed?.sessionId === room.sessionId && resumed.isPrivate);
-      const net = new Net(room, this.config.lagMs, { isPrivate });
+      const net = new Net(room, this.config.lagMs, { isPrivate, role: req.kind === "watch" ? "spectator" : "player" });
       net.onClosed = (code) => {
         if (this.current?.net !== net) return;
         this.leaveRoom();
@@ -329,14 +390,19 @@ export class App {
         roomId: room.roomId,
         inviteUrl: this.config.nav.inviteUrl(room.roomId),
         isPrivate,
+        spectating: net.role === "spectator",
       });
       // Play / Private game joined from the menu: now the game has a page.
-      if (req.kind !== "id") this.config.nav.toGame(room.roomId);
+      if (req.kind === "quick" || req.kind === "private") this.config.nav.toGame(room.roomId);
     } catch (err) {
       if (token !== this.joinToken) return;
       const e = err instanceof JoinError ? err : new JoinError("error", String(err));
       console.warn("[join]", e.reason, e.message);
-      if (e.reason === "full")
+      if (req.kind === "watch" && e.reason === "gone")
+        this.showNotice({ title: "Nothing to watch", body: "That game is over, or the link is wrong. Find another one from the menu.", retry: null });
+      else if (req.kind === "watch" && e.reason === "full")
+        this.showNotice({ title: "Too many spectators", body: "This game can't take more spectators right now. Try again in a moment.", retry: req });
+      else if (e.reason === "full")
         this.showNotice({ title: "This game is full", body: "Every seat is taken. Join another game from the menu, or start your own.", retry: null });
       else if (e.reason === "gone")
         this.showNotice({ title: "This game doesn't exist anymore", body: "Everyone left, or the link is wrong. Start a new game from the menu.", retry: null });
