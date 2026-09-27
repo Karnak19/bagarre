@@ -85,7 +85,7 @@ export const WEAPONS: readonly WeaponDef[] = [
   { name: "SMG",     damage: 11, fireInterval: 0.1, bulletSpeed: 40, range: 12, spread: 0.16, pellets: 1, magazine: 30, reloadTime: 1.8 },
   { name: "Revolver", damage: 34, fireInterval: 0.45, bulletSpeed: 70, range: 20, spread: 0, pellets: 1, magazine: 6, reloadTime: 2.2 },
   { name: "Burst pistol", damage: 12, fireInterval: 0.45, bulletSpeed: 42, range: 15, spread: 0.05, pellets: 1, magazine: 15, reloadTime: 1.2, burst: 3, burstInterval: 0.06 },
-  { name: "DMR",     damage: 40, fireInterval: 0.5, bulletSpeed: 80, range: 26, spread: 0.01, pellets: 1, magazine: 8, reloadTime: 2.0 },
+  { name: "DMR",     damage: 40, fireInterval: 0.567, bulletSpeed: 80, range: 26, spread: 0.01, pellets: 1, magazine: 8, reloadTime: 2.0 },
 ];
 export const DEFAULT_WEAPON = 0;
 
