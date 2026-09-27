@@ -90,15 +90,6 @@ export interface MapTheme {
 
 export type WeaponTag = "rifle" | "shotgun" | "sniper" | "smg";
 
-/**
- * - `point`: 180 degree rotation around the origin, (x, z) -> (-x, -z).
- * - `mirrorDiag`: reflection across the x = z line, (x, z) -> (z, x). That
- *   line is the vertical axis of the screen, so the map is a left/right mirror
- *   on screen and the camera sees both halves the same way (occlusion is fair
- *   too, which point symmetry only approximates).
- */
-export type Symmetry = "point" | "mirrorDiag";
-
 export interface Spawn {
   x: number;
   z: number;
@@ -113,13 +104,15 @@ export interface MapDef {
   /** The floor spans [-halfX, halfX] x [-halfZ, halfZ]. */
   halfX: number;
   halfZ: number;
-  symmetry: Symmetry;
   obstacles: readonly Obstacle[];
   /**
-   * Spawns, in mirrored pairs: `spawns[2k + 1]` is the mirror image of
-   * `spawns[2k]`. Slot 0 starts a match on `spawns[0]`, slot 1 on `spawns[1]`;
-   * respawns may use any of them (sight.ts's `respawnPoint`: out of the
-   * opponent's sight first, then farthest).
+   * Spawns, in balanced pairs: `spawns[2k]` and `spawns[2k + 1]` face each
+   * other and must be equally good starts (the validator measures it, see
+   * scripts/analyze.ts `fairness`); they need not be mirror images. Slot 0
+   * starts a match on `spawns[0]`, slot 1 on `spawns[1]`: that pair is held to
+   * the strictest tolerances. Respawns may use any spawn (sight.ts's
+   * `respawnPoint`: out of the opponent's sight first, then farthest), so the
+   * later pairs are respawn spots and are held to looser ones.
    */
   spawns: readonly Spawn[];
   decor: readonly Decor[];
@@ -130,45 +123,6 @@ export interface MapDef {
 
 // --- Authoring helpers --------------------------------------------------------
 
-/** The mirror image of a point under a map's symmetry. */
-export function mirrorPoint(s: Symmetry, x: number, z: number): Spawn {
-  return s === "point" ? { x: -x + 0, z: -z + 0 } : { x: z, z: x };
-}
-
-/** The mirror image of an obstacle under a map's symmetry. */
-export function mirrorBox(s: Symmetry, b: Obstacle): Obstacle {
-  const p = mirrorPoint(s, b.x, b.z);
-  return s === "point" ? { ...b, x: p.x, z: p.z } : { ...b, x: p.x, z: p.z, w: b.d, d: b.w };
-}
-
-function same(a: Obstacle, b: Obstacle): boolean {
-  return a.x === b.x && a.z === b.z && a.w === b.w && a.d === b.d;
-}
-
-/** Kind swaps applied to the mirrored half, to dress twin boxes differently. */
-export type Reskin = Partial<Record<ObstacleKind, ObstacleKind>>;
-
-/**
- * Authors write one half of the map; this adds the mirror image of every box
- * (a box that is its own mirror, e.g. centred on the origin, is kept once).
- * `reskin` changes the kind of the mirrored copies only: the collision (and
- * the height, which matters for the camera) stays symmetric, the look doesn't.
- */
-export function symmetric(s: Symmetry, half: readonly Obstacle[], reskin: Reskin = {}): Obstacle[] {
-  const out: Obstacle[] = [];
-  for (const b of half) {
-    out.push(b);
-    const m = mirrorBox(s, b);
-    if (!same(m, b)) out.push({ ...m, kind: reskin[b.kind] ?? b.kind });
-  }
-  return out;
-}
-
-/** `[a, mirror(a), b, mirror(b), ...]` from `[a, b, ...]`. */
-export function spawnPairs(s: Symmetry, firsts: readonly Spawn[]): Spawn[] {
-  return firsts.flatMap((p) => [p, mirrorPoint(s, p.x, p.z)]);
-}
-
 /** Shorthand for an obstacle: centre, footprint, height, kind. */
 export function box(kind: ObstacleKind, x: number, z: number, w: number, d: number, h: number): Obstacle {
   return { kind, x, z, w, d, h };
@@ -177,44 +131,40 @@ export function box(kind: ObstacleKind, x: number, z: number, w: number, d: numb
 export type AsciiLegend = Readonly<Record<string, { kind: ObstacleKind; h: number }>>;
 
 /**
- * Point-symmetric layout from ASCII art. `top` is the top half of the floor
- * (rows of -z first), one character per `cell` metres: `.` is floor, any
- * legend character is cover. Runs of the same character are merged into as
- * few boxes as possible (row runs first), then the half is rotated 180
- * degrees to make the other half (see `symmetric` for `reskin`).
+ * Boxes from ASCII art of the whole floor. `art` rows go from -z (the top of the
+ * plan) to +z, characters from -x to +x, one character per `cell` metres
+ * (default 1), so there are `2 * halfZ / cell` rows of `2 * halfX / cell`
+ * characters. `.` is floor; any legend character is cover. Runs of the same
+ * character are merged into as few boxes as possible (row runs first, then
+ * grown down while the rows below match). Nothing is mirrored: what is drawn
+ * is the map.
  */
-export function asciiPoint(
-  halfX: number,
-  halfZ: number,
-  top: readonly string[],
-  legend: AsciiLegend,
-  opts: { cell?: number; reskin?: Reskin } = {},
-): Obstacle[] {
+export function ascii(halfX: number, halfZ: number, art: readonly string[], legend: AsciiLegend, opts: { cell?: number } = {}): Obstacle[] {
   const cell = opts.cell ?? 1;
   const cols = Math.round((2 * halfX) / cell);
-  const rows = Math.round(halfZ / cell);
-  if (top.length !== rows) throw new Error(`asciiPoint: ${top.length} rows, expected ${rows}`);
-  top.forEach((r, j) => {
-    if (r.length !== cols) throw new Error(`asciiPoint: row ${j} has ${r.length} chars, expected ${cols}`);
+  const rows = Math.round((2 * halfZ) / cell);
+  if (art.length !== rows) throw new Error(`ascii: ${art.length} rows, expected ${rows}`);
+  art.forEach((r, j) => {
+    if (r.length !== cols) throw new Error(`ascii: row ${j} has ${r.length} chars, expected ${cols}`);
   });
-  const used = top.map((r) => Array.from(r, () => false));
+  const used = art.map((r) => Array.from(r, () => false));
   const out: Obstacle[] = [];
   for (let j = 0; j < rows; j++)
     for (let i = 0; i < cols; i++) {
-      const ch = top[j][i];
+      const ch = art[j][i];
       if (ch === "." || used[j][i]) continue;
       const def = legend[ch];
-      if (!def) throw new Error(`asciiPoint: unknown character "${ch}" at row ${j}, col ${i}`);
+      if (!def) throw new Error(`ascii: unknown character "${ch}" at row ${j}, col ${i}`);
       let w = 1;
-      while (i + w < cols && top[j][i + w] === ch && !used[j][i + w]) w++;
+      while (i + w < cols && art[j][i + w] === ch && !used[j][i + w]) w++;
       let d = 1;
       const rowOk = (jj: number) => {
-        for (let k = i; k < i + w; k++) if (top[jj][k] !== ch || used[jj][k]) return false;
+        for (let k = i; k < i + w; k++) if (art[jj][k] !== ch || used[jj][k]) return false;
         return true;
       };
       while (j + d < rows && rowOk(j + d)) d++;
       for (let jj = j; jj < j + d; jj++) for (let k = i; k < i + w; k++) used[jj][k] = true;
       out.push(box(def.kind, -halfX + (i + w / 2) * cell, -halfZ + (j + d / 2) * cell, w * cell, d * cell, def.h));
     }
-  return symmetric("point", out, opts.reskin);
+  return out;
 }

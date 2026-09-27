@@ -5,15 +5,20 @@ ones. They are plain data, and each match picks one at random (never the one
 just played). The wiring plan at the end of this file is implemented; its
 "As built" notes list where the code differs from it.
 
-| Map | Size | Symmetry | Plays like | Favours |
-| --- | --- | --- | --- | --- |
-| Yard | 30 x 30 | point | The original: open, four pieces of cover | rifle, SMG |
-| Runway | 40 x 28 | point | Big open airstrip, long lanes, few islands | sniper, rifle |
-| Trenchworks | 28 x 28 | point | Sandbag maze of 3 m trenches around a plaza | shotgun, SMG |
-| Fort | 32 x 32 | point | A walled blockhouse around a crate keep | rifle, SMG |
-| Dockside | 36 x 28 | point | Three lanes split by container rows | rifle (middle), SMG (flanks) |
-| Nest | 30 x 30 | mirror (screen left/right) | King of the hill: one sandbag pit in an open field | rifle, shotgun |
-| Scrapyard | 34 x 30 | point, dressed unevenly | Junk piles that look random but mirror exactly | SMG, shotgun, rifle |
+None of the maps is mirrored. Each side of a map is built differently (a
+maze against open ground, tall containers against crates, a trench against
+stepping stones), and the validator measures that both sides still get the
+same deal (see "Fairness").
+
+| Map | Size | Plays like | Favours |
+| --- | --- | --- | --- |
+| Yard | 30 x 30 | The original: open, a crate stack and a different bit of cover in each corner | rifle, SMG |
+| Runway | 40 x 28 | A long airstrip: low cover at the terminal, brick hangars and a fuel depot at the far end, open tarmac between | sniper, rifle |
+| Trenchworks | 28 x 28 | Sandbag trenches round a broken crater: a tight warren on one side, a barrel yard on the other | shotgun, SMG |
+| Fort | 32 x 32 | A brick blockhouse with a guardroom annex, an open field on one side and a walled courtyard on the other | rifle, SMG |
+| Dockside | 36 x 28 | Three lanes: tall container stacks on one side, crates and barrels at the berth on the other | rifle (middle), SMG (stacks) |
+| Nest | 30 x 30 | King of the hill: a lopsided sandbag nest, reached by a trench on one side and crate hops on the other | rifle, shotgun |
+| Scrapyard | 34 x 30 | A maze of low junk walls on one side, open ground and big wrecks on the other | SMG, shotgun, rifle |
 
 ## Tools
 
@@ -36,9 +41,12 @@ What the validator checks, per map:
 
 - size within 24..40 m a side; every box inside the floor, at least 0.5 m
   thick, between 0.8 m and 2.0 m tall (see "Readability");
-- no box overlaps a spawn (player radius + 0.25 m);
-- symmetry: every box has a mirror twin with the same footprint and height
-  (the kind may differ, see Scrapyard); spawn `2k + 1` mirrors spawn `2k`;
+- no box overlaps a spawn (player radius + 0.25 m); spawns come in pairs;
+- fairness: for each spawn pair (2k, 2k + 1), ten measures taken for both
+  sides, and the gap between them must stay within a tolerance (see
+  "Fairness" below);
+- the map must not read as mirrored: at most 45 % of the box footprint may
+  have a twin under any one mirror (see "Fairness");
 - no gap narrower than 1.6 m (player diameter 1 m + 0.6 m) between two boxes
   or a box and the outer wall, unless it is closed (touching) or filled by
   another box;
@@ -49,6 +57,8 @@ What the validator checks, per map:
 - time to contact: both players walk the shortest path (visibility graph over
   the boxes inflated by the player radius) toward each other from each spawn
   pair; they must meet within 2.5..6.5 s (warning outside 3..6 s);
+- a warning for a spawn seen from more than 30 % of the floor, or more than
+  8 % of the floor hiding a chest from the camera;
 - tall decor (cones, barrels, cardboard, tyres) only outside the walls.
 
 Columns of the table: `cover` share of the floor under boxes; `longest LOS`
@@ -57,25 +67,27 @@ pairs farther apart than rifle range, the share with a clear shot (the sniper
 number); `open` share of all point pairs with a clear shot; `contact` and
 `first sight` (when the two walkers first get a clear shot, and at what
 distance); `cam-hidden` share of the floor where a player's chest (1 m) is
-hidden from the camera; `spawn exp` the most exposed spawn.
+hidden from the camera; `spawn exp` the most exposed spawn; `mirror` the
+most mirrored reading of the box footprint; `worst gap` the fairness measure
+closest to failing, as a share of what it is allowed.
 
 Current results:
 
 ```
-map          size m  boxes  cover  longest LOS  LOS>18m  open  spawn path  contact  first sight   cam-hidden  spawn exp
-yard         30x30   7      4.1%   35.2 m       29%      51%   34.9 m      2.91 s   2.27 s @7 m   0.3%        61%
-runway       40x28   24     12.1%  41.8 m       21%      37%   42.5 m      3.54 s   2.00 s @18 m  1.4%        9%
-trenchworks  28x28   26     14.0%  23.4 m       0%       12%   41.1 m      3.43 s   2.43 s @12 m  0.0%        15%
-fort         32x32   28     10.9%  33.6 m       6%       23%   41.2 m      3.44 s   2.63 s @9 m   0.0%        27%
-dockside     36x28   24     17.5%  35.2 m       3%       17%   40.7 m      3.39 s   2.77 s @7 m   2.8%        19%
-nest         30x30   24     9.0%   36.1 m       10%      29%   40.8 m      3.40 s   2.40 s @12 m  0.6%        28%
-scrapyard    34x30   28     12.0%  33.2 m       7%       23%   40.3 m      3.36 s   2.43 s @11 m  0.8%        22%
+map          size m  boxes  cover  longest LOS  LOS>18m  open  spawn path  contact  first sight   cam-hidden  spawn exp  mirror  worst gap                   result
+yard         30x30   9      4.9%   37.6 m       29%      51%   36.0 m      3.00 s   1.27 s @21 m  0.2%        48%        25%     57% territory               ok
+runway       40x28   26     10.4%  40.3 m       15%      32%   43.6 m      3.64 s   2.00 s @19 m  0.4%        13%        27%     84% cover spots near spawn  ok
+trenchworks  28x28   32     18.3%  24.7 m       0%       11%   39.2 m      3.27 s   2.83 s @5 m   0.0%        11%        33%     88% walk to centre          ok
+fort         32x32   31     13.7%  31.6 m       2%       15%   39.7 m      3.31 s   2.10 s @14 m  0.1%        13%        27%     60% walk to centre          ok
+dockside     36x28   26     18.5%  35.2 m       3%       16%   41.4 m      3.45 s   2.47 s @12 m  2.9%        9%         29%     87% cam-hidden territory    ok
+nest         30x30   21     9.3%   32.6 m       10%      31%   37.0 m      3.08 s   2.57 s @6 m   0.5%        16%        32%     69% tall-box camera shadow  ok
+scrapyard    34x30   25     15.2%  38.6 m       5%       20%   39.9 m      3.33 s   2.70 s @7 m   1.2%        17%        21%     81% cam-hidden territory    ok
 ```
 
-Accepted warnings: Yard's side spawns see each other and are very exposed
-(it is the original layout, kept as-is); Nest's and Scrapyard's second spawn
-pair meets in 2.7-2.9 s, a bit under the 3 s target (the first pair, used at
-match start, is at 3.4 s).
+Accepted warnings: Yard's respawn pair (spawns 2 and 3) is exposed (42-48 %
+of the floor sees it; Yard is meant to be open), and the respawn pairs of
+Yard, Dockside and Scrapyard meet in 2.6-2.9 s, a bit under the 3 s target
+(the first pair, used at match start, is at 3.0-3.6 s everywhere).
 
 ## The MapDef format
 
@@ -88,9 +100,8 @@ interface MapDef {
   blurb: string;         // one line
   halfX: number;         // floor is [-halfX, halfX] x [-halfZ, halfZ]
   halfZ: number;
-  symmetry: "point" | "mirrorDiag";
   obstacles: readonly Obstacle[];   // Obstacle = arena.ts Box + kind
-  spawns: readonly Spawn[];         // mirrored pairs: spawns[2k+1] = mirror(spawns[2k])
+  spawns: readonly Spawn[];         // balanced pairs: spawns[2k] vs spawns[2k+1], measured, not mirrored
   decor: readonly Decor[];          // { prop, x, z, yaw, scale? }, no collision
   theme: MapTheme;
   favours: readonly WeaponTag[];    // "rifle" | "shotgun" | "sniper" | "smg"
@@ -100,17 +111,14 @@ interface MapDef {
 - `Obstacle` is exactly arena.ts's `Box` (`x, z, w, d, h`, centre + full
   footprint) plus `kind`, so a `MapDef` can be handed to anything that takes
   boxes. Collision ignores `kind` and `h`.
-- `h` is the height the renderer should draw the prop at. arena.ts's own `h`
-  was never used by the renderer; Yard's converted `h` values are the heights
-  arenaView.ts actually draws today (crate stack 1.5, sandbags 1.35, barriers
-  1.3, containers 1.8), so a renderer that honours `h` keeps Yard's look.
+- `h` is the height the renderer draws the prop at.
 - `kind` picks the prop (all exist in `props.glb`):
 
   | kind | prop | how to dress the box |
   | --- | --- | --- |
   | `crate` | `Crate` (+ `CardboardBoxes_1` on top of big stacks) | grid of crates, ~1.5 m cells, scaled to `h` |
-  | `barrier` | `Barrier_Single` | tiled along the long side, like today |
-  | `sandbags` | `SackTrench_Small` | tiled along the long side, like today |
+  | `barrier` | `Barrier_Single` | tiled along the long side |
+  | `sandbags` | `SackTrench_Small` | tiled along the long side |
   | `container` | `Container_Small` | one container stretched to the footprint, at `h` |
   | `wall` | `BrickWall_2` | tiled along the long side, at `h` |
   | `barrels` | `ExplodingBarrel` | packed on a ~1 m grid (visual only, no explosion) |
@@ -122,28 +130,82 @@ interface MapDef {
 - `Decor.prop` is a union of prop names. Flat ones (`Debris_*`, `Pallet*`,
   `WoodPlanks`) may sit anywhere; tall ones (`TrafficCone`, `Debris_Tires`,
   `ExplodingBarrel`, `CardboardBoxes_*`) only outside the walls, where nobody
-  can stand behind them. Decor is placed at native size times `scale`, which
-  is what arenaView.ts does today.
+  can stand behind them. Decor is placed at native size times `scale`.
 - `MapTheme`: `floor`, `grid`, `gridOpacity`, `outerFloor`, `background`,
   `wall` (`"brick" | "barrier" | "sandbags"`, the prop tiled along the outer
   walls), `hemiSky`, `hemiGround`, `hemiIntensity`, `sun`, `sunIntensity`,
-  `sunDir` (a position for the DirectionalLight, like today's `(12, 25, 6)`).
-  Colours are 0xRRGGBB numbers. Yard's theme is exactly today's values.
+  `sunDir` (a position for the DirectionalLight, like `(12, 25, 6)`).
+  Colours are 0xRRGGBB numbers.
 
 Extras in `types.ts` and `index.ts`:
 
 - `MAPS` (Yard first), `DEFAULT_MAP_ID = "yard"`, `mapById(id)` (falls back to
   Yard for an unknown id).
-- Authoring helpers: `box(kind, x, z, w, d, h)`, `symmetric(sym, half,
-  reskin?)` (adds the mirror of every box), `spawnPairs(sym, firsts)`,
-  `mirrorPoint`, `mirrorBox`, and `asciiPoint(halfX, halfZ, topRows, legend,
-  { reskin? })`, which builds a point-symmetric layout from ASCII art, one
-  character per metre, merging runs into as few boxes as it can. Five of the
-  maps are drawn that way; the art in each file is the easiest way to read
-  and edit them.
-- `reskin` changes the kind of the mirrored copies only. Scrapyard uses it:
-  its collision is point-symmetric but a container on one side is a crate
-  stack on the other, and so on.
+- Authoring helpers: `box(kind, x, z, w, d, h)` and `ascii(halfX, halfZ,
+  rows, legend, { cell? })`: the whole floor as ASCII art, rows from -z to
+  +z, one character per `cell` metres (default 1), `.` for floor, runs of the
+  same character merged into as few boxes as possible (Dockside and
+  Scrapyard are drawn this way). What is drawn is the map; nothing is
+  mirrored.
+
+## Fairness
+
+The maps used to be mirrored: one half drawn, the other half its copy
+rotated 180 degrees. That is fair on paper but boring to learn (every spot
+has a twin), and it turned out not even to be fair on screen (see "Why
+mirroring is not enough" below). Now each side is built on its own and the
+validator checks that the two sides of every spawn pair get the same deal.
+
+`scripts/analyze.ts` (`FAIR`, `fairness`) takes ten measures for each side of
+a spawn pair. The gap between the two sides may be at most max(abs, rel x
+the larger of the two values). Pairs after 0/1 are respawn spots
+(`respawnPoint` sends players away from the opponent, so they rarely face
+off from a standing start) and get 1.5 times more room (`RESPAWN_SLACK`).
+`bun run maps:validate` prints each pair's table (side A, side B, gap,
+allowed, score = gap / allowed) and the `worst gap` column; over 100 % fails.
+
+| measure | abs | rel | what |
+| --- | --- | --- | --- |
+| spawn exposure | 3 pp | 15 % | share of the floor with a clear shot at the spawn |
+| long-LOS exposure | 3 pp | 20 % | of the floor more than 18 m away, the share with a clear shot at the spawn (sniper lanes) |
+| nearest cover | 1 m | - | spawn to the nearest box surface |
+| cover spots near spawn | 2 m² | 25 % | floor within 8 m walk of the spawn, hugging a box (<= 1 m) that blocks the shot from the enemy spawn |
+| walk to centre | 1.5 m | 5 % | walk from the spawn to the centre (the standable floor closest to (0, 0)) |
+| retreat at first sight | 1 m | - | both walk toward each other; at first sight, how far each is from a spot the other can't see |
+| territory | 6 pp | - | share of the floor closer (walking) to this spawn than to the other |
+| cam-hidden territory | 1.5 pp | - | share of the side's territory where a chest (1 m) is hidden from the camera |
+| cam-hidden cover spots | 8 pp | - | of the cover spots in the territory, the share where the chest is hidden from the camera |
+| tall-box camera shadow | 2 pp | - | share of the territory where a box taller than 1.2 m hides the waist (0.5 m) from the camera |
+
+For example, spawn exposure 20 % against 23 % passes (the gap, 3 pp, is
+within max(3 pp, 15 % of 23 %)), 20 % against 24 % fails.
+
+The mirror check (`mirrorShares`, `mirrorCheck` in `analyze.ts`, limit
+`MAX_MIRROR_SHARE` = 45 %) keeps the maps from drifting back to copies. For
+each way the arena can be mirrored (the 180 degree turn, across x = 0,
+across z = 0, and on a square arena across both diagonals) it samples the
+floor under boxes every 0.5 m and counts how much of it lands under a box
+again once mirrored. A map built by hand sits around 10-35 %; a mirrored
+one near 100 %. The FFA validator uses the same check.
+
+### Why mirroring is not enough
+
+The camera looks down from one corner, so "up the screen" (-x/-z) and "down
+the screen" (+x/+z) are not the same. On a map turned 180 degrees, the
+player up the screen takes cover on the far side of a box from the enemy,
+which is also the side the camera can't see: on screen they vanish behind
+it. The player down the screen hides on the side facing the camera and
+stays in plain view. The old point-mirrored maps all failed the camera
+measures for that reason.
+
+The easy fix, learned on Dockside: put the two starts on the screen's
+left-right axis (one at -x/+z, the other at +x/-z). Then both players face
+each other across the screen, both hide on faces the camera sees the same
+way, and the camera measures come out even almost by themselves. Moving
+Dockside's spawns did more for its camera numbers than any amount of moving
+containers. Dockside, Scrapyard and Nest start this way; the others start
+in opposite corners and balance the camera with box heights and placement
+instead.
 
 ## Readability from the iso camera
 
@@ -156,20 +218,14 @@ box shorter than `y + 0.35` m. In practice:
 
 - a box up to 1.35 m can never hide a player's chest (1 m), and one up to
   2.0 m can never hide a whole player (head ~1.7 m);
-- all long walls are low: sandbags 1.1 m, barriers 1.2 m, brick 1.4 m;
-- containers (1.8 m) are only used for compact blocks (hangars, the Dockside
-  rows, tower, spawn shelters), never as thin maze walls;
+- all long walls are low: sandbags 1.1 m, barriers 1.2 m, brick 1.4 m
+  (1.2 m on Runway, see its section);
+- containers (1.8 m) are only used for compact blocks (the Runway terminal and
+  tower, the Dockside stacks, spawn shelters, the Scrapyard wrecks), never as thin maze walls;
 - the validator refuses anything over 2.0 m and reports `cam-hidden`: 0 to
-  2.8 % of the floor, against 0.3 % for Yard. Dockside is the highest, right
-  behind its container rows, by design (it is the "break line of sight" map);
+  2.9 % of the floor. Dockside is the highest, behind its container stacks,
+  by design (it is the "break line of sight" map);
 - outer walls stay at 1.4 m or lower on every theme.
-
-Nest uses the other symmetry on purpose: mirrored across the x = z line,
-which is the vertical axis of the screen. The two spawns sit on the far left
-and far right of the screen and both players see the map exactly the same
-way, including what hides behind what. Point symmetry only approximates this
-(each box hides its own "north" side, and the twin of that spot is on the
-twin's south side).
 
 Screen reach: the view is 22 m tall at 16:9, so the visible ground around the
 player reaches about 19 m along the screen axes (world diagonals) and about
@@ -178,114 +234,150 @@ player reaches about 19 m along the screen axes (world diagonals) and about
 ## The maps
 
 Coordinates: `x` right, `z` down on the plans; "top" means -z. On screen the
-top-left corner of the plan (-x, -z) is at the top.
+top-left corner of the plan (-x, -z) is at the top. "Side A" is spawn 0's
+side, "side B" spawn 1's.
 
 ### Yard
 
-The original arena, unchanged: a 3 x 3 crate stack in the middle, two
-sandbag lines, two barriers, two small containers. Open (51 % of point pairs
-see each other) and fast (2.9 s to contact). Kept as the default and as the
-map the smoke test runs on.
+The original arena, rebuilt without mirroring, 30 x 30 m. Still sparse and
+open (51 % of point pairs see each other, 3.0 s to contact), and still the
+default and the map most smoke checks run on. Each corner has its own cover:
+
+- **Trench** (north-west, spawn 0): two low sandbag lines.
+- **Pen** (south-east, spawn 1): a container and a long sandbag line.
+- North-east: two barrel stacks and a short barrier. South-west: one barrier.
+- A 3 x 3 crate stack a step north of the centre.
+
+Balance: the two starts are in opposite corners as before; the Trench's
+two lines and the Pen's container give each side about the same cover and
+view. The first clear shot now comes at about 21 m (the old layout gave 7 m).
+The respawn corners (2 and 3) no longer see each other.
 
 ### Runway: the sniper's map
 
-An abandoned desert airstrip at noon, 40 x 28 m. The widest and emptiest map
-(`longest LOS` 41.8 m, `LOS>18m` 21 %), with the safest spawns (9 %).
+An abandoned desert airstrip at noon, 40 x 28 m, the widest map. Only 10 %
+of the floor is under cover, and the strip between the two ends stays open:
+the longest clear shot is 40 m and 15 % of the long point pairs see each
+other, the most of any map after Yard.
 
-- **Bays** (four corners): sandbag revetments, U-shaped, 6 x 5 m, opening
-  towards the middle through a 2 m gap. You spawn under cover.
-- **Blast walls** (x = +-17, z = 0): 6 x 2 m barriers splitting each end in two
-  bays.
-- **Hangars**: four 5 x 3 m containers on the aprons (x = +-6.5 and +-7.5,
-  z = +-10.5), the only tall cover.
-- **Taxiways** (z from -8 to -4 and 4 to 8): open end to end, 40 m. The
-  sniper lane, along world X so it stays on screen longer.
-- **Strip**: a 2 x 2 container **Tower** at the centre and six 2 x 1 barrier
-  islands around it, 5-6 m apart: a rifle player can dash island to island to
-  close the distance on a sniper.
-- Grenades: into a bay through its opening (10 m throw from the taxiway), or
-  behind a hangar.
+- **Terminal** (west, spawns 0 and 2): a 5 x 3 m container block on the north
+  wall with a walled forecourt sheltering spawn 0, a jet-bridge barrier, low
+  sandbag pieces and parked baggage carts on the apron. In the south-west a
+  9 m blast fence stands in front of spawn 2's sandbag shelter.
+- **Hangars** (east, north wall): two open-fronted brick hangars sharing a
+  middle wall, with door stubs and a tug parked in one. Spawn 3 is inside
+  the eastern one.
+- **Fuel Depot** (south-east): three barrel tanks, a sandbag bund, and a fuel
+  truck (a container) next to spawn 1.
+- **Strip**: the control **Tower** (a 2 x 2 container) just west of the
+  middle, and taxiway edge barriers, on the north side of the west half and
+  the south side of the east half. The 40 m sniper lane runs along world X,
+  so it stays on screen longer.
+- Balance: the Terminal is low cover in many pieces, the east end fewer and
+  bigger. Both starts are seen from about 7 % of the floor; cover spots near
+  the spawn (4.3 against 6.0 m²) are the measure closest to its limit. The
+  hangar walls are 1.2 m, not the usual 1.4 m brick: at 1.4 m they cast too
+  much camera shadow and the respawn pair failed.
 
 ### Trenchworks: the shotgun map
 
-Mud, overcast light, 28 x 28 m. A 7 x 7 grid of 3 m trench cells with 1 m
-sandbag walls (1.1 m tall), plus a 12 x 12 m plaza in the middle. The longest
-clear shot is 23 m and only 12 % of point pairs see each other; nothing
-lines up past rifle range.
+Mud, overcast light, 28 x 28 m, sandbag trenches (1.1 m) all over. The
+longest clear shot is 25 m and only 11 % of point pairs see each other.
 
-- **Plaza** (x, z from -6 to 6): four 3 m doors in a pinwheel (top-left,
-  right-top, bottom-right, left-bottom), a 2 x 2 crate in the middle, four
-  barrel stubs. No two doors line up.
-- **Long Trench**: the 14 m wall at x = -6.5 (and its twin at 6.5) along the
-  plaza's west side, the spine of the maze.
-- **Edge runs**: the 3 m corridors along the outer walls give the longest
-  straight shots (about 20 m), the one place a rifle does well.
-- **Dugouts**: the corner cells where the spawns are. Every cell has at least
-  two exits; there are no dead ends.
-- Grenades: every trench cell is 3 m wide, so a grenade on a corner covers
-  both legs; the plaza doors are the classic flush.
+- **Warren** (top of the screen, spawn 0): long parallel sandbag trenches
+  in tight 3 m cells, with crate stacks at the junctions. The **Long
+  Trench**, a 10 m sandbag wall at x = -6.5, is its spine.
+- **Barrel Yard** (bottom right, spawn 1): wider cells broken up by barrel
+  piles, short sandbag stubs off the east wall and a brick L.
+- **Brick Row** (bottom left, spawn 2): one brick wall and a few stubs off
+  the south wall, split from the Barrel Yard by a sandbag line.
+- **Crater** (the middle): a broken sandbag ring, open to the west and the
+  south-east.
+- Balance: the Warren has more walls, the Barrel Yard fatter blocks. Cover
+  spots near the spawn come out at 5.4 against 6.2 m²; the walk to the
+  Crater (19.9 against 18.6 m) is the measure closest to its limit.
+- Grenades: every trench is about 3 m wide, so a grenade on a corner covers
+  both legs.
 
 ### Fort: the central structure
 
-A brick blockhouse at dusk, 32 x 32 m. The middle is a 12 x 12 m walled
-square (1.4 m brick) around a 4 x 4 m crate **Keep**, which leaves a 3 m
-**Ring** corridor inside. Four 3 m doors in a pinwheel, each with a 3 x 1 m
-sandbag 2-3 m outside it. You can hold the Ring, circle the Keep, or fight
-around the outside.
+A brick blockhouse at dusk, 32 x 32 m. In the middle, a 12 x 9 m hall with a
+guardroom annex on its south-east corner, round a crate **Keep**: inside,
+the floor is an L. Four 1.4 m brick walls, four doors, no two facing each
+other (north and south-west on the Field side, east on the Courtyard side,
+the guardroom's on the South Yard), and a thick brick pier between hall and
+guardroom that stops any shot straight through the building.
 
-- **Doors**: top (x -4..-1), right (z -4..-1), bottom (x 1..4), left
-  (z 1..4). Because they are offset, you can't see through the fort.
-- **Edge walls** at the middle of each side (brick, 2 x 4 m) keep the spawn
-  corners from seeing each other along the edges.
-- **Corners**: a sandbag L in front of spawns 0 and 1, a 2 x 2 crate stack in
-  front of spawns 2 and 3, each about a dash from the spawn.
-- Grenades fly over the 1.4 m walls: from outside you can clear a Ring leg
-  without entering. The inside is a trap if you sit still.
+- **Field** (top of the screen, spawn 0): open ground with a sandbag
+  dugout, one trench line, a crate stack and a few barrels. Long looks, few
+  pieces.
+- **Courtyard** (bottom right, spawn 1): brick stubs and a crate off the
+  east wall, barrels and crates in front of the spawn. Short looks, more
+  corners.
+- **North Post** (spawn 3) and **South Yard** (spawn 2) on the other two
+  corners.
+- Balance: the dugout right at spawn 0 makes up for the Field's open
+  ground. Both starts are seen from 10.3 % of the floor and have the same
+  cover spots nearby (5.8 against 5.7 m²); the Field's walk to the middle is
+  0.9 m longer.
+- Grenades fly over the 1.4 m walls: from outside you can clear the hall
+  without going in. The inside is a trap if you sit still.
 
 ### Dockside: lanes and flanks
 
-The container docks at night, 36 x 28 m. Two rows of containers (z -7..-5 and
-5..7, 1.8 m tall) split the map into three lanes, with three 3 m **Gaps** in
-each row.
+The container docks at night, 36 x 28 m. Two broken rows of cargo split the
+map into three lanes.
 
-- **Mid** (z -5..5): long and open (35 m), two barriers each side and a crate
-  pair at the centre. The rifle lane.
-- **Quays** (top and bottom lanes): cluttered with barrels and crates, broken
-  in the middle by a 2 x 4 m crate **Stack** against the wall. SMG flanks. The
-  spawns sit at the ends of the quays.
-- **Gaps**: x -9..-6, 6..9 and one at the far end of each row. Crossing a gap
-  is the risky move; a grenade in a gap flushes a camper.
+- **Stacks** (west, bottom-left of the plan, spawn 0): tall containers
+  (1.8 m) standing in rows and columns, narrow alleys, sight broken
+  everywhere. SMG ground.
+- **Berth** (east, top-right, spawn 1): crate stacks, barrels and a low
+  barrier, with two containers waiting to be loaded. More, smaller cover.
+- **Mid**: the lane between the two cargo rows, a barrel pile in the middle.
+  The rifle lane.
+- Spawns: the two starts at the screen's left and right ends (-x/+z and
+  +x/-z), the respawn pair in the middle of each quay.
+- Balance: exposure, cover and the walk to the middle are within a few
+  tenths. The Stacks' tall containers hide more floor from the camera (3.0 %
+  of the side against 1.7 %), the measure closest to its limit; the starts
+  on the screen's left-right axis are what keeps that even (see "Why
+  mirroring is not enough").
 
 ### Nest: king of the hill
 
-A cold field, 30 x 30 m, mirrored left/right on screen. In the middle, a
-**Pit** of four sandbag L corners (6 x 6 m inside, 2 m openings in the middle
-of each side). Whoever holds it has cover from every side; the other player
-has to come at it across open ground (29 % of pairs see each other), or throw
-a grenade: the 3.5 m blast covers almost the whole pit.
+A cold field, 30 x 30 m. In the middle a lopsided sandbag **Nest**, closed
+at the top of the screen (a sandbag wall meeting a barrier) and open three
+ways, none alike: a wide gap at the screen-left corner and two narrow slots
+on the screen-right side, one each side of a crate block. Whoever holds it
+has cover from every side; the other player comes at it across open ground,
+or throws a grenade: the 3.5 m blast covers most of it.
 
-- **Tower** (screen top, x = z = -8): a 3 x 3 m container. **Barrels** (screen
-  bottom, x = z = 7): a 2 x 2 m barrel stack.
-- Approach cover about a dash apart on both sides: crates, a barrier and a
-  sandbag line each.
-- **Shelters**: a container and a sandbag wall around each pair of spawns
-  (far left and far right of the screen).
+- **Trench** (screen left, spawns 0 and 2): two long sandbag lines from the
+  spawn to the nest's wide corner. Covered all the way.
+- **Stepping stones** (screen right, spawns 1 and 3): low crate stacks about
+  a dash apart across open ground, to the two narrow slots.
+- Flanks: at the top of the screen a container block, a barrier stub and a
+  crate stack; at the bottom a sandbag line, a stub and barrels. They cut the
+  long edge lanes.
+- Balance: the trench is safe but long, the crates quicker but exposed. Both
+  sides reach the nest in about the same time (3.1 s to contact on both
+  pairs), and the spawns sit on the screen's left-right axis.
 
-### Scrapyard: looks lopsided, isn't
+### Scrapyard: really lopsided
 
-A junkyard at sunset, 34 x 30 m. The collision is point-symmetric, but each
-half is dressed differently (12 twin pairs wear different props: the
-**Crusher** container at the top right is a crate pile at the bottom left,
-barrels become crates, sandbags become barriers). The layout is irregular on
-purpose: no straight lanes, piles of different sizes.
+A junkyard at sunset, 34 x 30 m.
 
-- **Spine**: a staircase of junk from top right to bottom left through the
-  centre (container, crate pile, barrels, then their twins), with 2 m gaps
-  between the steps. It runs across the screen, so it splits the two
-  players' halves.
-- **Ruin**: an L of brick walls on the left edge (and its twin on the right)
-  that keeps the two spawns of a side apart.
-- Grenades: into the Ruin's corner, or through a Spine gap.
+- **Heap** (west, bottom-left of the plan, spawn 0): a maze of low junk walls
+  (sandbags, barriers, brick) on a 3 m grid with 2 m alleys, and a barrel
+  dump. Cover everywhere, short sightlines, slow to cross. SMG and shotgun.
+- **Lot** (east, top-right, spawn 1): open ground with a few big wrecks
+  (three containers, a crate pile, two brick stubs in the middle) and a
+  sandbag shelter at the start. Long lanes between the wrecks. Rifle.
+- Spawns: the two starts at the screen's left and right ends, like Dockside.
+- Balance: the Heap's many walls and the Lot's few big ones give about the
+  same cover near each spawn (9.1 against 7.8 m²). The Lot's wrecks hide a
+  little more from the camera (1.6 % of the side against 0.4 %), the
+  measure closest to its limit.
 
 ## Wiring plan
 
@@ -317,9 +409,8 @@ delete `ARENA_HALF`, `OBSTACLES` and `SPAWN_POINTS` (Yard now lives in
 
 Add `export * from "./maps/index.ts";`. No name clashes: the maps module
 exports `MapDef`, `Obstacle`, `ObstacleKind`, `Decor`, `DecorProp`,
-`FLAT_DECOR`, `TALL_DECOR`, `MapTheme`, `WallStyle`, `WeaponTag`, `Symmetry`,
-`Spawn`, `Reskin`, `AsciiLegend`, `MAPS`, `DEFAULT_MAP_ID`, `mapById`, `box`,
-`symmetric`, `spawnPairs`, `mirrorPoint`, `mirrorBox`, `asciiPoint`.
+`FLAT_DECOR`, `TALL_DECOR`, `MapTheme`, `WallStyle`, `WeaponTag`,
+`Spawn`, `AsciiLegend`, `MAPS`, `DEFAULT_MAP_ID`, `mapById`, `box`, `ascii`.
 
 ### 3. `packages/shared/src/physics.ts`
 

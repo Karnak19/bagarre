@@ -1,34 +1,47 @@
-// Yard: the original arena from arena.ts, converted as-is (same boxes, same
-// spawns in the same order, same props and lighting as arenaView.ts/scene.ts).
-// Only `h` differs from arena.ts: here it is the height arenaView.ts actually
-// draws each prop at (arena.ts's `h` was never used), so a renderer that
-// honours `h` keeps the Yard looking exactly as it does today.
-import type { MapDef } from "./types.ts";
+// Yard: the original arena and the default map, rebuilt without mirroring.
+// Still sparse and open. Each corner has its own kind of cover: the Trench
+// (two low sandbag lines) around spawn 0 in the north-west, the Pen (a
+// container and a long sandbag line) around spawn 1 in the south-east,
+// barrels and a barrier stub in the north-east, one barrier in the
+// south-west, and the crate stack a step north of the centre.
+//
+// The smoke tests walk straight lines on this map, so a few things are kept
+// on purpose: spawns 0/1 at (-12,-12) and (12,12), the z = -12 row clear from
+// x = -12 to the east wall, the x = 12 and x = 14.5 columns clear, the Pen's
+// sandbag line with its west face at x = 6.5 across z = 4 (it stops a dash),
+// and spawn 1 hidden from (0,-12) and the farthest spawn from it.
+import { box, type MapDef } from "./types.ts";
 
 export const YARD: MapDef = {
   id: "yard",
   name: "Yard",
-  blurb: "The old training yard: a crate stack in the middle, four pieces of cover, no surprises.",
+  blurb: "The old training yard: open ground, a crate stack near the middle and a different bit of cover in every corner.",
   halfX: 15,
   halfZ: 15,
-  symmetry: "point",
   obstacles: [
-    { kind: "crate", x: 0, z: 0, w: 3, d: 3, h: 1.5 },
-    { kind: "sandbags", x: -7, z: -4, w: 1, d: 5, h: 1.35 },
-    { kind: "sandbags", x: 7, z: 4, w: 1, d: 5, h: 1.35 },
-    { kind: "barrier", x: -4, z: 8, w: 5, d: 1, h: 1.3 },
-    { kind: "barrier", x: 4, z: -8, w: 5, d: 1, h: 1.3 },
-    { kind: "container", x: -9.5, z: 9.5, w: 2, d: 2, h: 1.8 },
-    { kind: "container", x: 9.5, z: -9.5, w: 2, d: 2, h: 1.8 },
+    // North-west (spawn 0): the Trench, two low sandbag lines.
+    box("sandbags", -12.4, -9.75, 5.2, 1, 1.1),
+    box("sandbags", -5.25, -7.75, 5.25, 1, 1.1),
+    // The crate stack, a step north of the centre.
+    box("crate", -2.75, -3.25, 3, 3, 1.5),
+    // South-east (spawn 1): the Pen, a container and a long sandbag line.
+    box("container", 9.25, 11.5, 3, 2, 1.8),
+    box("sandbags", 7, 5.25, 1, 6.25, 1.2),
+    // North-east (spawn 3): barrels and a barrier stub.
+    box("barrels", 5.75, -9.75, 2, 2, 1.2),
+    box("barrels", 3.25, -3.75, 1.5, 1.5, 1.2),
+    box("barrier", 10.2, -4.25, 2.4, 1, 1.2),
+    // South-west (spawn 2): one barrier.
+    box("barrier", -7, 9.25, 4, 1, 1.2),
   ],
   spawns: [
     { x: -12, z: -12 },
     { x: 12, z: 12 },
-    { x: -12, z: 12 },
-    { x: 12, z: -12 },
+    { x: -12, z: 11 },
+    { x: 10.75, z: -10 },
   ],
   decor: [
-    { prop: "Debris_Papers_1", x: -3, z: -3.5, yaw: 0.4 },
+    { prop: "Debris_Papers_1", x: -0.5, z: 0.5, yaw: 0.4 },
     { prop: "Debris_Papers_2", x: 3.5, z: 3, yaw: 2.1 },
     { prop: "Debris_Papers_3", x: -10.5, z: 2.5, yaw: 1.2 },
     { prop: "Debris_Papers_1", x: 10, z: -2, yaw: 3.3 },

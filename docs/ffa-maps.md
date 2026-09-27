@@ -1,15 +1,17 @@
 # Free-for-all maps
 
-Three maps for a free-for-all mode (3-6 players, first to 15 kills or the
-most kills after 6 minutes). They live in `packages/shared/src/maps/ffa/` and
-nothing uses them yet: the mode is wired later, following the plan at the
-end of this file. They are not in `MAPS`, so duel rooms never draw them.
+Three maps for the free-for-all mode (3-6 players, first to 15 kills or the
+most kills after 6 minutes) and the team mode. They live in
+`packages/shared/src/maps/ffa/`, apart from `MAPS`, so duel rooms never draw
+them. Like the duel maps, none of them is mirrored: every quarter or side is
+its own place, and the validator measures that the spawns and the two team
+sides still get the same deal.
 
 | Map | Size | Boxes | Plays like | Favours |
 | --- | --- | --- | --- | --- |
-| Crossroads | 60 x 60 | 69 | A wide town square round a clock tower, ruined quarters and an alley all round | rifle, sniper, shotgun |
-| Freight | 62 x 52 | 73 | A cargo pier: open quays along the water, container rows, a warehouse, a crane in the middle | sniper, rifle, SMG |
-| Bastion | 60 x 60 | 57 | A keep in the middle, an empty ring to run round it, a broken rampart, open fields | rifle, shotgun, sniper |
+| Crossroads | 60 x 60 | 69 | Two streets crossing at a clock tower: a walled garden, a market, a building site and a car park | rifle, sniper, shotgun |
+| Freight | 62 x 52 | 81 | An open quay on the water under two cranes, a fenced container yard inland, a crane in the middle | sniper, rifle, SMG |
+| Bastion | 60 x 60 | 69 | A broken keep, a ring to run round it, a rampart, and four fields each built its own way | rifle, shotgun, sniper |
 
 ## Tools
 
@@ -36,74 +38,89 @@ Coordinates as in docs/maps.md: `x` right, `z` down on the plans, "top" is
 
 ### Crossroads: a town square
 
-A shelled town at morning where two roads cross. One quarter is authored and
-rotated four times, so the four quarters play the same but each wears its own
-props. That is the only way to tell them apart at a glance, so keep it that
-way when editing.
+A shelled town at morning where two streets cross at a small square. Each
+quarter between the streets is its own place, and so is each street.
 
-- **Square** (|x|, |z| < 9, open to the roads): the **Clock Tower** (a 3 x 3
-  container) in the middle, a crate stall at each corner and a sandbag line
-  at each road mouth. The open ground: the rifle and sniper fight here.
-- **Roads** (4.5 m either side of the axes): four straight lanes from the
-  Square to the town wall, with nothing in them. Each one is a 60 m sniper
-  lane across the Square, so crossing a road is the risky move. The longest
-  sightlines (61-63 m) are the diagonals along them.
-- **Quarters**, each a ruined **Chapel** (four walls, three gaps, an altar)
-  plus two long **row houses** (two offset walls, a hall you run through) along
-  its roads. The shotgun and SMG ground: 37 % of the floor sees less than
-  250 m².
-  - NW **Chapel**: brick and crates.
-  - NE **Depot**: concrete barriers and containers.
-  - SE **Barracks**: sandbags and fuel barrels.
-  - SW **Market**: concrete barriers and crate stalls.
-- **Alley** (the outer 5 m): a loop round the whole town, broken by two crate
-  piles per side so it is never a 60 m lane.
-- **Loops**: the alley, the Square, and the lanes between the chapel and the
-  row houses, which join the alley to the Square's corners. From anywhere
-  there are at least two ways out.
-- **Spawns**: 4 per quarter (the road by a row house, the alley between the
-  crates, the alley corner, inside the chapel).
+- **Square** (|x|, |z| < 9): the **Clock Tower** in a pinwheel of four
+  offset flower beds, so nobody sees the middle from a street mouth.
+- **Walled Garden** (NW): a brick wall with four gates round hedges and a
+  **Gazebo**. Closed, middle-range fights.
+- **Market** (SW): a dense grid of stalls with 2 m aisles. The shotgun and
+  SMG ground.
+- **Building Site** (NE): a barrier fence, closed toward the Square, round a
+  half-built brick shell, the tall **Site Office** and stacks of material.
+  Mixed.
+- **Car Park** (SE): a big open lot with a few parked cars, open to the East
+  Road. The rifle and sniper ground.
+- **Streets**: the North Road is a wide boulevard with jersey barriers down
+  the middle; the West Lane has a broken wall down the middle; the East Road
+  opens into the Car Park; the South Street is lined with the market's
+  overflow stalls. The longest sightline (67 m) runs along them.
+- **Teams**: West (spawns 0-7: the Garden and the Market, the closed side)
+  against East (8-15: the Site and the Car Park, the open side). The spawns
+  are placed so both sides are as exposed, as close to cover and as far from
+  the Square: mean distance to the hub 25.6 against 26.5 m, territory 49
+  against 51 %, every camera measure within 0.5 pp. No West spawn sees an
+  East spawn: the Market's south-east spawn sits at (-12, 24), a step back
+  behind the South Street stalls, so it doesn't look along the south wall at
+  the Car Park's spawn at (20, 28).
 
 ### Freight: the port
 
-A cargo pier at dusk, water on both long sides. The collision is
-point-symmetric; the second half is dressed differently.
+A cargo port at dusk. The two halves are different places.
 
-- **Quays** (the outer 7 m on the north and south edges): long, mostly open
-  lanes along world X (which stays on screen longer), with cargo against the
-  water's edge. The sniper lanes.
-- **Container Yard** (NW) and its twin, the **Crate Stacks** (SE): three
-  staggered rows of 2 m deep stacks (1.8 m tall) with 2 m aisles. A maze for
-  the SMG. Crossing an aisle is exposed along its whole length.
-- **Warehouse** (NE): a brick shell with five doors round three crate
-  stacks, for close fights. Its twin is the sandbagged **Fuel Depot** (SW),
-  with barrels.
-- **Truck Lanes** (between the Yard and the Warehouse, and their twins): a
-  barrier and a crate each, the link from the quay to the middle.
-- **Boulevard** (|z| < 7, the full width) with the **Crane** in the middle: four
-  container legs round a crate pallet, the landmark and the hub. Islands
-  (crates, sandbags, barriers, barrels) about a dash apart along it.
-- **Loops**: quay, truck lane, boulevard, and back through the Yard or the
-  Warehouse; or all the way round the pier.
+- **North Quay** (the water is the north wall): a long, open strip along the
+  screen's X, the sniper lane. Two gantry cranes (**Crane One**, **Crane
+  Two**) stand over it, legs on the water's edge and on the landside rail;
+  the only tall cargo sits flush against the water, so nothing tall stands
+  between the quay and the camera. Behind the rail: the low brick **Harbour
+  Office** (NW), an **Apron** of loose cargo, and two **Reefers** standing
+  end-on (NE).
+- **Container Yard** (the land side, south): dense and closed, behind a
+  barrier fence with five gates, each masked by a crate stack so you can't
+  see straight through. West of the middle, container rows and crate stacks
+  run along X (the **Container Stacks**); east of it, containers stand in
+  columns along Z with the **Truck Bays** between them. The **Gate Road**
+  runs along the south wall, with the **Gatehouse** at its west end.
+- **Boulevard** (|z| < 7) across the whole port, with the yard **Crane** in
+  the middle (four legs round a hanging container): the hub.
+- **Teams**: North Quay (even spawns) against Container Yard (odd spawns).
+  The quay is open and its spawns sit at its edges; the yard is closed and
+  some of its spawns sit in front of the fence to make up for it. The camera
+  looks from the +x/+z corner, so tall boxes on the quay stand against the
+  water or end-on, and the yard's containers face the hub with their +z
+  side. Margins are thin here: exposure 7.9 against 6.9 %, walk to the hub
+  24.1 against 25.1 m, territory 52 against 48 %.
 
 ### Bastion: the ring round the keep
 
-A hill fort at noon. One quarter is authored and rotated four times. The Keep
-stays brick; the outer works change props per quarter (north: sandbags and
-crates, east: concrete, south: fuel barrels, west: barriers and containers).
+A hill fort at noon.
 
-- **Keep** (|x|, |z| < 7): brick walls with four doors in a pinwheel (you
-  can't see through), round the crate **Vault**. The shotgun room, and a
-  grenade trap.
-- **Ring** (7..12): a 5 m corridor round the Keep with a small crate in each
-  corner. The loop: a chased player can always go round.
-- **Rampart** (12..13): sandbags or barriers with two gates per side, offset
-  so no gate lines up with a Keep door.
-- **Field** (13..30): open ground with trench lines, crate piles, barrels
-  and a container **Bunker** in each corner. The rifle and sniper ground: 54 %
-  of the floor has a long view.
-- **Spawns**: 4 per quarter (behind the trench line, by the barrels off the
-  rampart corner, in the bunker's corner, in the Ring by a Keep door).
+- **Keep** (about -8..6 on x, -6..7 on z): an irregular brick hall with
+  five doors round a crate **Vault**, its north-east corner knocked in onto
+  a small barrel yard, the **Breach**. The shotgun room, and a grenade trap.
+- **Ring**: a corridor round the Keep you can run round forever, wider on
+  the north where the Breach is. A chased player can always go round.
+- **Rampart** (about 12-14 m out): sandbags on the north and south,
+  concrete barriers on the east and west, each side with its own uneven
+  gates, and a jutting **Outwork** at the north-west corner.
+- **Fields** (out to 30 m), each built differently:
+  - North, the **Trenches**: long staggered sandbag lines and a container
+    bunker in the north-west corner (rifle cover).
+  - West, the **Supply Dump**: four tall containers you weave between, and a
+    sandbag nest in the south-west.
+  - East, the **Checkpoint**: a few long concrete barriers on open ground and
+    a crate tower in the north-east. The sniper field.
+  - South, the **Fuel Depot**: a dense patch of barrels and crate stacks,
+    with a big pile in the south-east.
+- **Teams**: West (spawns 0-3 and 12-15: Trenches and Supply Dump) against
+  East (4-11: Checkpoint and Fuel Depot). The Supply Dump's containers throw
+  more camera shadow; the East side answers with crate stacks, which are
+  also over 1.2 m (tall-box shadow 2.9 against 1.7 %). No West spawn sees an
+  East one. That took three East spawns tucked in: the NE Tower's corner
+  spawn at (24.5, -26.5) and the one by its crates at (13.5, -16) no longer
+  look down the Trenches, and the SE Stacks spawn at (25, 23) no longer sees
+  across the Fuel Depot to the south-west.
 
 ## What FfaMapDef adds
 
@@ -127,10 +144,9 @@ interface FfaMapDef extends MapDef {
   the Crane").
 - `hub`: where players drift when they don't know where anyone is. The
   validator's first-contact model walks everyone there.
-- `spawns`: 16 per map, **not** in mirrored pairs (the MapDef comment about
-  `spawns[2k + 1]` is for duels). `symmetry` is `"point"` on all three, which
-  is true (a four-fold rotation includes the half turn), but nothing relies
-  on it.
+- `spawns`: 16 per map, **not** in pairs (the MapDef comment about
+  `spawns[2k + 1]` is for duels). Balance is measured (spawn spread and team
+  balance, below), not built in by mirroring.
 - `decor` is empty for now. The zone looks come from the obstacle kinds; a
   flat-decor pass (papers in the Square, pallets on the quays, tyres and
   cones outside the walls) can come after playtesting.
@@ -165,7 +181,7 @@ camera occlusion, `bodiesSee`/`clearShot`).
   reachability, and cam-hidden floor.
 - **Changed**: size is 50..64 m. The long-wall rule is "a box under 1.5 m
   thick and 4 m or longer must be 1.1-1.4 m tall", so the 2 m deep container
-  rows (Dockside-style) may be 1.8 m. There is no symmetry check.
+  rows (Dockside-style) may be 1.8 m.
 - **New**:
   - **Box budget**: 90 at most.
   - **Spawn spread**: at least 16 spawns, at least 8 m apart, every standable
@@ -193,38 +209,65 @@ camera occlusion, `bodiesSee`/`clearShot`).
   - **Respawns**: 1500 draws of 5 opponents on random floor. At least 95 %
     must find a spawn none of them sees.
   - **Longest sightline**: reported, with a warning over 45 m.
+  - **Not mirrored**: the duel validator's mirror check (`mirrorCheck` in
+    `scripts/analyze.ts`): at most 45 % of the box footprint may have a
+    twin under any one mirror. The three maps sit at 26-31 %.
+  - **Spawn spread** (`SPREAD` in `scripts/ffa/analyze.ts`): every spawn
+    within max(abs, rel x median) of the 16 spawns' median. One-sided for
+    exposure (+5 pp or +80 %), nearest cover (+1.5 m), walk to the hub
+    (+8 m or +55 %) and cover spots against the hub within 10 m walk (-6 m²
+    or -60 %); two-sided for the camera, within 10 m walk: chest hidden
+    (+-3 pp) and waist hidden by a box over 1.2 m (+-5 pp).
+  - **No enemies in sight at the start**: no spawn on one side may see a
+    spawn on the other, at any distance. The server picks each team's starts
+    on its own side without looking at the other team, so a single pair in
+    sight could open a match with enemies face to face. Distance is no
+    excuse: a pair out of range is a few steps from being in range. All
+    three maps have none.
+  - **Team balance** (`BALANCE` in `scripts/ffa/teams.ts`), red vs blue, on
+    top of the hub-distance rules: mean exposure (1.5 pp or 15 %), mean
+    nearest cover (0.5 m), mean walk to the hub (1.5 m or 5 %), mean
+    cam-hidden floor near the spawns (1.5 pp), territory split by walking
+    distance (6 pp), cam-hidden territory (1.5 pp), tall-box shadow in the
+    territory (2 pp), cam-hidden cover spots against the hub (8 pp).
 
 Results:
 
 ```
-map         size   boxes  camp   exp ratio  contact med/p90  longest  hidden resp  result
-crossroads  60x60  69     21.7%  2.52       4.47 / 4.47 s    63.3 m   100.0%       ok
-freight     62x52  73     24.1%  2.71       3.67 / 3.93 s    61.1 m   100.0%       ok
-bastion     60x60  57     22.5%  1.51       3.67 / 4.00 s    61.5 m   100.0%       ok
+map         size   boxes  camp   exp ratio  contact med/p90  longest  hidden resp  worst gap                      teams  result
+crossroads  60x60  69     24.2%  2.50       3.47 / 4.00 s    67.2 m   100.0%       85% spawn 12 exposure          ok     ok
+freight     62x52  81     24.4%  2.79       3.53 / 3.93 s    61.7 m   100.0%       92% spawn 1 tall shadow near   ok     ok
+bastion     60x60  69     20.1%  2.56       3.67 / 3.87 s    61.1 m   100.0%       91% spawn 12 tall shadow near  ok     ok
 ```
+
+`worst gap` is the spawn-spread or team-balance measure closest to failing,
+as a share of what it is allowed (over 100 % fails). All three are close to
+their limits (85-92 %), Freight the most: move a spawn or a tall box there
+and rerun the validator.
 
 | | Crossroads | Freight | Bastion |
 | --- | --- | --- | --- |
-| spawn exposure | 4.7-11.9 % | 4.2-11.4 % | 7.9-11.9 % |
-| nearest cover | 1.0-1.6 m | 1.0-2.0 m | 1.0-2.2 m |
-| tight / open floor | 37 / 11 % | 31 / 14 % | 13 / 54 % |
-| first contact, 3 / 6 players (median) | 4.5 / 1.9 s | 3.9 / 2.1 s | 4.0 / 1.2 s |
-| respawn to nearest opponent (median) | 27 m | 27 m | 26 m |
-| cam-hidden floor | 0.1 % | 1.8 % | 0.3 % |
+| spawn exposure | 4.1-10.3 % | 4.1-11.4 % | 5.3-13.5 % |
+| nearest cover | 1.0-2.0 m | 1.0-2.2 m | 1.1-3.0 m |
+| tight / open floor | 46 / 14 % | 46 / 10 % | 19 / 12 % |
+| first contact, 3 / 6 players (median) | 4.0 / 0.9 s | 3.9 / 0.5 s | 4.0 / 1.6 s |
+| respawn to nearest opponent (median) | 27 m | 26 m | 26 m |
+| cam-hidden floor | 0.1 % | 1.4 % | 0.3 % |
+| mirrored box footprint (worst mirror) | 31 % | 30 % | 26 % |
 
 Accepted warnings: the longest sightline is over 45 m on all three (the
-Crossroads roads, the Freight quays and boulevard, the Bastion field
+Crossroads streets, the Freight quay and boulevard, the Bastion field
 diagonals). Those are the sniper lanes, and past 30 m nothing can shoot
 anyway.
 
 How to read the contact numbers: the model is pessimistic about speed.
 Everyone rushes the centre and the first sight counts. With 6 players, the
-start spreads them less (16 spawns for 6 people), so contact comes in 1-2 s;
-that seems right for 6.
+start spreads them less (16 spawns for 6 people), so contact comes in under
+1.5 s (0.5 s on Freight); fine for 6, where someone is always fighting.
 
 ## Performance
 
-- **Boxes**: 57-73 per map, against 7-28 on duel maps. `movePlayer` and
+- **Boxes**: 69-81 per map, against 7-28 on duel maps. `movePlayer` and
   `bulletBlocked` loop over every box. With 6 players and about 30 live
   bullets at 4 sub-steps, that is about 10k box tests per tick. That's cheap,
   and a spatial grid can wait.

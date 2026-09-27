@@ -1,55 +1,73 @@
-// Nest: king of the hill. A sandbag nest in the middle with four openings,
-// open ground around it, and the spawns on the far left and right of the
-// screen. Mirrored across the screen's vertical axis, so both players see
-// the map exactly the same way.
-import { box, spawnPairs, symmetric, type MapDef } from "./types.ts";
+// Nest: king of the hill. A lopsided sandbag nest in the middle that both
+// players race for, and two approaches that do not look alike: screen-left
+// (spawns 0 and 2) creeps up a long covered sandbag trench, screen-right
+// (spawns 1 and 3) hops between low crate stacks across open ground. Not
+// mirrored: the sides are balanced by measurement (scripts/analyze.ts
+// `fairness`), including what the iso camera hides.
+import { box, type MapDef } from "./types.ts";
 
 const HALF = 15;
 
-// One side of the mirror (x, z) -> (z, x); `symmetric` adds the other.
-const HALF_BOXES = [
-  // The nest: four L corners around a 6 x 6 m pit, 2 m openings mid-side.
-  box("sandbags", -2.5, 3.5, 3, 1, 1.1), // screen-left corner, both arms
-  box("sandbags", -3.5, 2, 1, 2, 1.1),
-  box("sandbags", -2.5, -3.5, 3, 1, 1.1), // screen-top corner, one arm (its mirror is the other)
-  box("sandbags", 2.5, 3.5, 3, 1, 1.1), // screen-bottom corner, one arm
-  // Approach cover, about a dash apart.
-  box("crate", -7.5, 3, 2, 2, 1.5),
-  box("barrier", -6, 9.5, 3, 1, 1.2),
-  box("sandbags", 3, 10.5, 3, 1, 1.1),
-  box("sandbags", -11, -1, 1, 3, 1.1),
-  // Spawn shelter: a container and a sandbag wall between the two spawns of a side.
-  box("container", -10.5, 10.5, 2, 2, 1.8),
-  box("sandbags", -13, 11, 4, 1, 1.1),
-  box("sandbags", -11.5, 4.5, 2, 1, 1.1),
+const OBSTACLES = [
+  // The nest. Closed at the top of the screen (a sandbag wall meeting a
+  // barrier), open three ways, none alike: a wide gap at the screen-left
+  // corner where the trench arrives, and two narrow slots on the screen-right
+  // side, one on each side of a crate block.
+  box("sandbags", -4, -0.5, 1, 7, 1.1), // west wall
+  box("barrier", -1.15, -3.5, 4.7, 1, 1.2), // north wall
+  box("crate", 3.75, -1, 1.5, 3, 1.2), // east block
+  box("sandbags", 4, 2.8, 1, 1.4, 1.1), // east stub
+  box("sandbags", 1.25, 4, 5.5, 1, 1.1), // south wall
+  box("crate", 0, 0.3, 1.2, 1.2, 1.5), // the nest's inner block
+
+  // Screen-left: the trench, two sandbag lines from the spawn towards the
+  // nest's open corner. Its top wall stops short of the outer wall so the
+  // spawn side is not walled in.
+  box("sandbags", -9.1, 6.5, 8.2, 1, 1.1),
+  box("sandbags", -6.3, 9.7, 4.6, 1, 1.1),
+  box("container", -11.2, 12.4, 1.6, 1.6, 1.8), // spawn shelter, splits spawns 0 and 2
+
+  // Screen-right: stepping stones, low crates about a dash apart.
+  box("crate", 13.5, -12.1, 3, 1, 1.5), // spawn shelter, splits spawns 1 and 3
+  box("barrier", 13.5, -7.5, 3, 1, 1.2),
+  box("crate", 8.2, -9, 1.5, 1.5, 1.2),
+  box("crate", 4.4, -6.6, 2, 1.5, 1.2),
+  box("crate", 9.8, -5.3, 1.5, 2, 1.2),
+  box("crate", 9.6, -12.1, 1.5, 1.5, 1.2),
+
+  // Flanks. Top of the screen: a container block, a barrier stub on the left
+  // wall and a crate stack on the top wall (they cut the long edge lanes).
+  // Bottom: a sandbag line, a sandbag stub on the bottom wall, barrels.
+  box("container", -3.8, -9.5, 4, 2, 1.8),
+  box("barrier", -13.5, -1.5, 3, 1, 1.2),
+  box("crate", -0.5, -14, 2, 2, 1.2),
+  box("sandbags", 4.4, 8.4, 4, 1, 1.1),
+  box("sandbags", -0.1, 13, 1, 4, 1.1),
+  box("barrels", 12.2, 11, 2, 2, 1.1),
 ];
 
 export const NEST: MapDef = {
   id: "nest",
   name: "Nest",
-  blurb: "One sandbag nest in the middle of a cold field. Take it, hold it, get grenaded out of it.",
+  blurb: "One lopsided sandbag nest in a cold field: one side creeps up a trench, the other hops between crates.",
   halfX: HALF,
   halfZ: HALF,
-  symmetry: "mirrorDiag",
-  obstacles: [
-    ...symmetric("mirrorDiag", HALF_BOXES),
-    // On the mirror axis: must be square.
-    box("container", -8, -8, 3, 3, 1.8),
-    box("barrels", 7, 7, 2, 2, 1.1),
+  obstacles: OBSTACLES,
+  spawns: [
+    { x: -13.5, z: 11.4 },
+    { x: 14, z: -10.7 },
+    { x: -9.4, z: 14 },
+    { x: 12, z: -13.9 },
   ],
-  spawns: spawnPairs("mirrorDiag", [
-    { x: -13.5, z: 13.5 },
-    { x: -13.5, z: 8 },
-  ]),
   decor: [
     // Flat clutter inside (never taller than an ankle, so it never reads as cover).
-    { prop: "Debris_Pile", x: -4.8, z: -9.1, yaw: 2.1 },
+    { prop: "Debris_Pile", x: -7.2, z: -12, yaw: 2.1 },
     { prop: "Debris_Papers_3", x: -3.6, z: 6.4, yaw: 5.5 },
     { prop: "WoodPlanks", x: -5.2, z: 12, yaw: 0.7 },
-    { prop: "Debris_Papers_1", x: -9.4, z: 7.3, yaw: 3.5 },
+    { prop: "Debris_Papers_1", x: -9.4, z: 8.1, yaw: 3.5 },
     { prop: "Debris_Pile", x: 5.2, z: -13.6, yaw: 1.5 },
     { prop: "Debris_Papers_3", x: 4.7, z: -5.3, yaw: 4.9 },
-    { prop: "WoodPlanks", x: 3.1, z: 8.6, yaw: 1.6 },
+    { prop: "WoodPlanks", x: 1.5, z: 9.8, yaw: 1.6 },
     { prop: "Debris_Papers_1", x: 11.6, z: 8.5, yaw: 4.3 },
     { prop: "Debris_Pile", x: 12, z: -3.7, yaw: 3.9 },
     { prop: "Debris_Papers_3", x: -9.4, z: -12.8, yaw: 2.6 },

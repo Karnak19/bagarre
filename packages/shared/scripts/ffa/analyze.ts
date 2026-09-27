@@ -10,20 +10,34 @@ import {
   along,
   bodiesSee,
   boxGap,
+  cameraFlags,
   cellOf,
+  cellPt,
   circleHitsBox,
   clearShot,
+  coverFacing,
   flood,
   gapFilled,
   hiddenFromCamera,
   MIN_GAP,
   MIN_THICKNESS,
+  nearestCover,
+  nearestStandable,
+  polyLength,
+  regionAround,
   R,
   shortestPath,
   standable,
+  walkField,
   walkGrid,
+  type CamFlags,
+  type Grid,
   type Pt,
+  type Tolerance,
+  mirrorCheck,
 } from "../analyze.ts";
+
+export { nearestCover };
 
 // --- Thresholds ----------------------------------------------------------------
 
@@ -83,6 +97,38 @@ export const MIN_TIGHT_SHARE = 0.1;
 export const MIN_OPEN_SHARE = 0.1;
 /** Past this, the longest sightline is a warning (the camera shows ~27 m at most). */
 export const WARN_LONGEST = 45;
+/**
+ * Spawn spread. The maps are not mirrored, so no spawn may be clearly worse
+ * than the others: for each per-spawn metric below, every spawn must sit
+ * within max(abs, rel x median) of the 16 spawns' median. The "near" metrics
+ * look at the floor within NEAR_WALK metres' walk of the spawn (1.7 s), where
+ * a freshly spawned player fights. `exposure` and `cover` keep their older
+ * ratio rules too (MAX_EXPOSURE_RATIO, MAX_COVER_RATIO).
+ */
+export const NEAR_WALK = 10;
+/** Grid for the walk fields and the camera metrics, metres. */
+export const FFA_CELL = 0.25;
+/**
+ * `worse`: which side of the median counts. "high" (more exposure, farther
+ * cover, a longer walk) or "low" (fewer cover spots) are one-sided: a spawn
+ * better than the median is fine. The camera metrics are two-sided: floor
+ * hidden from the camera hurts whoever looks at it, spawned player or not.
+ * `hubWalk` is one-sided on purpose: spawns near the hub and in the corners
+ * are both part of the design, but none may be much farther out than the rest.
+ */
+export const SPREAD: Record<
+  "exposure" | "cover" | "hubWalk" | "camNear" | "tallNear" | "coverNear",
+  { label: string; unit: "%" | "m" | "m2"; tol: Tolerance; worse: "high" | "low" | "both" }
+> = {
+  exposure: { label: "exposure", unit: "%", tol: { abs: 0.05, rel: 0.8 }, worse: "high" },
+  cover: { label: "nearest cover", unit: "m", tol: { abs: 1.5, rel: 0 }, worse: "high" },
+  hubWalk: { label: "walk to hub", unit: "m", tol: { abs: 8, rel: 0.55 }, worse: "high" },
+  camNear: { label: "cam-hidden near", unit: "%", tol: { abs: 0.03, rel: 0 }, worse: "both" },
+  tallNear: { label: "tall shadow near", unit: "%", tol: { abs: 0.05, rel: 0 }, worse: "both" },
+  coverNear: { label: "cover spots near", unit: "m2", tol: { abs: 6, rel: 0.6 }, worse: "low" },
+};
+export type SpreadKey = keyof typeof SPREAD;
+export const SPREAD_KEYS = Object.keys(SPREAD) as SpreadKey[];
 
 const EPS = 1e-6;
 const f = (n: number, d = 1) => n.toFixed(d);
@@ -151,28 +197,7 @@ function exposureAt(m: FfaMapDef, sl: FfaSight, p: Pt): number {
   return seen / sl.pts.length;
 }
 
-/** Distance from a point to the nearest box surface (outer walls don't count: nobody shoots from beyond them). */
-export function nearestCover(m: FfaMapDef, p: Pt): number {
-  let best = Infinity;
-  for (const o of m.obstacles) {
-    const dx = Math.max(0, Math.abs(p.x - o.x) - o.w / 2);
-    const dz = Math.max(0, Math.abs(p.z - o.z) - o.d / 2);
-    best = Math.min(best, Math.hypot(dx, dz));
-  }
-  return best;
-}
-
 // --- First contact -------------------------------------------------------------
-
-function nearestStandable(m: FfaMapDef, p: Pt): Pt {
-  if (standable(m, p.x, p.z)) return p;
-  for (let r = 0.25; r < 10; r += 0.25)
-    for (let a = 0; a < 16; a++) {
-      const q = { x: p.x + r * Math.cos((a * Math.PI) / 8), z: p.z + r * Math.sin((a * Math.PI) / 8) };
-      if (standable(m, q.x, q.z)) return q;
-    }
-  return p;
-}
 
 export interface Contact {
   /** Per spawn: the walk to the hub. */
@@ -203,7 +228,7 @@ const STARTS = 300;
 export function firstContact(m: FfaMapDef): Contact {
   const hub = nearestStandable(m, m.hub);
   const paths = m.spawns.map((s) => shortestPath(m, s, hub)?.points ?? [s]);
-  const lens = paths.map((p) => p.reduce((acc, q, i) => (i ? acc + Math.hypot(q.x - p[i - 1].x, q.z - p[i - 1].z) : 0), 0));
+  const lens = paths.map(polyLength);
   const steps = Math.ceil(HORIZON / DT);
   const pos = paths.map((p, i) => Array.from({ length: steps + 1 }, (_, k) => along(p, Math.min(lens[i], k * DT * PLAYER_SPEED))));
   const n = m.spawns.length;
@@ -278,6 +303,14 @@ function respawnSim(m: FfaMapDef, sl: FfaSight, trials = 1500) {
 export interface SpawnStat {
   exposure: number;
   cover: number;
+  /** Shortest walk to the hub, metres. */
+  hubWalk: number;
+  /** Floor within NEAR_WALK: share where a chest is hidden from the camera. */
+  camNear: number;
+  /** Floor within NEAR_WALK: share where a tall box hides the waist from the camera. */
+  tallNear: number;
+  /** Floor within NEAR_WALK hugging a box that blocks the shot from the hub, m². */
+  coverNear: number;
   /** Other spawns it can see within SHOT_RANGE. */
   sees: number;
   zone: string;
@@ -289,7 +322,14 @@ export interface FfaReport {
   sl: FfaSight;
   contact: Contact;
   spawns: SpawnStat[];
+  /** The walk grid (FFA_CELL) and its camera flags, reused by the team check. */
+  grid: Grid;
+  cam: CamFlags;
+  /** Per SPREAD metric: the median over the spawns, the allowed distance to it, and the worst spawn (distance / allowed). */
+  spread: Record<SpreadKey, { median: number; tol: number; worst: number; worstAt: number }>;
   stats: {
+    /** Highest share of the box footprint with a twin under one mirror (see `mirrorShares` in ../analyze.ts). */
+    mirror: number;
     size: string;
     boxes: number;
     density: number;
@@ -411,7 +451,16 @@ export function checkFfa(m: FfaMapDef): FfaReport {
   if (longest > WARN_LONGEST) warnings.push(`longest sightline ${f(longest)} m (warn over ${WARN_LONGEST} m)`);
 
   // Spawn balance.
-  const spawns: SpawnStat[] = m.spawns.map((s) => ({ exposure: exposureAt(m, sl, s), cover: nearestCover(m, s), sees: 0, zone: zoneOf(m, s) }));
+  const spawns: SpawnStat[] = m.spawns.map((s) => ({
+    exposure: exposureAt(m, sl, s),
+    cover: nearestCover(m, s),
+    hubWalk: 0,
+    camNear: 0,
+    tallNear: 0,
+    coverNear: 0,
+    sees: 0,
+    zone: zoneOf(m, s),
+  }));
   let minSpawnGap = Infinity;
   for (let i = 0; i < m.spawns.length; i++)
     for (let j = i + 1; j < m.spawns.length; j++) {
@@ -455,6 +504,49 @@ export function checkFfa(m: FfaMapDef): FfaReport {
   if (c4[1] < CONTACT_MEDIAN[0] || c4[1] > CONTACT_MEDIAN[1]) errors.push(`4-player first contact median ${f(c4[1], 2)} s outside ${CONTACT_MEDIAN.join("..")} s`);
   if (c4[2] > CONTACT_P90) errors.push(`4-player first contact p90 ${f(c4[2], 2)} s over ${CONTACT_P90} s`);
 
+  // Spawn spread: walk to the hub, and the camera and cover around each spawn.
+  const fg = walkGrid(m, FFA_CELL);
+  const cam = cameraFlags(m, fg);
+  const dHub = walkField(fg, regionAround(fg, m.hub));
+  m.spawns.forEach((s, i) => {
+    const st = spawns[i];
+    st.hubWalk = dHub[cellOf(fg, s)];
+    const d = walkField(fg, [s], NEAR_WALK);
+    let n = 0;
+    for (let c = 0; c < d.length; c++) {
+      if (d[c] === Infinity) continue;
+      n++;
+      st.camNear += cam.chest[c];
+      st.tallNear += cam.tall[c];
+      if (coverFacing(m, cellPt(fg, c), m.hub)) st.coverNear += fg.cell * fg.cell;
+    }
+    st.camNear /= n || 1;
+    st.tallNear /= n || 1;
+  });
+  const spread = {} as FfaReport["spread"];
+  for (const key of SPREAD_KEYS) {
+    const vals = spawns.map((st) => st[key]);
+    const median = quantile([...vals].sort((a, b) => a - b), 0.5);
+    const def = SPREAD[key];
+    const tol = Math.max(def.tol.abs, def.tol.rel * median);
+    let worst = 0;
+    let worstAt = 0;
+    vals.forEach((v, i) => {
+      const off = def.worse === "high" ? v - median : def.worse === "low" ? median - v : Math.abs(v - median);
+      const sc = Math.max(0, off) / tol;
+      if (sc > worst) {
+        worst = sc;
+        worstAt = i;
+      }
+      if (sc > 1) {
+        const u = (x: number) => (def.unit === "%" ? `${f(x * 100)} %` : def.unit === "m" ? `${f(x)} m` : `${f(x)} m²`);
+        const dir = def.worse === "high" ? "+" : def.worse === "low" ? "-" : "+-";
+        errors.push(`spawn ${i} (${m.spawns[i].x},${m.spawns[i].z}): ${def.label} ${u(v)}, median ${u(median)}, allowed ${dir}${u(tol)}`);
+      }
+    });
+    spread[key] = { median, tol, worst, worstAt };
+  }
+
   // Respawns with 5 opponents.
   const rs = respawnSim(m, sl);
   if (rs.hidden < MIN_HIDDEN_RESPAWN) errors.push(`only ${f(rs.hidden * 100)} % of respawns out of every opponent's sight (min ${MIN_HIDDEN_RESPAWN * 100} %)`);
@@ -472,6 +564,9 @@ export function checkFfa(m: FfaMapDef): FfaReport {
   const hidden = tot ? hid / tot : 0;
   if (hidden > 0.05) warnings.push(`${f(hidden * 100)} % of the floor hides a player's chest from the camera`);
 
+  const mirror = mirrorCheck(m);
+  if (mirror.error) errors.push(mirror.error);
+
   const area = 4 * m.halfX * m.halfZ;
   return {
     errors,
@@ -479,7 +574,11 @@ export function checkFfa(m: FfaMapDef): FfaReport {
     sl,
     contact,
     spawns,
+    grid: fg,
+    cam,
+    spread,
     stats: {
+      mirror: mirror.worst.share,
       size: `${2 * m.halfX}x${2 * m.halfZ}`,
       boxes: m.obstacles.length,
       density: m.obstacles.reduce((s, o) => s + o.w * o.d, 0) / area,
