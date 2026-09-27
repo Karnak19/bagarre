@@ -14,11 +14,29 @@ import type { Assets } from "./assets.ts";
 import { Character } from "./character.ts";
 import { Vfx, shieldMaterial } from "./vfx.ts";
 
-export const PLAYER_COLORS = [0xff6b4a, 0x4ab8ff];
-export const PLAYER_CSS_COLORS = ["#ff6b4a", "#4ab8ff"];
+/**
+ * One colour per seat (slot): orange and blue for the duel's two, then lime,
+ * violet, pink and teal for the free-for-all's seats 2-5. The same values are
+ * the theme's `--bagarre-p0`..`--bagarre-p5` (ui/theme/bagarre.source.ts), so
+ * the HUD, the scoreboard and the minimap match the characters.
+ */
+export const PLAYER_CSS_COLORS = ["#ff6b4a", "#4ab8ff", "#a6e04a", "#b07cff", "#ff5fae", "#3fd9c6"];
+export const PLAYER_COLORS = PLAYER_CSS_COLORS.map((c) => parseInt(c.slice(1), 16));
+/** The colour of a seat (slots past the palette wrap round). */
+export const playerColor = (slot: number) => PLAYER_COLORS[((slot % PLAYER_COLORS.length) + PLAYER_COLORS.length) % PLAYER_COLORS.length];
 
 /** Vertical extent of the world visible on screen, in metres. */
 const VIEW_HEIGHT = 22;
+/**
+ * Half the side of the sun's shadow area when it follows the camera. A map
+ * that fits in it (every duel map) gets one fixed shadow area over the whole
+ * floor; a bigger one (the 60 m FFA maps) gets this square round the point
+ * the camera looks at, which covers the screen with some margin. Same 2048
+ * shadow map either way, so FFA shadows are as sharp as a duel's.
+ */
+const SHADOW_FOLLOW_HALF = 24;
+/** Distance from the shadow area's centre to the sun, along the sun direction. */
+const SUN_DISTANCE = 45;
 const CAMERA_DISTANCE = 50;
 /**
  * Classic isometric view: 45 degrees of yaw, and a pitch of atan(1/sqrt(2)),
@@ -268,6 +286,14 @@ export class GameScene {
   private props: Map<string, THREE.Object3D> | null;
   private hemi!: THREE.HemisphereLight;
   private sun!: THREE.DirectionalLight;
+  /** The shadow area follows the camera target (big maps), see SHADOW_FOLLOW_HALF. */
+  private shadowFollows = false;
+  /** Unit vector from the ground toward the sun. */
+  private sunDir = new THREE.Vector3(0, 1, 0);
+  /** World -> light space rotation (and back), for snapping the shadow area to whole texels. */
+  private lightRot = new THREE.Matrix4();
+  private lightRotInv = new THREE.Matrix4();
+  private shadowTexel = 0;
   /** Camera offset (from the yaw), view height and horizontal frustum shift: the game's iso view unless the menu orbits it. */
   private viewHeight = VIEW_HEIGHT;
   private shiftX = 0;
@@ -310,6 +336,8 @@ export class GameScene {
     sun.shadow.normalBias = 0.02;
     this.sun = sun;
     this.scene.add(sun);
+    // Moved with the shadow area on big maps (a light's target must be in the scene to update).
+    this.scene.add(sun.target);
   }
 
   /**
@@ -332,11 +360,37 @@ export class GameScene {
     this.hemi.intensity = t.hemiIntensity;
     this.sun.color.set(t.sun);
     this.sun.intensity = t.sunIntensity;
-    this.sun.position.set(t.sunDir.x, t.sunDir.y, t.sunDir.z);
-    const s = Math.max(map.halfX, map.halfZ) + 3;
-    Object.assign(this.sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s });
+    this.sunDir.set(t.sunDir.x, t.sunDir.y, t.sunDir.z).normalize();
+    const whole = Math.max(map.halfX, map.halfZ) + 3;
+    this.shadowFollows = whole > SHADOW_FOLLOW_HALF;
+    const s = this.shadowFollows ? SHADOW_FOLLOW_HALF : whole;
+    Object.assign(this.sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 1, far: SUN_DISTANCE * 2 });
     this.sun.shadow.camera.updateProjectionMatrix();
+    this.shadowTexel = (2 * s) / this.sun.shadow.mapSize.x;
+    this.lightRot.lookAt(this.sunDir, new THREE.Vector3(), new THREE.Vector3(0, 1, 0));
+    this.lightRotInv.copy(this.lightRot).invert();
+    this.placeShadow(this.cameraTarget.x, this.cameraTarget.z);
   }
+
+  /**
+   * Centres the sun's shadow area on (x, z): the whole map on a small one
+   * (always the origin), the area round the camera on a big one. The centre
+   * is snapped to whole shadow texels in light space, so shadows don't
+   * shimmer as the camera glides.
+   */
+  private placeShadow(x: number, z: number) {
+    const c = this.tmpShadow;
+    if (this.shadowFollows && this.shadowTexel > 0) {
+      c.set(x, 0, z).applyMatrix4(this.lightRotInv);
+      c.x = Math.round(c.x / this.shadowTexel) * this.shadowTexel;
+      c.y = Math.round(c.y / this.shadowTexel) * this.shadowTexel;
+      c.applyMatrix4(this.lightRot);
+    } else c.set(0, 0, 0);
+    this.sun.target.position.copy(c);
+    this.sun.position.copy(c).addScaledVector(this.sunDir, SUN_DISTANCE);
+    this.sun.target.updateMatrixWorld();
+  }
+  private tmpShadow = new THREE.Vector3();
 
   /** Removes every drawn bullet and grenade at once (map change). */
   clearProjectiles() {
@@ -404,6 +458,7 @@ export class GameScene {
     this.camera.position.copy(this.cameraTarget).add(this.offset).add(this.shakeOffset);
     this.camera.lookAt(this.tmp.copy(this.cameraTarget).add(this.shakeOffset));
     this.camera.updateMatrixWorld();
+    if (this.shadowFollows) this.placeShadow(this.cameraTarget.x, this.cameraTarget.z);
   }
 
   /** Where the cursor ray hits the ground plane, or null. */

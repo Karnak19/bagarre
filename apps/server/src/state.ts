@@ -49,7 +49,7 @@ export const Player = schema(
     damage: t.uint16().default(0),
     /** Round trip in ms, measured by the server. */
     ping: t.uint16().default(0),
-    /** False while the server holds a dropped player's seat (see DuelRoom.onDrop). */
+    /** False while the server holds a dropped player's seat (see GameRoom.onDrop). */
     connected: t.boolean().default(true),
   },
   "Player",
@@ -81,8 +81,28 @@ export const Grenade = schema(
 );
 export type Grenade = SchemaType<typeof Grenade>;
 
-export const DuelState = schema(
+/** One line of the kill feed (KillView in @bagarre/shared). */
+export const KillEvent = schema(
   {
+    n: t.uint32().default(0),
+    tick: t.uint32().default(0),
+    killer: t.string().default(""),
+    killerName: t.string().default(""),
+    killerSlot: t.uint8().default(0),
+    victim: t.string().default(""),
+    victimName: t.string().default(""),
+    victimSlot: t.uint8().default(0),
+    weapon: t.uint8().default(0),
+  },
+  "KillEvent",
+);
+export type KillEvent = SchemaType<typeof KillEvent>;
+
+/** The room state of both modes (RoomStateView in @bagarre/shared). */
+export const GameState = schema(
+  {
+    /** "duel" or "ffa", from the room's rules. Never changes. */
+    mode: t.string().default("duel"),
     phase: t.string().default("waiting"),
     winner: t.string().default(""),
     tick: t.uint32().default(0),
@@ -94,10 +114,18 @@ export const DuelState = schema(
     /** Tick the current match started on, and ended on (0 while it runs). */
     startTick: t.uint32().default(0),
     endTick: t.uint32().default(0),
+    /** From the mode's rules, so clients show the right target and clock. */
+    killsToWin: t.uint8().default(0),
+    timeLimit: t.uint16().default(0),
+    /** Ticks left of the pre-match countdown (0: not counting down). */
+    countdown: t.uint16().default(0),
+    suddenDeath: t.boolean().default(false),
     players: t.map(Player),
     bullets: t.map(Bullet),
     grenades: t.map(Grenade),
+    /** The last KILL_FEED_SIZE deaths, oldest first. */
+    feed: t.array(KillEvent),
   },
-  "DuelState",
+  "GameState",
 );
-export type DuelState = SchemaType<typeof DuelState>;
+export type GameState = SchemaType<typeof GameState>;

@@ -18,7 +18,7 @@ import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { Text } from "@astryxdesign/core/Text";
 import { TextInput } from "@astryxdesign/core/TextInput";
-import { MATCH_END_DELAY, RECONNECT_GRACE_S, type PlayerView } from "@bagarre/shared";
+import { FFA_MAX_PLAYERS, FFA_MIN_PLAYERS, RECONNECT_GRACE_S, TICK_RATE, rulesOf, type PlayerView } from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Notice } from "../../app.ts";
@@ -27,7 +27,7 @@ import { scoreboardModel } from "../../scoreboard.ts";
 import { openPanel } from "../../uiState.ts";
 import { jsonEqual, shallowEqual, useEngine, useSelector } from "../hooks.ts";
 import { UsersIcon } from "../icons.tsx";
-import { shared, slotDot } from "../styles.ts";
+import { shared, slotDot, slotText } from "../styles.ts";
 import { Scoreboard } from "./Scoreboard.tsx";
 import { WeaponPicker } from "./WeaponPicker.tsx";
 
@@ -85,6 +85,11 @@ const styles = stylex.create({
   },
   seatOpen: { color: "rgba(242, 242, 242, 0.5)", fontWeight: 600 },
   seatName: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  seatAway: { opacity: 0.6 },
+  seatAwayMark: { marginInlineStart: "auto", flexShrink: 0, color: "var(--color-text-yellow)", fontSize: "12px", fontWeight: 600 },
+  countdown: { fontSize: "44px", lineHeight: 1, color: "var(--bagarre-sand)" },
+  countdownNumber: { color: "var(--bagarre-gold)" },
+  resultSmall: { fontSize: "40px" },
   invite: { flexGrow: 1, minWidth: 0 },
   resultTitle: {
     fontSize: "48px",
@@ -162,9 +167,9 @@ function CardBox({ name, wide, centered, children }: { name: CardName; wide?: bo
   );
 }
 
-function Title({ name, children, xstyle }: { name: CardName; children: ReactNode; xstyle?: stylex.StyleXStyles }) {
+function Title({ name, children, xstyle, testId }: { name: CardName; children: ReactNode; xstyle?: stylex.StyleXStyles; testId?: string }) {
   return (
-    <Heading level={2} id={`card-${name}-title`} xstyle={[styles.title, xstyle]} aria-live="polite">
+    <Heading level={2} id={`card-${name}-title`} xstyle={[styles.title, xstyle]} aria-live="polite" data-testid={testId}>
       {children}
     </Heading>
   );
@@ -234,7 +239,8 @@ async function copyText(text: string, fallback: HTMLInputElement | null): Promis
   }
 }
 
-function Seats() {
+/** The seats: players in seat order, then the open ones up to `total`. `showAway` marks dropped connections. */
+function Seats({ total = 2, showAway = false }: { total?: number; showAway?: boolean }) {
   countRender("card.seats");
   const { view } = useEngine();
   const seats = useSelector(
@@ -244,19 +250,32 @@ function Seats() {
       v?.snapshot?.players.forEach((p) => players.push(p));
       players.sort((a, b) => a.slot - b.slot);
       const me = v?.snapshot?.players.get(v.you);
-      return players.map((p) => ({ slot: p.slot, name: p === me ? `${p.name} (you)` : p.name }));
+      return players.map((p) => ({ slot: p.slot, name: p === me ? `${p.name} (you)` : p.name, away: !p.connected }));
     },
     jsonEqual,
   );
-  const open = Math.max(0, 2 - seats.length);
+  const open = Math.max(0, total - seats.length);
   return (
     <VStack as="ul" xstyle={styles.seats} aria-label="Players" data-testid="seats">
       {seats.map((s) => (
-        <HStack as="li" key={s.slot} gap={2} align="center" xstyle={styles.seat} data-testid="seat">
+        <HStack
+          as="li"
+          key={s.slot}
+          gap={2}
+          align="center"
+          xstyle={[styles.seat, showAway && s.away && styles.seatAway]}
+          data-testid="seat"
+          data-away={(showAway && s.away) || undefined}
+        >
           <HStack as="span" xstyle={[shared.dot, slotDot(s.slot)]} aria-hidden="true" />
-          <Text as="span" color="inherit" xstyle={styles.seatName}>
+          <Text as="span" color="inherit" xstyle={[styles.seatName, showAway && slotText(s.slot)]}>
             {s.name}
           </Text>
+          {showAway && s.away && (
+            <Text as="span" xstyle={styles.seatAwayMark}>
+              reconnecting…
+            </Text>
+          )}
         </HStack>
       ))}
       {Array.from({ length: open }, (_, i) => (
@@ -306,6 +325,12 @@ function InviteLink() {
 }
 
 function WaitingCard() {
+  const { view } = useEngine();
+  const ffa = useSelector(view, (v) => v?.snapshot?.mode === "ffa");
+  return ffa ? <FfaWaitingCard /> : <DuelWaitingCard />;
+}
+
+function DuelWaitingCard() {
   countRender("card.waiting");
   const { app } = useEngine();
   const { opponentLeft, isPrivate } = useSelector(app, (s) => ({ opponentLeft: s.opponentLeft, isPrivate: s.isPrivate }), shallowEqual);
@@ -329,6 +354,67 @@ function WaitingCard() {
         Players
       </Text>
       <Seats />
+      <Text as="p" xstyle={shared.eyebrow}>
+        Invite link
+      </Text>
+      <InviteLink />
+      <Text as="p" xstyle={shared.eyebrow}>
+        Your weapon
+      </Text>
+      <WeaponPicker />
+      <HStack xstyle={styles.actions}>
+        <Button label="Cancel" variant="secondary" onClick={() => app.leave()} data-testid="waiting-cancel" />
+      </HStack>
+    </CardBox>
+  );
+}
+
+/**
+ * A free-for-all waiting for players: who's in, how many are needed, then
+ * the pre-match countdown once FFA_MIN_PLAYERS are in (players can still
+ * join during it).
+ */
+function FfaWaitingCard() {
+  countRender("card.waitingFfa");
+  const { app, view } = useEngine();
+  const { opponentLeft, isPrivate } = useSelector(app, (s) => ({ opponentLeft: s.opponentLeft, isPrivate: s.isPrivate }), shallowEqual);
+  const players = useSelector(view, (v) => v?.snapshot?.players.size ?? 0);
+  // Whole seconds: this re-renders once a second while counting, not every tick.
+  const seconds = useSelector(view, (v) => Math.ceil((v?.snapshot?.countdown ?? 0) / TICK_RATE));
+  const count = `${players}/${FFA_MAX_PLAYERS} players`;
+  const [title, sub] =
+    seconds > 0
+      ? [null, `${count}. Others can still join until it starts.`]
+      : opponentLeft
+        ? ["Too few players left", `Waiting for more to join. It starts again when ${FFA_MIN_PLAYERS} are in (${count}).`]
+        : [
+            isPrivate ? "Waiting for your friends…" : "Waiting for players…",
+            `Starts when ${FFA_MIN_PLAYERS} are in · ${count}.${isPrivate ? " Send them the link." : ""}`,
+          ];
+  return (
+    <CardBox name="waiting">
+      <HStack gap={3} align="start">
+        {seconds === 0 && <Spinner size="lg" xstyle={styles.spinner} aria-label="Waiting" />}
+        <VStack>
+          {title ? (
+            <Title name="waiting">{title}</Title>
+          ) : (
+            <Title name="waiting" xstyle={[shared.display, styles.countdown, shared.tabular]} testId="ffa-countdown">
+              Starting in{" "}
+              <Text as="span" color="inherit" xstyle={styles.countdownNumber}>
+                {seconds}
+              </Text>
+            </Title>
+          )}
+          <Text color="secondary" xstyle={[styles.sub, shared.tabular]} data-testid="ffa-players">
+            {sub}
+          </Text>
+        </VStack>
+      </HStack>
+      <Text as="p" xstyle={shared.eyebrow}>
+        Players
+      </Text>
+      <Seats total={FFA_MAX_PLAYERS} showAway />
       <Text as="p" xstyle={shared.eyebrow}>
         Invite link
       </Text>
@@ -400,13 +486,34 @@ function ResultCard() {
   const { app, view, gesture } = useEngine();
   const staying = useSelector(app, (s) => s.staying);
   const won = useSelector(view, (v) => !!v?.snapshot && v.snapshot.winner === v.you);
-  const left = useSelector(view, (v) => Math.max(0, Math.ceil(MATCH_END_DELAY - (performance.now() - (v?.endedAt ?? 0)) / 1000)));
+  const endDelay = useSelector(view, (v) => rulesOf(v?.snapshot?.mode ?? "duel").endDelay);
+  const left = useSelector(view, (v) => Math.max(0, Math.ceil(endDelay - (performance.now() - (v?.endedAt ?? 0)) / 1000)));
   const model = useSelector(view, (v) => scoreboardModel(v?.snapshot ?? null, v?.you ?? ""), jsonEqual);
+  const ffa = model.mode === "ffa";
+  // FFA: our place, from the same placements as the table (shared places allowed).
+  const mine = model.rows.find((r) => r.you);
+  const firsts = model.rows.filter((r) => r.place === 1).length;
+  const [headline, top] = !ffa
+    ? [won ? "You win!" : "You lose", won]
+    : !mine
+      ? ["Match over", false]
+      : mine.place === 1
+        ? [firsts > 1 ? "Shared first place" : "You won!", true]
+        : [`You placed ${mine.placeLabel}`, false];
+  const leader = ffa && mine?.place !== 1 ? model.rows[0] : null;
   return (
     <CardBox name="result" wide={!staying}>
-      <Title name="result" xstyle={[shared.display, styles.resultTitle, won && styles.resultWin]}>
-        {won ? "You win!" : "You lose"}
+      <Title name="result" xstyle={[shared.display, styles.resultTitle, ffa && styles.resultSmall, top && styles.resultWin]}>
+        {headline}
       </Title>
+      {leader && (
+        <Text xstyle={styles.resultSub} data-testid="result-winner">
+          <Text as="span" color="inherit" weight="bold" xstyle={slotText(leader.slot)}>
+            {leader.name}
+          </Text>{" "}
+          {firsts > 1 ? "shared first place" : "won"} with {leader.kills} {leader.kills === 1 ? "kill" : "kills"}.
+        </Text>
+      )}
       <Text color="secondary" xstyle={[styles.resultSub, shared.tabular]} data-testid="result-countdown">
         {staying
           ? `Rematch in ${left} s, same game, next map.`
@@ -415,7 +522,7 @@ function ResultCard() {
       {!staying && (
         <>
           <VStack xstyle={styles.boardGap}>
-            <Scoreboard model={model} label="Match result" flat />
+            <Scoreboard model={model} label="Match result" flat rowTestId={ffa ? "placement-row" : undefined} />
           </VStack>
           <Text as="p" xstyle={shared.eyebrow}>
             Weapon for the next match

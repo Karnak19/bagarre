@@ -5,10 +5,14 @@
 
 import {
   INTERP_DELAY_MS,
+  KILL_GRENADE,
   SHIELD,
   TICK_MS,
   TICK_RATE,
-  mapById,
+  WEAPONS,
+  findMap,
+  ordinal,
+  placements,
   weaponDef,
   type InputMessage,
   type Phase,
@@ -17,12 +21,14 @@ import {
 } from "@bagarre/shared";
 import { WEAPON_SFX, isMuted, play, setListener, type PlayOptions, type SfxName } from "./audio.ts";
 import { LocalBullets } from "./bullets.ts";
-import type { Hud, HudModel } from "./hud.ts";
+import type { FfaHud, Hud, HudModel, KillFeedLine } from "./hud.ts";
 import { screenToWorldMove, type Input } from "./input.ts";
 import { SnapshotBuffer } from "./interpolation.ts";
+import type { Minimap } from "./minimap.ts";
 import type { Net, Snapshot } from "./net.ts";
 import { Predictor } from "./prediction.ts";
-import { GameScene, PLAYER_COLORS, PlayerMesh } from "./scene.ts";
+import { GameScene, PlayerMesh, playerColor } from "./scene.ts";
+import { clock, secondsLeft } from "./scoreboard.ts";
 
 // Our own actions play the moment they are predicted (in the tick loop below),
 // never from reconcile: it replays pending inputs and would play them again.
@@ -33,6 +39,9 @@ const REMOTE_DELAY = INTERP_DELAY_MS / 1000;
 const MAP_CARD_MS = 3500;
 /** ...fading out over its last this many ms. */
 const MAP_CARD_FADE_MS = 500;
+/** How long a kill feed line stays up, fading over its last second. */
+export const KILL_FEED_MS = 6000;
+const KILL_FEED_FADE_MS = 1000;
 
 /** Dev-only autopilot for the headless checks: world-space move, aim angle, fire. */
 export interface Bot {
@@ -59,6 +68,7 @@ export interface MatchDeps {
   bot: Bot;
   /** Dev-only log of every sound played, read by the headless checks. */
   sfxLog: SfxLogEntry[];
+  minimap: Minimap;
 }
 
 function canMove(p: PlayerView, ph: Phase) {
@@ -80,7 +90,10 @@ export class Match {
   private hud: Hud;
   private bot: Bot;
   private sfxLog: SfxLogEntry[];
+  private minimap: Minimap;
   private meshes = new Map<string, PlayerMesh>();
+  /** When each kill feed line was first seen (performance.now()), by its `n`. */
+  private feedSeen = new Map<number, number>();
   /** Each player as of the previous snapshot, to spot what changed (hits, deaths, remote shots...). */
   private lastView = new Map<string, PlayerView>();
   /** Grenades already heard being thrown / landing. Pruned like `announcedBlasts`. */
@@ -121,8 +134,8 @@ export class Match {
   endedAt = 0;
   /** Cursor on the ground (grenade target). */
   private cursor: Vec2 | null = null;
-  /** Where the opponent was drawn last frame, for visual hits of predicted bullets. */
-  private opponentDrawn: Vec2 | null = null;
+  /** Where the living opponents were drawn last frame, for visual hits of predicted bullets. */
+  private opponentsDrawn: Vec2[] = [];
   /** Fire button state on the previous tick, for the empty-click on a fresh press. */
   private wasFiring = false;
   private disposed = false;
@@ -134,6 +147,7 @@ export class Match {
     this.hud = deps.hud;
     this.bot = deps.bot;
     this.sfxLog = deps.sfxLog;
+    this.minimap = deps.minimap;
     this.net.onSnapshot = (s) => this.onSnapshot(s);
   }
 
@@ -176,7 +190,7 @@ export class Match {
   private meshFor(id: string, slot: number): PlayerMesh {
     let m = this.meshes.get(id);
     if (!m) {
-      m = new PlayerMesh(PLAYER_COLORS[slot] ?? 0x888888, id === this.net.sessionId, slot);
+      m = new PlayerMesh(playerColor(slot), id === this.net.sessionId, slot);
       this.meshes.set(id, m);
       this.scene.addPlayer(m);
     }
@@ -204,16 +218,24 @@ export class Match {
    * the snapshot is buffered or reconciled, so nothing ever uses two maps.
    */
   private switchMap(id: string) {
-    const map = mapById(id);
     this.mapId = id;
+    // Duel and FFA maps alike. An unknown id is a bug (an older client, a
+    // map not in this build): say so and keep what is on screen, rather than
+    // silently predicting on another map.
+    const map = findMap(id);
+    if (!map) {
+      console.error(`[match] unknown map "${id}": this client doesn't have it`);
+      return;
+    }
     this.buffer.clear();
     this.predictor.setMap(map);
     this.localBullets.setMap(map);
     this.scene.setMap(map);
+    this.minimap.setMap(map);
     this.scene.clearProjectiles();
     this.blasts.length = 0;
     this.remoteShots.length = 0;
-    this.opponentDrawn = null;
+    this.opponentsDrawn = [];
     this.cameraSnapped = false;
   }
 
@@ -235,7 +257,7 @@ export class Match {
       this.scene.clearProjectiles();
       this.blasts.length = 0;
       this.remoteShots.length = 0;
-      this.opponentDrawn = null;
+      this.opponentsDrawn = [];
       this.cameraSnapped = false;
     }
     this.predictor.reset();
@@ -391,7 +413,7 @@ export class Match {
           else if (msg.fire && !this.wasFiring && !res.fired && res.sim.reloadTicks > 0) this.sfx("empty_click");
         }
         this.wasFiring = msg.fire;
-        localBullets.step(this.opponentDrawn);
+        localBullets.step(this.opponentsDrawn);
         net.sendInput(msg);
       }
       // After a long hitch, don't try to send a burst of stale inputs.
@@ -419,10 +441,10 @@ export class Match {
       this.cameraSnapped = true;
     }
 
-    // 3. Remote player and bullets: interpolated ~100 ms in the past.
+    // 3. Remote players and bullets: interpolated ~100 ms in the past.
     const renderTime = now - INTERP_DELAY_MS;
     let opponent: PlayerView | null = null;
-    this.opponentDrawn = null;
+    const drawn: Vec2[] = [];
     latest?.players.forEach((p, id) => {
       if (id === sessionId) return;
       opponent = p;
@@ -431,12 +453,18 @@ export class Match {
       const m = this.meshFor(id, s.slot);
       m.set(s.x, s.z, s.aim, s.alive, s.weapon);
       m.setShield(s.shieldTicks > 0 ? s.shieldHp / SHIELD.absorb : 0);
-      if (s.alive) this.opponentDrawn = { x: s.x, z: s.z };
+      if (s.alive) drawn.push({ x: s.x, z: s.z });
     });
+    this.opponentsDrawn = drawn;
     const shots = this.remoteShots;
     for (let i = shots.length - 1; i >= 0; i--) {
       if (shots[i].at > now) continue;
-      this.meshes.get(shots[i].id)?.shot(now);
+      const m = this.meshes.get(shots[i].id);
+      if (m) {
+        m.shot(now);
+        // Minimap: an enemy shows up only when they fire.
+        this.minimap.ping(m.group.position.x, m.group.position.z, m.slot, now);
+      }
       shots.splice(i, 1);
     }
 
@@ -461,13 +489,18 @@ export class Match {
       if (m.dashing) scene.addGhost(m.group.position.x, m.group.position.z, m.color, now);
     }
 
-    // 4. HUD. Waiting and the match result have their own cards (overlays.ts).
+    // 4. HUD. Waiting and the match result have their own cards (Cards.tsx).
     // (`opponent` is assigned in a callback above, which TypeScript can't follow.)
-    const opp = opponent as PlayerView | null;
-    const away = opp && !opp.connected ? opp : null;
+    const ffa = latest?.mode === "ffa";
+    const opp = ffa ? null : (opponent as PlayerView | null);
+    let away: PlayerView | null = opp && !opp.connected ? opp : null;
+    if (ffa) latest?.players.forEach((p, id) => (away ??= id !== sessionId && !p.connected ? p : null));
     let status = "";
     if (net.status === "disconnected") status = `Disconnected${net.error ? `: ${net.error}` : ""}.`;
-    else if (away) status = `${away.name || "Your opponent"} lost their connection. Waiting for them to come back…`;
+    else if (away)
+      status = ffa
+        ? `${away.name || "A player"} lost their connection.`
+        : `${away.name || "Your opponent"} lost their connection. Waiting for them to come back…`;
     else if (meServer && !meServer.alive && latest?.phase === "playing")
       status = `Respawning in ${(meServer.respawnTicks / TICK_RATE).toFixed(1)}s (1-4 to change weapon)`;
 
@@ -480,16 +513,74 @@ export class Match {
 
     const debugParts = [`pending inputs ${predictor.pendingCount}`, `correction ${predictor.lastError.toFixed(3)} m`];
     if (net.lagMs > 0) debugParts.unshift(`lag +${net.lagMs} ms`);
+    if (ffa && meServer) {
+      const pos = predictor.sim ?? meServer;
+      this.minimap.draw(now, { x: pos.x, z: pos.z, aim: this.aim, slot: meServer.slot, alive: meServer.alive });
+    }
+
     this.hud.update({
       status,
       me: meServer,
-      opponent,
+      opponent: opp,
+      ffa: ffa && latest ? this.ffaHud(latest) : null,
+      feed: latest ? this.feedLines(latest, now) : [],
       sim: predictor.sim,
       canPick: !!latest && canPick(meServer, latest.phase),
       mapCard,
       debug: debugParts.join("  |  "),
       muted: isMuted(),
     });
+  }
+
+  /** Rank, top 3 and clock for the FFA HUD. */
+  private ffaHud(s: Snapshot): FfaHud {
+    const you = this.net.sessionId;
+    const all: (PlayerView & { id: string })[] = [];
+    s.players.forEach((p, id) => all.push({ ...p, id }));
+    all.sort((a, b) => a.slot - b.slot);
+    const placed = placements(all);
+    const mine = placed.find((p) => p.player.id === you);
+    const left = secondsLeft(s);
+    const running = s.phase === "playing";
+    return {
+      rank: mine?.place ?? 0,
+      rankLabel: mine ? ordinal(mine.place) : "",
+      players: all.length,
+      kills: mine?.player.kills ?? 0,
+      killsToWin: s.killsToWin,
+      top: placed.slice(0, 3).map(({ player: p }) => ({ id: p.id, name: p.name, slot: p.slot, kills: p.kills, you: p.id === you })),
+      timeLeft: running && left !== null && !s.suddenDeath ? clock(Math.ceil(left)) : "",
+      lowTime: running && left !== null && left <= 30,
+      suddenDeath: s.suddenDeath,
+    };
+  }
+
+  /** The kill feed: the synced last few deaths, each shown for KILL_FEED_MS from when we first saw it. */
+  private feedLines(s: Snapshot, now: number): KillFeedLine[] {
+    const you = this.net.sessionId;
+    const out: KillFeedLine[] = [];
+    for (const k of s.feed) {
+      let seen = this.feedSeen.get(k.n);
+      if (seen === undefined) {
+        seen = now;
+        this.feedSeen.set(k.n, now);
+      }
+      const age = now - seen;
+      if (age >= KILL_FEED_MS) continue;
+      out.push({
+        n: k.n,
+        killer: k.killer ? k.killerName : "",
+        killerSlot: k.killerSlot,
+        victim: k.victimName,
+        victimSlot: k.victimSlot,
+        weapon: k.weapon === KILL_GRENADE ? "Grenade" : (WEAPONS[k.weapon]?.name ?? ""),
+        byYou: !!k.killer && k.killer === you,
+        onYou: k.victim === you,
+        opacity: Math.min(1, (KILL_FEED_MS - age) / KILL_FEED_FADE_MS),
+      });
+    }
+    if (this.feedSeen.size > 32) for (const n of this.feedSeen.keys()) if (!s.feed.some((k) => k.n === n)) this.feedSeen.delete(n);
+    return out;
   }
 
   /** Removes everything this game put in the scene and stops reacting to the network. Leave the room with `net.leave()`. */
@@ -499,6 +590,7 @@ export class Match {
     this.net.onSnapshot = () => {};
     for (const id of this.meshes.keys()) this.dropMesh(id);
     this.scene.clearProjectiles();
+    this.minimap.setMap(null);
     this.buffer.clear();
     this.blasts.length = 0;
     this.remoteShots.length = 0;

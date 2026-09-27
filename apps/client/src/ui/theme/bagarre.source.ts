@@ -2,8 +2,9 @@
  * The Bagarre theme: the game's own palette on top of Astryx's neutral theme.
  *
  * Dark only (the UI always sits over the 3D scene): dark translucent panels
- * like the HUD's, the two player colours (orange for slot 0, which is also
- * the accent, blue for slot 1), a gold highlight for the leader and focus,
+ * like the HUD's, the player colours (orange for slot 0, which is also
+ * the accent, blue for slot 1, then lime, violet, pink and teal for the
+ * free-for-all seats 2-5), a gold highlight for the leader and focus,
  * and the Black Ops One stencil for display text. Body text stays on the
  * system stack.
  *
@@ -96,6 +97,11 @@ export const bagarreTheme = defineTheme({
     "--bagarre-p1": P1,
     "--bagarre-p1-hover": "#7ccbff",
     "--bagarre-on-p1": "#08151f",
+    // Seats 2-5 (free for all): lime, violet, pink, teal.
+    "--bagarre-p2": "#a6e04a",
+    "--bagarre-p3": "#b07cff",
+    "--bagarre-p4": "#ff5fae",
+    "--bagarre-p5": "#3fd9c6",
     /** The leader on the scoreboard, and the title's face. */
     "--bagarre-gold": "#ffd24a",
     "--bagarre-sand": "#ffd98a",

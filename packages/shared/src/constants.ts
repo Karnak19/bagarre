@@ -13,6 +13,12 @@ export const SERVER_PORT = 2567;
 /** Room name used for matchmaking. */
 export const ROOM_NAME = "duel";
 export const MAX_PLAYERS = 2;
+/**
+ * Clients a room accepts on top of its player seats. Nothing uses them yet:
+ * they are the room left for spectators (clients with no player seat), so the
+ * room's `maxClients` is never the player cap. See the README's seat model.
+ */
+export const SPECTATOR_ROOM = 20;
 
 // --- Players ---
 export const PLAYER_RADIUS = 0.5;
@@ -128,6 +134,30 @@ export const KILLS_TO_WIN = 5;
 export const RESPAWN_DELAY = 2;
 /** Seconds the winner banner stays up before the match resets. */
 export const MATCH_END_DELAY = 4;
+
+// --- Free for all (see modes.ts and docs/ffa-maps.md) ---
+/** Room name of the free-for-all matchmaking. */
+export const FFA_ROOM_NAME = "ffa";
+export const FFA_MIN_PLAYERS = 3;
+export const FFA_MAX_PLAYERS = 6;
+/** First to this many kills wins... */
+export const FFA_KILLS_TO_WIN = 15;
+/** ...or the most kills after this many seconds. */
+export const FFA_TIME_LIMIT = 360;
+/** Seconds of countdown once FFA_MIN_PLAYERS are in, before the match starts. */
+export const FFA_COUNTDOWN = 10;
+/** Below this many players mid-match, the match ends. */
+export const FFA_MIN_TO_CONTINUE = 2;
+/** Seconds before a dead player comes back in FFA (more players: instant respawns feel spammy). */
+export const FFA_RESPAWN_DELAY = 3;
+/** Seconds the placement table stays up before the rematch. */
+export const FFA_END_DELAY = 8;
+/**
+ * A tie for the most kills when the time runs out goes to sudden death: the
+ * match ends as soon as one player alone has the most kills. If that takes
+ * longer than this many seconds, it ends anyway and deaths break the tie.
+ */
+export const FFA_SUDDEN_DEATH_MAX = 60;
 
 // --- Netcode ---
 /** How far in the past remote entities are rendered, in ms. */

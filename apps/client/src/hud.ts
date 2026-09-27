@@ -8,10 +8,51 @@
 import type { PlayerSim, PlayerView } from "@bagarre/shared";
 import type { Readable } from "./store.ts";
 
+/** One line of the kill feed: "killer [weapon] victim". */
+export interface KillFeedLine {
+  /** Unique per death in the room (the key). */
+  n: number;
+  /** "" for a self-kill (own grenade): the line reads "victim [grenade]". */
+  killer: string;
+  killerSlot: number;
+  victim: string;
+  victimSlot: number;
+  /** "Rifle", "Shotgun", "Sniper", "SMG" or "Grenade". */
+  weapon: string;
+  /** We are the killer / the victim (the line is highlighted). */
+  byYou: boolean;
+  onYou: boolean;
+  /** 0..1: 1 while fresh, fading to 0 over its last second (lines go after KILL_FEED_MS). */
+  opacity: number;
+}
+
+/** A free-for-all's own HUD: rank, kills, the top 3 and the clock. */
+export interface FfaHud {
+  /** Our place right now (kills, then deaths; shared places allowed), and as "2nd". */
+  rank: number;
+  rankLabel: string;
+  players: number;
+  kills: number;
+  killsToWin: number;
+  /** The first three, most kills first (we may be among them). */
+  top: { id: string; name: string; slot: number; kills: number; you: boolean }[];
+  /** Time left as "m:ss" ("" when the match has no time limit or isn't running). */
+  timeLeft: string;
+  /** Under 30 s left. */
+  lowTime: boolean;
+  /** Tie at the time limit: the next kill that breaks it wins. */
+  suddenDeath: boolean;
+}
+
 export interface HudModel {
   status: string;
   me: PlayerView | null;
+  /** The duel opponent (null in FFA: see `ffa`). */
   opponent: PlayerView | null;
+  /** Free-for-all rank, top 3 and clock; null in a duel. */
+  ffa: FfaHud | null;
+  /** Recent deaths, oldest first (both modes; the HUD shows it in FFA). */
+  feed: KillFeedLine[];
   /** Predicted local state (cooldowns, ammo), fresher than `me`. */
   sim: PlayerSim | null;
   /** Weapon picks are accepted right now (dead or between matches). */

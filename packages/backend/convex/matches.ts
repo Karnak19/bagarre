@@ -1,5 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { mutation } from "./_generated/server";
+import { modeValidator } from "./schema";
 
 /**
  * Compares two strings in time that depends only on their lengths, not on
@@ -16,22 +17,30 @@ function constantTimeEqual(a: string, b: string): boolean {
 
 const count = v.number();
 
+/** Most players a match can have (a free-for-all seats six). */
+const MAX_MATCH_PLAYERS = 6;
+
 /**
  * Called by the game server, once per finished match, with the account
  * players of that match (guests are never sent). Public so the server can
  * call it over HTTP, but it only accepts calls carrying GAME_SERVER_SECRET.
  * Idempotent per `matchId`: a retry after a lost response changes nothing.
+ *
+ * Duel and free-for-all alike: `won` is first place, anything else is a
+ * loss. The places (`place`, 1 = first) are kept on the match's row.
  */
 export const record = mutation({
   args: {
     secret: v.string(),
     matchId: v.string(),
+    mode: v.optional(modeValidator),
     players: v.array(
       v.object({
         clerkId: v.string(),
         kills: count,
         deaths: count,
         won: v.boolean(),
+        place: v.optional(v.number()),
       }),
     ),
   },
@@ -39,18 +48,21 @@ export const record = mutation({
     status: v.union(v.literal("recorded"), v.literal("duplicate")),
     updated: v.number(),
   }),
-  handler: async (ctx, { secret, matchId, players }) => {
+  handler: async (ctx, { secret, matchId, mode, players }) => {
     const expected = process.env.GAME_SERVER_SECRET;
     // An unset secret rejects everything rather than accepting an empty one.
     if (!expected || !constantTimeEqual(secret, expected)) {
       throw new ConvexError("Unauthorized");
     }
     if (matchId.length === 0 || matchId.length > 128) throw new ConvexError("Bad matchId");
-    if (players.length > 2) throw new ConvexError("A duel has at most two players");
+    const most = mode === "ffa" ? MAX_MATCH_PLAYERS : 2;
+    if (players.length > most) throw new ConvexError(`A ${mode ?? "duel"} has at most ${most} players`);
     for (const p of players) {
       for (const n of [p.kills, p.deaths]) {
         if (!Number.isInteger(n) || n < 0 || n > 1000) throw new ConvexError("Bad counter");
       }
+      if (p.place !== undefined && (!Number.isInteger(p.place) || p.place < 1 || p.place > MAX_MATCH_PLAYERS))
+        throw new ConvexError("Bad place");
     }
 
     const seen = await ctx.db
@@ -58,7 +70,12 @@ export const record = mutation({
       .withIndex("by_matchId", (q) => q.eq("matchId", matchId))
       .unique();
     if (seen) return { status: "duplicate" as const, updated: 0 };
-    await ctx.db.insert("recordedMatches", { matchId, recordedAt: Date.now() });
+    await ctx.db.insert("recordedMatches", {
+      matchId,
+      recordedAt: Date.now(),
+      mode: mode ?? "duel",
+      placements: players.map((p) => ({ clerkId: p.clerkId, place: p.place ?? (p.won ? 1 : 2), kills: p.kills, deaths: p.deaths })),
+    });
 
     let updated = 0;
     for (const p of players) {

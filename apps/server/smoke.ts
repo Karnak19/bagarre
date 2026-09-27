@@ -10,7 +10,9 @@
 // metadata, guest names) and part 5 the scoreboard counters and ping. Part 6
 // covers reconnection (a dropped client keeps its seat for a grace period),
 // malformed messages and the message rate limit, and part 7 a SIGTERM on a
-// server running in a child process.
+// server running in a child process. Part 8 (smoke-ffa.ts) is the free for
+// all: countdown, drop-in, kill credit, the end conditions, seats,
+// reconnection and the recorded placements.
 
 import { spawn } from "node:child_process";
 import { dirname } from "node:path";
@@ -65,8 +67,9 @@ import {
   type Vec2,
 } from "@bagarre/shared";
 import { createServer, openGames } from "./src/app.ts";
-import { DuelRoom } from "./src/DuelRoom.ts";
+import { DuelRoom } from "./src/GameRoom.ts";
 import { accountChecks, liveConvexChecks, setupTestAccounts } from "./smoke-accounts.ts";
+import { ffaChecks, registerFfaRooms } from "./smoke-ffa.ts";
 
 const PORT = 2599;
 const URL = `http://localhost:${PORT}`;
@@ -1347,6 +1350,7 @@ await server.listen(PORT);
 matchMaker.defineRoomType("duel_random", DuelRoom);
 for (const c of WALL_CASES) matchMaker.defineRoomType(`duel_${c.map}`, DuelRoom.pinnedTo(c.map));
 matchMaker.defineRoomType("duel_short_grace", ShortGraceRoom);
+registerFfaRooms();
 
 let exitCode = 0;
 try {
@@ -1377,6 +1381,9 @@ try {
   await lobbyChecks();
   console.log("\n-- scoreboard --");
   await scoreboardChecks();
+
+  console.log("\n-- free for all --");
+  for (const group of await ffaChecks(URL, accounts)) for (const [c, l] of group) check(c, l);
 
   console.log("\n-- reconnection, malformed messages, rate limit --");
   const netResults = await Promise.allSettled([reconnectAuto(), reconnectReload(), reconnectExpired(), malformedMessages(), messageFlood(), pressBaseline()]);

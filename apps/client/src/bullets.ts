@@ -44,7 +44,7 @@ const FORGET_AFTER_SEQ = 90;
  *  - acked but never seen: the server refused the shot (or it died on the spot),
  *    so ours is removed;
  *  - seen, then gone: it hit something, so ours is removed if still flying.
- * Ours also stops on a visual hit against where the opponent is drawn, so it
+ * Ours also stops on a visual hit against where an opponent is drawn, so it
  * doesn't sail through them while the server's verdict is on its way. Damage
  * is never predicted.
  */
@@ -74,15 +74,15 @@ export class LocalBullets {
     });
   }
 
-  /** One input tick. `opponent` is where the opponent is drawn right now (null if none/dead). */
-  step(opponent: Vec2 | null) {
+  /** One input tick. `opponents` is where the living opponents are drawn right now. */
+  step(opponents: readonly Vec2[]) {
     for (const b of this.bullets.values()) {
       if (b.dead) continue;
       b.prev = { x: b.sim.x, z: b.sim.z };
       const alive = stepBullet(
         this.map,
         b.sim,
-        (x, z) => !!opponent && circlesOverlap(x, z, BULLET_RADIUS, opponent.x, opponent.z, PLAYER_RADIUS),
+        (x, z) => opponents.some((o) => circlesOverlap(x, z, BULLET_RADIUS, o.x, o.z, PLAYER_RADIUS)),
       );
       b.ticksLeft--;
       if (!alive || b.ticksLeft <= 0) b.dead = true;

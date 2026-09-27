@@ -1,5 +1,6 @@
 import { Client, CloseCode, ErrorCode, type Room } from "@colyseus/sdk";
 import {
+  FFA_ROOM_NAME,
   GAMES_ROUTE,
   MSG_INPUT,
   MSG_PICK,
@@ -9,8 +10,10 @@ import {
   ROOM_NAME,
   type OpenGame,
   type BulletView,
+  type GameMode,
   type GrenadeView,
   type InputMessage,
+  type KillView,
   type Phase,
   type PlayerView,
   type RoomStateView,
@@ -27,6 +30,8 @@ export interface Snapshot {
    */
   epoch: number;
   tick: number;
+  /** "duel" or "ffa" (never changes in a room). */
+  mode: GameMode;
   phase: Phase;
   winner: string;
   /** The map this snapshot is on. A change is a hard boundary, see match.ts. */
@@ -34,9 +39,17 @@ export interface Snapshot {
   /** Tick the current match started on, and ended on (0 while it runs). */
   startTick: number;
   endTick: number;
+  killsToWin: number;
+  /** Seconds (0: no time limit). */
+  timeLimit: number;
+  /** Ticks left of the pre-match countdown (0: none). */
+  countdown: number;
+  suddenDeath: boolean;
   players: Map<string, PlayerView>;
   bullets: Map<string, BulletView>;
   grenades: Map<string, GrenadeView>;
+  /** The last few deaths, oldest first. */
+  feed: KillView[];
 }
 
 function capture(state: RoomStateView): Omit<Snapshot, "t" | "epoch"> {
@@ -61,16 +74,36 @@ function capture(state: RoomStateView): Omit<Snapshot, "t" | "epoch"> {
       owner: g.owner,
     }),
   );
+  const feed: KillView[] = [];
+  state.feed?.forEach((k) =>
+    feed.push({
+      n: k.n,
+      tick: k.tick,
+      killer: k.killer,
+      killerName: k.killerName,
+      killerSlot: k.killerSlot,
+      victim: k.victim,
+      victimName: k.victimName,
+      victimSlot: k.victimSlot,
+      weapon: k.weapon,
+    }),
+  );
   return {
     tick: state.tick,
+    mode: state.mode === "ffa" ? "ffa" : "duel",
     phase: state.phase,
     winner: state.winner,
     mapId: state.mapId,
     startTick: state.startTick,
     endTick: state.endTick,
+    killsToWin: state.killsToWin,
+    timeLimit: state.timeLimit,
+    countdown: state.countdown,
+    suddenDeath: state.suddenDeath,
     players,
     bullets,
     grenades,
+    feed,
   };
 }
 
@@ -126,11 +159,17 @@ export function resumeFor(roomId: string): ResumeRecord | null {
   return r?.roomId === roomId ? r : null;
 }
 
-/** How to get into a game: quick match, a new private game, or a given room (its /game/<code> page). */
-export type JoinRequest = { kind: "quick" } | { kind: "private" } | { kind: "id"; roomId: string };
+/**
+ * How to get into a game: quick match or a new private game of a mode, or a
+ * given room of either mode (its /game/<code> page).
+ */
+export type JoinRequest = { kind: "quick"; mode: GameMode } | { kind: "private"; mode: GameMode } | { kind: "id"; roomId: string };
+
+/** The matchmaking room name of a mode. */
+const roomName = (mode: GameMode) => (mode === "ffa" ? FFA_ROOM_NAME : ROOM_NAME);
 
 export type JoinFailure =
-  /** The room exists but both seats are taken. */
+  /** The room exists but every player seat is taken. */
   | "full"
   /** No such room: a stale or mistyped link, or everyone left and it closed. */
   | "gone"
@@ -154,7 +193,7 @@ function toJoinError(err: unknown): JoinError {
   if (err instanceof JoinError) return err;
   const e = err as { code?: number; message?: string };
   const message = String(e?.message ?? err);
-  if (e?.code === INVALID_ROOM_ID) return new JoinError(/locked/i.test(message) ? "full" : "gone", message);
+  if (e?.code === INVALID_ROOM_ID) return new JoinError(/locked|full/i.test(message) ? "full" : "gone", message);
   // fetch() failing (server down, wrong ?server=) has no Colyseus code.
   if (e?.code === undefined && (err instanceof TypeError || /fetch|network|connect/i.test(message)))
     return new JoinError("unreachable", message);
@@ -163,7 +202,7 @@ function toJoinError(err: unknown): JoinError {
 
 /**
  * Joins a game with the Clerk token when signed in (sent as the Colyseus auth
- * header, read by DuelRoom.onAuth), or without one as a guest. If the server
+ * header, read by GameRoom.onAuth), or without one as a guest. If the server
  * refuses the token, joins again as a guest and says so. The token is read
  * fresh on every join, so signing in or out from the menu applies to the
  * next game without a reload.
@@ -185,8 +224,8 @@ export async function joinGame(url: string, req: JoinRequest, options: Record<st
   }
   const token = await account.getJoinToken();
   const attempt = (client: Client) => {
-    if (req.kind === "quick") return client.joinOrCreate(ROOM_NAME, options);
-    if (req.kind === "private") return client.create(ROOM_NAME, { ...options, private: true });
+    if (req.kind === "quick") return client.joinOrCreate(roomName(req.mode), options);
+    if (req.kind === "private") return client.create(roomName(req.mode), { ...options, private: true });
     return client.joinById(req.roomId, options);
   };
   const client = new Client(url);
@@ -205,7 +244,7 @@ export async function joinGame(url: string, req: JoinRequest, options: Record<st
   }
 }
 
-/** The public games waiting for a second player (GET /games on the game server). */
+/** The public games with a free seat, both modes (GET /games on the game server). */
 export async function fetchOpenGames(url: string, signal?: AbortSignal): Promise<OpenGame[]> {
   // Appended, not `new URL(GAMES_ROUTE, url)`: that would drop a path prefix
   // such as the production `/colyseus` (the route starts with "/").

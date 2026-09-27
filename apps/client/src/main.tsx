@@ -22,11 +22,12 @@ router = createAppRouter(engine);
 
 // Dev-only `?play`: skip the menu and quick-match at once (on a game page,
 // the page's own route joins it). The param is dropped from the address bar.
-if (config.playNow) {
+const playNow = config.playNow;
+if (playNow) {
   const onMenu = location.pathname === "/";
   void router
     .navigate({ to: ".", search: (s) => ({ ...s, play: undefined }), replace: true })
-    .then(() => onMenu && engine.app.quickMatch());
+    .then(() => onMenu && engine.app.quickMatch(playNow));
 }
 
 createRoot(document.getElementById("root")!).render(

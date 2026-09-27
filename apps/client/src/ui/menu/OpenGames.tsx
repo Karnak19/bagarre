@@ -1,12 +1,13 @@
-// The open games list on the menu: public games waiting for a second player
-// (lobby.ts polls them while the menu is up). A click joins through the
-// game's page.
+// The open games list on the menu: public games with a free seat, duels
+// waiting for a second player and free-for-alls (waiting, or in progress:
+// FFA takes players mid-match). lobby.ts polls them while the menu is up. A
+// click joins through the game's page.
 
 import { Heading } from "@astryxdesign/core/Heading";
 import { VStack } from "@astryxdesign/core/Layout";
 import { List, ListItem } from "@astryxdesign/core/List";
 import { Text } from "@astryxdesign/core/Text";
-import { mapById } from "@bagarre/shared";
+import { findMap } from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
 import { useEngine, useStore } from "../hooks.ts";
 import { shared } from "../styles.ts";
@@ -45,22 +46,29 @@ export function OpenGames() {
         Open games
       </Heading>
       <Text type="supporting" color="secondary" xstyle={styles.hint}>
-        Players waiting for an opponent. Pick one to join.
+        Games with a free seat. Pick one to join.
       </Text>
       {games.length > 0 && (
         <List density="compact" aria-live="polite" data-testid="open-games-list">
           {games.map((g) => {
-            const map = mapById(g.mapId).name;
+            const map = findMap(g.mapId)?.name ?? "";
             const when = age(g.createdAt);
+            const ffa = g.mode === "ffa";
+            const mode = ffa ? "Free for all" : "Duel";
+            const seats = `${g.players}/${g.maxPlayers} players`;
+            // A free-for-all takes players mid-match.
+            const live = ffa && g.phase !== "waiting";
+            const details = [mode, seats, map, live ? "in progress" : when].filter(Boolean).join(" · ");
             return (
               <ListItem
                 key={g.roomId}
                 label={g.hostName || "Someone"}
-                description={`${map} · ${when}`}
+                description={details}
                 endContent={<Text xstyle={styles.join}>Join</Text>}
-                aria-label={`Join ${g.hostName || "a player"} on ${map}, waiting ${when}`}
+                aria-label={`Join ${g.hostName || "a player"}'s ${mode.toLowerCase()} on ${map}, ${seats}, ${live ? "in progress" : `waiting ${when}`}`}
                 data-testid="open-game"
                 data-room={g.roomId}
+                data-mode={g.mode}
                 xstyle={styles.item}
                 onClick={() => {
                   gesture();

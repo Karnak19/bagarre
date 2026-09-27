@@ -1,6 +1,7 @@
 # bagarre
 
-A 1v1 isometric twin-stick shooter in the browser. Three.js on the client,
+An isometric twin-stick shooter in the browser: 1v1 duels, and a free for
+all for 3 to 6 players. Three.js on the client,
 an authoritative Colyseus server, Bun everywhere.
 
 ## Run it
@@ -61,7 +62,7 @@ bun run push        # one-off push of the functions (convex dev --once)
 ```
 
 - The client sends its Clerk token when joining (`client.auth.token`). The
-  server checks it in `DuelRoom.onAuth` (networkless, against `CLERK_JWT_KEY`),
+  server checks it in `GameRoom.onAuth` (networkless, against `CLERK_JWT_KEY`),
   reads the username from Convex, and puts it in the synced player state. A
   bad token is refused, and the client joins again as a guest.
 - At the end of a match the server sends each account player's kills, deaths
@@ -167,7 +168,11 @@ TypeScript: React never runs per frame and there is no React Three Fiber.
   `scoreboard`, `scoreboard-row`, `esc-menu`, `esc-resume`, `esc-settings`,
   `esc-leave`, `result-card`, `rematch`, `main-menu`, `notice`,
   `notice-retry`, `notice-back`, `account-chip`, `account-panel`,
-  `settings-volume`, `settings-mute`, and the HUD's `hud-*`.
+  `settings-volume`, `settings-mute`, and the HUD's `hud-*`. The free for
+  all adds `play-ffa`, `private-ffa`, `ffa-countdown`, `ffa-players`,
+  `placement-row`, `result-winner`, `scoreboard-time`, `hud-ffa`,
+  `hud-ffa-rank`, `hud-ffa-top`, `hud-ffa-time`, `hud-killfeed`,
+  `hud-killfeed-row` and `hud-minimap`.
 
 Astryx conventions (the agent cheat sheet `astryx init` wrote is
 `apps/client/.claude/CLAUDE.md`; `bun run astryx docs <topic>` and
@@ -192,6 +197,103 @@ Astryx conventions (the agent cheat sheet `astryx init` wrote is
 - The only plain CSS is `src/ui/global.css`: the font face, the full-screen
   canvas and the page background.
 
+
+## Free for all
+
+Every player for themselves, 3 to 6 per room, on the three big FFA maps
+(Crossroads, Freight, Bastion, see [docs/ffa-maps.md](docs/ffa-maps.md)).
+Duel maps stay duel-only, and FFA maps never show up in a duel.
+
+- **Winning**: first to 15 kills (`FFA_KILLS_TO_WIN`), or the most kills
+  after 6 minutes (`FFA_TIME_LIMIT`). A tie for the most kills when the time
+  runs out goes to **sudden death**: the match ends as soon as one player
+  alone has the most kills (so the next kill by one of the tied leaders wins).
+  If that takes more than 60 s (`FFA_SUDDEN_DEATH_MAX`), it ends anyway and
+  deaths break the tie.
+- **Places**: most kills, then fewest deaths; players equal on both share
+  the place (`placements` in `packages/shared/src/modes.ts`, used by the
+  server and the client alike).
+- **Start**: once 3 players are in, a 10 s countdown (`FFA_COUNTDOWN`), then
+  everyone spawns spread out, out of each other's sight (`ffaStartSpawns`),
+  facing the centre. If a player leaves before the end of the countdown and
+  fewer than 3 are left, it stops.
+- **Drop-in**: players can join a match in progress, up to 6. They spawn
+  out of every living player's sight (`ffaRespawnPoint`) with 0 kills. The
+  open games list keeps a running FFA listed while it has a free seat.
+- **Respawn**: 3 s after dying (`FFA_RESPAWN_DELAY`), out of every living
+  opponent's sight, not too near anyone and not too far from the action
+  (`ffaRespawnPoint`).
+- **Kills**: the kill goes to whoever dealt the killing blow. Dying to your
+  own grenade credits no one and counts as a death; no kill is taken away.
+- **Too few players**: below 2 players mid-match, the match ends (the one
+  left wins).
+- **After the match**: the placement table for 8 s (`FFA_END_DELAY`), then a
+  rematch in the same room on another FFA map, if 3 players are still
+  connected; otherwise back to waiting.
+- **Stats**: `matches.record` gets FFA matches too. First place (shared or
+  not) is a win, every other place a loss; each account player's place is
+  kept on the match's `recordedMatches` row, with the mode.
+
+In a game: the HUD adds your rank ("2nd of 5 · 7 kills"), the top three, the
+time left, a kill feed (killer, weapon, victim) and a minimap in the bottom
+right corner (zones, cover, landmarks, you; enemies only show up when they
+fire, as a dot fading over 1.5 s). Tab lists every player by place. The
+waiting card lists who's in and says the match starts when 3 are in, then
+counts down.
+
+On the menu, **Free for all** quick-matches an FFA (joins an open one or
+opens a new one), and **Private FFA** makes a private one. In dev,
+`?play=ffa` skips the menu and quick-matches an FFA.
+
+### Rooms and modes
+
+One room class plays both modes: `GameRoom` (`apps/server/src/GameRoom.ts`),
+driven by the mode's rules (`ModeRules` in `packages/shared/src/modes.ts`:
+seats, start threshold, kill target, time limit, countdown, respawn delay,
+result delay, drop-in, map pool). `DuelRoom` and `FfaRoom` only pick the
+rules, and are registered as the `duel` and `ffa` room types. The simulation
+(inputs, bullets, grenades, damage) is shared; the mode shows up in a few
+places only: spawns, respawns, what a leave does, and the end conditions.
+`GameRoom.pinnedTo(mapId)` pins a room class to one map of its own pool
+(`createServer({ mapId, ffaMapId })`), `GameRoom.withRules({...})` tweaks the
+rules (the smoke test's short countdown and time limit), and the dev
+`?map=<id>` works in both modes, for that mode's maps only.
+
+Map lookup: `findMap(id)` searches the duel and FFA maps and returns null for
+an unknown id. The client resolves the synced `mapId` with it and logs an
+error rather than silently drawing Yard; `mapById` (which falls back to Yard)
+is only for display. A room only ever picks from its own pool.
+
+The synced state (`GameState`) carries the mode, the kill target, the time
+limit, the countdown, the sudden death flag and the kill feed (the last 5
+deaths, with names and seats copied so a line stays readable after its
+players leave).
+
+### Seats and clients (the seam for spectators)
+
+A client is not a player. A **seat** is a player: an entry in
+`state.players` plus its server-side bookkeeping, and the seat number is the
+player's `slot` (its colour, 0-5, and its bullet ids). A seat is taken in
+`onJoin`, kept through a dropped connection (`onDrop` / `onReconnect`, 20 s)
+and freed in `onLeave`.
+
+- The player cap is on seats, never on `maxClients`: `maxClients` is the
+  seats plus `SPECTATOR_ROOM` (20), room left for future spectators.
+- `GameRoom.hasReachedMaxClients()` counts seats taken plus seats promised
+  to joins in flight, and Colyseus locks the room while it's full: quick
+  match skips it (and two joins racing for the last seat are settled there),
+  and a join by id says "This game is full". It unlocks when a seat frees.
+  `onJoin` also refuses a seat past the cap.
+- Every message handler (input, weapon pick, ping) and `onDrop`, `onReconnect`
+  and `onLeave` do nothing for a client without a seat.
+
+To add spectators later: a `spectate: true` join option makes `wantsSeat()`
+return false, and `onJoin` then registers the client with no player (the
+client draws the match from the state, with no prediction). The one piece to
+build is a way in past the seat lock, since a locked room refuses
+`joinById`: for example a small HTTP route that reserves a seat for a
+spectator through a room method that skips the seat count.
+
 ## Controls
 
 | Input              | Action                                                        |
@@ -209,8 +311,8 @@ Astryx conventions (the agent cheat sheet `astryx init` wrote is
 | **Esc**            | Match menu: resume, settings, leave (the match keeps running) |
 
 Keys are read by physical position, so on AZERTY it's ZQSD to move and the
-key labelled **A** throws a grenade. First to 5 kills wins; the match restarts
-a few seconds later.
+key labelled **A** throws a grenade. In a duel, first to 5 kills wins; the
+match restarts a few seconds later (free for all: see above).
 
 A grenade lands, then explodes 0.6 s later: the red circle on the ground is
 its blast radius, so get out of it. It hurts its thrower too, at half rate.
@@ -319,9 +421,9 @@ apps/
     public/           models (glTF, meshopt-compressed), particle atlas and sounds, see ASSETS.md
     scripts/          asset rebuild scripts (assets/, sfx/)
   server/             @bagarre/server: Colyseus on Bun
-    src/              Colyseus room (DuelRoom), synced state schema, accounts, bootstrap
+    src/              the Colyseus room for both modes (GameRoom: DuelRoom, FfaRoom), synced state schema, accounts, bootstrap
                       and the GET /games route (app.ts)
-    smoke.ts          headless end-to-end test (smoke-accounts.ts: its account part)
+    smoke.ts          headless end-to-end test (smoke-accounts.ts: its account part, smoke-ffa.ts: the free for all)
 packages/
   shared/             @bagarre/shared: TypeScript source, no build step
     src/              constants and balance tables, the maps (maps/) and the Arena shape,

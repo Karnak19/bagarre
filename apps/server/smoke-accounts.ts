@@ -60,9 +60,9 @@ export async function setupTestAccounts(): Promise<AccountsHarness> {
     // on the convex-test database instead of the deployment.
     lookupUsername: async (clerkId) =>
       (await t.withIdentity({ subject: clerkId, issuer: TEST_ISSUER }).query(api.users.me, {}))?.username ?? null,
-    recordMatch: async (matchId, players) => {
+    recordMatch: async (matchId, players, mode) => {
       recorded.push({ matchId, players });
-      await t.mutation(api.matches.record, { secret, matchId, players });
+      await t.mutation(api.matches.record, { secret, matchId, mode, players });
     },
   });
 

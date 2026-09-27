@@ -1,3 +1,5 @@
+import type { GameMode } from "./modes.ts";
+
 // Message and state shapes exchanged between client and server.
 
 export const MSG_INPUT = "input";
@@ -106,7 +108,10 @@ export interface PlayerView extends PlayerSim {
   alive: boolean;
   /** Last input seq the server applied for this player (for reconciliation). */
   lastSeq: number;
-  /** 0 or 1, decides colour and name. */
+  /**
+   * The player's seat number: 0-1 in a duel, 0-5 in FFA. Decides the colour
+   * (PLAYER_COLORS) and the bullet ids. The lowest free one is taken at join.
+   */
   slot: number;
   /** Server ticks left before respawn, when dead. */
   respawnTicks: number;
@@ -197,8 +202,36 @@ export interface MapLike<T> {
   get(key: string): T | undefined;
 }
 
+/**
+ * One death in the kill feed (`RoomStateView.feed`, the last few). Names and
+ * slots are copied at the time, so a line stays readable after its players
+ * leave. `killer` is "" for a self-kill (your own grenade): no one is
+ * credited.
+ */
+export interface KillView {
+  /** Increases with every death in the room: the feed's key. */
+  n: number;
+  tick: number;
+  killer: string;
+  killerName: string;
+  killerSlot: number;
+  victim: string;
+  victimName: string;
+  victimSlot: number;
+  /** A weapon id (WEAPONS), or KILL_GRENADE. */
+  weapon: number;
+}
+
+/** `KillView.weapon` of a grenade kill. */
+export const KILL_GRENADE = 255;
+/** Kill feed lines kept in the synced state. */
+export const KILL_FEED_SIZE = 5;
+
 export interface RoomStateView {
+  /** "duel" or "ffa" (see modes.ts). Set when the room is made, never changes. */
+  mode: string;
   phase: Phase;
+  /** Session id of the winner, "" before the end or for a shared first place. */
   winner: string;
   tick: number;
   /** The map being played (a `MapDef.id`, see `mapById`). Only changes between matches. */
@@ -206,9 +239,18 @@ export interface RoomStateView {
   /** Server tick the current match started on, and the one it ended on (0 while it runs). */
   startTick: number;
   endTick: number;
+  /** Kills that win at once, and the time limit in seconds (0: none). From the mode's rules. */
+  killsToWin: number;
+  timeLimit: number;
+  /** Server ticks left of the pre-match countdown while waiting (0: not counting down). */
+  countdown: number;
+  /** The time ran out on a tie for the most kills: the next kill that breaks it wins. */
+  suddenDeath: boolean;
   players: MapLike<PlayerView>;
   bullets: MapLike<BulletView>;
   grenades: MapLike<GrenadeView>;
+  /** The last KILL_FEED_SIZE deaths, oldest first. */
+  feed: { forEach(cb: (k: KillView, i: number) => void): void; length: number };
 }
 
 /**
@@ -217,11 +259,14 @@ export interface RoomStateView {
  * games list on the menu is built from it.
  */
 export interface RoomMeta {
+  mode: GameMode;
   /** Name of the player who has been in the room the longest ("" when empty). */
   hostName: string;
   mapId: string;
   phase: Phase;
+  /** Player seats taken (dropped players waiting to reconnect included), and the seat count. */
   players: number;
+  maxPlayers: number;
   /** Date.now() when the room was created. */
   createdAt: number;
 }
@@ -234,15 +279,23 @@ export interface JoinOptions {
   map?: string;
   /** The guest name the menu shows (`Guest-` and four digits, anything else is ignored). Accounts use their username. */
   guestName?: string;
+  // The mode is the room name ("duel" or "ffa"), never an option. A future
+  // `spectate?: boolean` goes here: a client that joins without a player
+  // seat (see the seat model in GameRoom and the README).
 }
 
-/** HTTP route of the game server listing the public games waiting for a second player. */
+/** HTTP route of the game server listing the public games with a free seat (duels waiting, FFA waiting or playing). */
 export const GAMES_ROUTE = "/games";
 
 /** One entry of GET /games. */
 export interface OpenGame {
   roomId: string;
+  mode: GameMode;
   hostName: string;
   mapId: string;
+  phase: Phase;
+  /** Seats taken and seats in all ("3/6 players"). */
+  players: number;
+  maxPlayers: number;
   createdAt: number;
 }

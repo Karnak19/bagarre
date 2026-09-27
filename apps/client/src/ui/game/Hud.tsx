@@ -1,6 +1,8 @@
 // The in-game HUD: both players' HP, the score, the status line, the map
 // card, the weapon and ammo, the ability cooldowns, the sound toggle, the
-// weapon picker line and the netcode debug line.
+// weapon picker line and the netcode debug line. In a free-for-all the score
+// and the opponent's bar give way to the rank panel, the kill feed and the
+// minimap (HudFfa.tsx).
 //
 // match.ts writes a HudModel every frame (hud.ts). Nothing here re-renders
 // per frame: each widget selects the few fields it shows and re-renders only
@@ -27,7 +29,8 @@ import { useRef } from "react";
 import type { HudModel } from "../../hud.ts";
 import { countRender } from "../../renders.ts";
 import { shallowEqual, useEngine, useSelector, useStoreEffect } from "../hooks.ts";
-import { shared } from "../styles.ts";
+import { shared, slotFill } from "../styles.ts";
+import { FfaPanel, KillFeed, MinimapBox } from "./HudFfa.tsx";
 
 const styles = stylex.create({
   root: { position: "fixed", inset: 0, pointerEvents: "none", zIndex: 10 },
@@ -46,9 +49,6 @@ const styles = stylex.create({
   hpRight: { transform: "scaleX(-1)" },
   // Scaled, not resized: the HP change animates on the compositor.
   hpFill: { height: "100%", width: "100%", transformOrigin: "left center", transition: "transform 120ms linear" },
-  p0: { backgroundColor: "var(--bagarre-p0)" },
-  p1: { backgroundColor: "var(--bagarre-p1)" },
-  pNone: { backgroundColor: "#888" },
   score: { paddingInline: "16px", fontSize: "22px", fontWeight: 700, whiteSpace: "nowrap" },
   status: {
     position: "absolute",
@@ -106,17 +106,31 @@ const styles = stylex.create({
   hint: { opacity: 0.75, marginInlineStart: "4px" },
 });
 
-const slotFill = (slot: number | null) => (slot === 0 ? styles.p0 : slot === 1 ? styles.p1 : styles.pNone);
-
 /** The HUD, mounted only while in a game. */
 export function Hud() {
+  countRender("hud");
+  const { hud } = useEngine();
+  // A free-for-all swaps the duel's score and opponent bar for its rank panel,
+  // the kill feed and the minimap.
+  const ffa = useSelector(hud, (m) => !!m?.ffa);
   return (
     <VStack xstyle={styles.root} data-testid="hud" aria-hidden="false">
-      <HStack justify="between" align="center" gap={4} xstyle={styles.top}>
-        <PlayerBar mine />
-        <Score />
-        <PlayerBar mine={false} />
-      </HStack>
+      {ffa ? (
+        <HStack justify="between" align="start" gap={4} xstyle={styles.top}>
+          <PlayerBar mine />
+          <VStack gap={2} align="end">
+            <FfaPanel />
+            <KillFeed />
+          </VStack>
+        </HStack>
+      ) : (
+        <HStack justify="between" align="center" gap={4} xstyle={styles.top}>
+          <PlayerBar mine />
+          <Score />
+          <PlayerBar mine={false} />
+        </HStack>
+      )}
+      {ffa && <MinimapBox />}
       <Status />
       <MapCard />
       <Picker />

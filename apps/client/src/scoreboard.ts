@@ -3,7 +3,7 @@
 // from the synced room state (the server counts shots, hits, damage and
 // measures ping). Pure: no DOM.
 
-import { TICK_RATE, WEAPONS, mapById, type PlayerView } from "@bagarre/shared";
+import { TICK_RATE, WEAPONS, findMap, ordinal, placements, type GameMode, type PlayerView } from "@bagarre/shared";
 import type { Snapshot } from "./net.ts";
 
 export const COLUMNS = [
@@ -15,18 +15,32 @@ export const COLUMNS = [
   { key: "ping", label: "Ping", short: "Ping" },
 ] as const;
 
-function clock(seconds: number) {
+/** Seconds as "m:ss". */
+export function clock(seconds: number) {
   const s = Math.max(0, Math.floor(seconds));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+/** Seconds left of a snapshot's time limit (null: no limit, or not running). */
+export function secondsLeft(s: Snapshot | null): number | null {
+  if (!s || s.timeLimit <= 0 || s.phase === "waiting") return null;
+  const elapsed = ((s.endTick || s.tick) - s.startTick) / TICK_RATE;
+  return Math.max(0, s.timeLimit - elapsed);
+}
+
 export interface ScoreboardRow {
+  id: string;
   name: string;
   slot: number;
   you: boolean;
+  /** Final place so far (kills, then deaths; equal players share it), and as "1st". */
+  place: number;
+  placeLabel: string;
   /** Most kills, alone at the top. */
   leader: boolean;
   account: boolean;
+  /** Lost connection, seat held. */
+  away: boolean;
   kills: number;
   deaths: number;
   damage: number;
@@ -40,35 +54,51 @@ export interface ScoreboardRow {
 }
 
 export interface ScoreboardModel {
+  mode: GameMode;
   mapName: string;
-  /** Our kills, then theirs. */
+  killsToWin: number;
+  /** Duel: our kills, then theirs. */
   score: [number, number];
   /** Match time, "m:ss". */
   time: string;
-  /** Most kills first. */
+  /** FFA: time left, "m:ss" ("" with no limit). */
+  timeLeft: string;
+  suddenDeath: boolean;
+  /** By place: most kills first, then fewest deaths. */
   rows: ScoreboardRow[];
 }
 
 /** The scoreboard's content, from a snapshot (pure: no DOM). `you` is our session id. */
 export function scoreboardModel(s: Snapshot | null, you: string): ScoreboardModel {
-  const players: [string, PlayerView][] = [];
-  s?.players.forEach((p, id) => players.push([id, p]));
-  players.sort((a, b) => b[1].kills - a[1].kills || a[1].slot - b[1].slot);
+  const players: (PlayerView & { id: string })[] = [];
+  s?.players.forEach((p, id) => players.push({ ...p, id }));
+  // Equal players keep a stable order (by seat).
+  players.sort((a, b) => a.slot - b.slot);
+  const placed = placements(players);
   const mine = s?.players.get(you);
-  const theirs = players.find(([id]) => id !== you)?.[1];
-  const top = players[0]?.[1].kills ?? 0;
-  const alone = players.filter(([, p]) => p.kills === top).length === 1;
+  const theirs = players.find((p) => p.id !== you);
+  const top = placed[0]?.player.kills ?? 0;
+  const alone = players.filter((p) => p.kills === top).length === 1;
   const running = !!s && s.phase !== "waiting";
+  const left = secondsLeft(s);
   return {
-    mapName: s ? mapById(s.mapId).name : "",
+    mode: s?.mode ?? "duel",
+    mapName: s ? (findMap(s.mapId)?.name ?? "") : "",
+    killsToWin: s?.killsToWin ?? 0,
     score: [mine?.kills ?? 0, theirs?.kills ?? 0],
     time: running ? clock(((s.endTick || s.tick) - s.startTick) / TICK_RATE) : "0:00",
-    rows: players.map(([id, p]) => ({
+    timeLeft: left === null ? "" : clock(Math.ceil(left)),
+    suddenDeath: !!s?.suddenDeath,
+    rows: placed.map(({ player: p, place }) => ({
+      id: p.id,
       name: p.name,
       slot: p.slot,
-      you: id === you,
+      you: p.id === you,
+      place,
+      placeLabel: ordinal(place),
       leader: top > 0 && alone && p.kills === top,
       account: p.account,
+      away: !p.connected,
       kills: p.kills,
       deaths: p.deaths,
       damage: p.damage,

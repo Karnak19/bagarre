@@ -20,7 +20,7 @@
 // - Play / Private game run on `/`; once the room is joined the store pushes
 //   its page (`nav.toGame`), whose `routeGame` is then a no-op.
 
-import type { Phase } from "@bagarre/shared";
+import type { GameMode, Phase } from "@bagarre/shared";
 import { guestName } from "./auth.ts";
 import type { Match } from "./match.ts";
 import { CloseCode } from "@colyseus/sdk";
@@ -62,7 +62,7 @@ export interface AppState {
   paused: boolean;
   /** Rematch pressed on the result card; cleared when the next match starts. */
   staying: boolean;
-  /** The room went back to waiting after a match: the opponent left. */
+  /** The room went back to waiting after a match: the opponent left (FFA: too few players are left). */
   opponentLeft: boolean;
   /** Tab held: the scoreboard is up. */
   scoreboardHeld: boolean;
@@ -133,8 +133,15 @@ function closedNotice(code: number): Notice {
 }
 
 function joinLabels(req: JoinRequest): { title: string; sub: string } {
-  if (req.kind === "quick") return { title: "Finding a game…", sub: "Joining an open game, or opening a new one." };
-  if (req.kind === "private") return { title: "Creating your private game…", sub: "You'll get a link to send a friend." };
+  if (req.kind === "quick")
+    return req.mode === "ffa"
+      ? { title: "Finding a free for all…", sub: "Joining an open free for all, or opening a new one." }
+      : { title: "Finding a game…", sub: "Joining an open game, or opening a new one." };
+  if (req.kind === "private")
+    return {
+      title: req.mode === "ffa" ? "Creating your private free for all…" : "Creating your private game…",
+      sub: req.mode === "ffa" ? "You'll get a link to send your friends." : "You'll get a link to send a friend.",
+    };
   return { title: "Joining the game…", sub: `Game ${req.roomId}` };
 }
 
@@ -222,12 +229,14 @@ export class App {
     void this.join({ kind: "id", roomId: code });
   }
 
-  quickMatch() {
-    void this.join({ kind: "quick" });
+  /** Play (duel) or Free for all: join an open game of that mode, or open one. */
+  quickMatch(mode: GameMode = "duel") {
+    void this.join({ kind: "quick", mode });
   }
 
-  privateGame() {
-    void this.join({ kind: "private" });
+  /** A private game of that mode, joined by its link only. */
+  privateGame(mode: GameMode = "duel") {
+    void this.join({ kind: "private", mode });
   }
 
   /** A game from the open games list: its page, whose route then joins it. */
@@ -328,7 +337,7 @@ export class App {
       const e = err instanceof JoinError ? err : new JoinError("error", String(err));
       console.warn("[join]", e.reason, e.message);
       if (e.reason === "full")
-        this.showNotice({ title: "This game is full", body: "Both seats are taken. Join another game from the menu, or start your own.", retry: null });
+        this.showNotice({ title: "This game is full", body: "Every seat is taken. Join another game from the menu, or start your own.", retry: null });
       else if (e.reason === "gone")
         this.showNotice({ title: "This game doesn't exist anymore", body: "Everyone left, or the link is wrong. Start a new game from the menu.", retry: null });
       else if (e.reason === "unreachable")

@@ -16,6 +16,7 @@
 import { verifyToken } from "@clerk/backend";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "@bagarre/backend/api";
+import type { GameMode } from "@bagarre/shared";
 
 export type Identity =
   | { kind: "guest"; name: string }
@@ -25,7 +26,10 @@ export interface MatchResult {
   clerkId: string;
   kills: number;
   deaths: number;
+  /** First place (a shared first counts). */
   won: boolean;
+  /** Final place, 1 = first (see `placements` in @bagarre/shared). */
+  place: number;
 }
 
 export interface AccountsConfig {
@@ -40,7 +44,7 @@ export interface AccountsConfig {
   /** Username of an account, or null (no username yet, or Convex unreachable). */
   lookupUsername: (clerkId: string, token: string) => Promise<string | null>;
   /** Credits a finished match. Must be idempotent per matchId. */
-  recordMatch: (matchId: string, players: MatchResult[]) => Promise<void>;
+  recordMatch: (matchId: string, players: MatchResult[], mode: GameMode) => Promise<void>;
 }
 
 /** Thrown from onAuth; its message reaches the client. */
@@ -69,13 +73,13 @@ function convexFromEnv(): Pick<AccountsConfig, "lookupUsername" | "recordMatch">
         return null;
       }
     },
-    async recordMatch(matchId, players) {
+    async recordMatch(matchId, players, mode) {
       if (!url || !secret) {
         console.warn("[accounts] CONVEX_URL or GAME_SERVER_SECRET unset, match not recorded");
         return;
       }
       const client = new ConvexHttpClient(url);
-      await client.mutation(api.matches.record, { secret, matchId, players });
+      await client.mutation(api.matches.record, { secret, matchId, mode, players });
     },
   };
 }
@@ -147,11 +151,11 @@ export async function resolveIdentity(token: string | undefined): Promise<Identi
  * Records a finished match for its account players, retrying a few times.
  * Safe to retry because matches.record is idempotent per matchId.
  */
-export async function recordMatch(matchId: string, players: MatchResult[]): Promise<void> {
+export async function recordMatch(matchId: string, players: MatchResult[], mode: GameMode): Promise<void> {
   if (players.length === 0) return;
   for (let attempt = 1; ; attempt++) {
     try {
-      await config.recordMatch(matchId, players);
+      await config.recordMatch(matchId, players, mode);
       return;
     } catch (err) {
       if (attempt >= 3) {

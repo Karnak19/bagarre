@@ -15,6 +15,7 @@ import { Input } from "./input.ts";
 import { installAppKeys } from "./keys.ts";
 import { Lobby } from "./lobby.ts";
 import { Match, type Bot, type SfxLogEntry } from "./match.ts";
+import { Minimap } from "./minimap.ts";
 import { GameScene, setAssets } from "./scene.ts";
 import { devRenders } from "./renders.ts";
 import { Store } from "./store.ts";
@@ -25,6 +26,8 @@ export interface Engine {
   lobby: Lobby;
   hud: Hud;
   input: Input;
+  /** The FFA minimap: the HUD mounts its canvas with `minimap.attach()`, the frame loop draws it. */
+  minimap: Minimap;
   /** What the game's cards show, republished every frame in a game (null elsewhere). */
   view: Store<GameView | null>;
   /** Asset loading progress, 0..1, or null once loaded. */
@@ -36,6 +39,7 @@ export interface Engine {
 export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
   const canvas = document.querySelector<HTMLCanvasElement>("#game")!;
   const hud = new Hud();
+  const minimap = new Minimap();
   const input = new Input(canvas);
   const bot: Bot = { on: false, mx: 0, mz: 0, aim: 0, fire: false };
   const sfxLog: SfxLogEntry[] = [];
@@ -68,7 +72,7 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
         // seat's first counters as its baseline anyway). A resumed seat
         // lifts them back to the server's in Match.resync.
         Object.assign(input.presses, { dash: 0, grenade: 0, shield: 0, reload: 0 });
-        return new Match({ scene: scene!, input, hud, net, bot, sfxLog });
+        return new Match({ scene: scene!, input, hud, net, bot, sfxLog, minimap });
       },
     },
     { serverUrl: config.serverUrl, lagMs: config.lagMs, mapParam: config.mapParam, nav: config.nav },
@@ -129,6 +133,7 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
         bot,
         account,
         hud,
+        minimap,
         ui,
         /** React renders per UI widget since load (see renders.ts). */
         renders: devRenders,
@@ -191,5 +196,5 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
     });
   }
 
-  return { app, lobby, hud, input, view, loading, gesture };
+  return { app, lobby, hud, input, minimap, view, loading, gesture };
 }

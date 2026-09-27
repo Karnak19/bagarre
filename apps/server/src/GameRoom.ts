@@ -1,3 +1,20 @@
+// The game room, for both modes. A duel and a free-for-all run the same
+// simulation (inputs, bullets, grenades, damage); what differs is in the
+// mode's rules (@bagarre/shared modes.ts): seats, win condition, map pool,
+// countdown, spawns, respawn delay. `DuelRoom` and `FfaRoom` at the bottom
+// only pick the rules.
+//
+// Seats and clients. A client is not a player: a player is a seat, which is
+// an entry in `state.players` (plus its `internals`), and the seat number is
+// the player's `slot` (colour, bullet ids). A seat is taken in `onJoin`, kept
+// through a dropped connection (onDrop / onReconnect, RECONNECT_GRACE_S) and
+// freed in `onLeave`. The player cap is enforced on seats, never through
+// `maxClients`, which leaves SPECTATOR_ROOM clients of room for spectators:
+// clients with no seat and no player entity. Every handler already ignores a
+// client without a seat (no input, no pick, no ping), so a spectator only
+// needs its branch in `onJoin` (see `wantsSeat`) and a way in past the seat
+// lock (see `hasReachedMaxClients`). Nothing builds spectating yet.
+
 import {
   CloseCode,
   ErrorCode,
@@ -12,32 +29,36 @@ import {
 import {
   BULLET_RADIUS,
   DEFAULT_MAP_ID,
+  DUEL_RULES,
+  FFA_RULES,
+  FFA_SUDDEN_DEATH_MAX,
   GRENADE_FUSE_TICKS,
   INPUT_BURST,
-  KILLS_TO_WIN,
-  MATCH_END_DELAY,
+  KILL_FEED_SIZE,
+  KILL_GRENADE,
   MAX_HP,
   MAX_INPUT_QUEUE,
   MAX_MESSAGES_PER_SECOND,
-  MAX_PLAYERS,
   MSG_INPUT,
-  MAPS,
   MSG_PICK,
   MSG_PING,
   MSG_PONG,
   PLAYER_RADIUS,
   RECONNECT_GRACE_S,
-  RESPAWN_DELAY,
   SHIELD,
   SHIELD_TICKS,
+  SPECTATOR_ROOM,
   TICK_RATE,
   bulletId,
   bulletLifeTicks,
   circlesOverlap,
+  ffaRespawnPoint,
+  ffaStartSpawns,
   grenadeArc,
   grenadeDamage,
   grenadeFlightTicks,
   mapById,
+  placements,
   readSim,
   respawnPoint,
   shotPellets,
@@ -50,14 +71,17 @@ import {
   ticks,
   weaponDef,
   writeSim,
+  type FfaMapDef,
   type InputMessage,
   type MapDef,
+  type ModeRules,
   type Phase,
   type RoomMeta,
+  type Spawn,
   type Vec2,
 } from "@bagarre/shared";
 import { AuthRejected, guestName, recordMatch, resolveIdentity, type Identity, type MatchResult } from "./accounts.ts";
-import { Bullet, DuelState, Grenade, Player } from "./state.ts";
+import { Bullet, GameState, Grenade, KillEvent, Player } from "./state.ts";
 
 /**
  * Error code of a join refused for a bad Clerk token: Colyseus' own
@@ -66,7 +90,7 @@ import { Bullet, DuelState, Grenade, Player } from "./state.ts";
  */
 export const AUTH_REJECTED_CODE = ErrorCode.AUTH_FAILED;
 
-/** Server-only bookkeeping per player. Never synced. */
+/** Server-only bookkeeping per seat. Never synced. */
 interface PlayerInternal {
   queue: InputMessage[];
   /** Input budget, see INPUT_BURST. */
@@ -91,6 +115,7 @@ interface BulletInternal {
   vz: number;
   ticksLeft: number;
   damage: number;
+  weapon: number;
 }
 
 /** Server-only bookkeeping per grenade. */
@@ -105,29 +130,35 @@ interface GrenadeInternal {
 const PING_INTERVAL_MS = 2000;
 let pingCounter = 0;
 
-/** A map id that exists, or null. */
-function knownMap(id: unknown): MapDef | null {
-  return typeof id === "string" ? (MAPS.find((m) => m.id === id) ?? null) : null;
-}
-
-/**
- * The dev-only `?map=<id>` join option (the client passes it as `map`). Honoured
- * only when NODE_ENV isn't "production", read at join time.
- */
-function devMap(options: unknown): MapDef | null {
-  if (process.env.NODE_ENV === "production") return null;
-  return typeof options === "object" && options !== null ? knownMap((options as Record<string, unknown>).map) : null;
-}
+const optionsRecord = (options: unknown): Record<string, unknown> =>
+  typeof options === "object" && options !== null ? (options as Record<string, unknown>) : {};
 
 /** The `guestName` join option, when it has the server's own guest name format. */
 function requestedGuestName(options: unknown): string | null {
-  const v = typeof options === "object" && options !== null ? (options as Record<string, unknown>).guestName : undefined;
+  const v = optionsRecord(options).guestName;
   return typeof v === "string" && /^Guest-\d{4}$/.test(v) ? v : null;
 }
 
-export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
-  maxClients = MAX_PLAYERS;
-  state = new DuelState();
+/**
+ * Whether this join takes a player seat. Always, for now. The seam for
+ * spectators: a `spectate: true` join option would return false here, and
+ * onJoin would then register the client with no Player (every handler
+ * already ignores clients without a seat).
+ */
+function wantsSeat(_options: unknown): boolean {
+  return true;
+}
+
+/** The map's own spawns for the match start of a duel slot. */
+const duelSpawn = (map: MapDef, slot: number): Spawn => map.spawns[slot % map.spawns.length];
+
+export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
+  /** The mode this room class plays. Subclasses (DuelRoom, FfaRoom, `withRules`) set it. */
+  static rules: ModeRules = DUEL_RULES;
+  protected readonly rules: ModeRules = (this.constructor as typeof GameRoom).rules;
+  /** Seats plus room for spectators: the player cap is on seats (hasReachedMaxClients), never here. */
+  maxClients = this.rules.maxPlayers + SPECTATOR_ROOM;
+  state = new GameState();
   /** Flood protection: past this the client is disconnected (4002, no seat held). */
   maxMessagesPerSecond = MAX_MESSAGES_PER_SECOND;
   /** Seconds a dropped player's seat is held. A property so the smoke test can shorten it in a subclass. */
@@ -136,7 +167,8 @@ export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
   /**
    * Every client message. Each payload goes through its parser from
    * @bagarre/shared first: anything malformed is dropped, never coerced.
-   * Handlers read the sender from `client`, never from the payload.
+   * Handlers read the sender from `client`, never from the payload, and do
+   * nothing for a client without a seat.
    */
   messages = {
     [MSG_INPUT]: (client: Client, raw: unknown) => {
@@ -180,11 +212,12 @@ export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
   private bulletInternals = new Map<string, BulletInternal>();
   private grenadeInternals = new Map<string, GrenadeInternal>();
   private nextGrenadeId = 0;
+  private nextKill = 0;
   private matchResetTicks = 0;
   /** Unique per match, so a retried stats write is applied once. */
   private matchId = "";
   /** The map being played; `state.mapId` mirrors it. Only changes between matches (see `pickMap`). */
-  private map: MapDef = mapById(DEFAULT_MAP_ID);
+  private map: MapDef = this.rules.maps[0] ?? mapById(DEFAULT_MAP_ID);
   /** Pinned (`pinnedTo`) or forced by the dev `?map=` option: every match stays on `map`. */
   private fixedMap = false;
   /** A match has been started on `map`, so the next one moves to another map. */
@@ -214,36 +247,63 @@ export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
   }
 
   /**
-   * A room class pinned to one map, for `createServer({ mapId })` and the
-   * smoke test. A subclass rather than a room option: clients' join options
-   * are merged into the room options, so an option could be spoofed.
+   * A room class pinned to one map of its mode's pool, for
+   * `createServer({ mapId })` and the smoke test. A subclass rather than a
+   * room option: clients' join options are merged into the room options, so
+   * an option could be spoofed.
    */
-  static pinnedTo(mapId: string): typeof DuelRoom {
-    const map = knownMap(mapId);
-    if (!map) throw new Error(`Unknown map "${mapId}" (known: ${MAPS.map((m) => m.id).join(", ")})`);
-    return class PinnedDuelRoom extends DuelRoom {
+  static pinnedTo<T extends typeof GameRoom>(this: T, mapId: string): T {
+    const found = this.rules.maps.find((m) => m.id === mapId);
+    if (!found) throw new Error(`Unknown ${this.rules.mode} map "${mapId}" (known: ${this.rules.maps.map((m) => m.id).join(", ")})`);
+    const map: MapDef = found;
+    return class PinnedRoom extends (this as typeof GameRoom) {
       protected override pinnedMap: MapDef | null = map;
-    };
+    } as unknown as T;
+  }
+
+  /** The same room with some rules changed (the smoke test's short time limit and countdown). */
+  static withRules<T extends typeof GameRoom>(this: T, overrides: Partial<ModeRules>): T {
+    const rules = { ...this.rules, ...overrides };
+    return class TunedRoom extends (this as typeof GameRoom) {
+      static override rules = rules;
+    } as unknown as T;
   }
 
   /** Set by `pinnedTo`: every match of this room is on that map. */
   protected pinnedMap: MapDef | null = null;
 
+  /** A map of this room's pool with that id, or null. Never another mode's map, never a fallback. */
+  private knownMap(id: unknown): MapDef | null {
+    return typeof id === "string" ? (this.rules.maps.find((m) => m.id === id) ?? null) : null;
+  }
+
+  /**
+   * The dev-only `?map=<id>` join option (the client passes it as `map`),
+   * among this room's own maps. Honoured only when NODE_ENV isn't
+   * "production", read at join time.
+   */
+  private devMap(options: unknown): MapDef | null {
+    if (process.env.NODE_ENV === "production") return null;
+    return this.knownMap(optionsRecord(options).map);
+  }
+
   onCreate(options?: unknown) {
+    const rules = this.rules;
+    this.state.mode = rules.mode;
+    this.state.killsToWin = rules.killsToWin;
+    this.state.timeLimit = rules.timeLimit;
     // A private room is never listed nor quick-matched, only joined by id
     // (its invite link). Only the creator's options reach onCreate, so no one
     // can make someone else's room private; join options are never read for it.
-    if (typeof options === "object" && options !== null && (options as Record<string, unknown>).private === true) {
-      void this.setPrivate(true);
-    }
+    if (optionsRecord(options).private === true) void this.setPrivate(true);
     // Map: pinned by the server, else by the dev `?map=` option of whoever
-    // created the room, else random.
-    const pinned = this.pinnedMap ?? devMap(options);
+    // created the room, else random, always from this mode's pool.
+    const pinned = this.pinnedMap ?? this.devMap(options);
     if (pinned) {
       this.map = pinned;
       this.fixedMap = true;
     } else {
-      this.map = MAPS[Math.floor(Math.random() * MAPS.length)];
+      this.map = rules.maps[Math.floor(Math.random() * rules.maps.length)];
     }
     this.state.mapId = this.map.id;
     this.syncListing();
@@ -265,23 +325,76 @@ export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
     this.patchRate = null;
   }
 
+  // --- Seats -----------------------------------------------------------------------
+
+  /** Seats taken, dropped players included. */
+  get seats(): number {
+    return this.state.players.size;
+  }
+
+  /** Seats whose player is connected right now. */
+  private connectedSeats(): number {
+    let n = 0;
+    this.state.players.forEach((p) => (n += p.connected ? 1 : 0));
+    return n;
+  }
+
+  /**
+   * Seats taken plus seats promised: reservations made by the matchmaker for
+   * clients that haven't joined yet. A held reconnection is already a seat
+   * (its player is still in `state.players`), so it is not counted twice.
+   */
+  private claimedSeats(): number {
+    const reserved = (this as unknown as { _reservedSeats: Record<string, [unknown, ...unknown[]]> })._reservedSeats;
+    let pending = 0;
+    for (const id of Object.keys(reserved)) if (!this.state.players.has(id) && wantsSeat(reserved[id]?.[0])) pending++;
+    return this.seats + pending;
+  }
+
+  /**
+   * The seat lock. Colyseus asks this before reserving a seat and locks the
+   * room (no quick match, no join by id: "This game is full") while it is
+   * true, then unlocks when a client leaves. Counting player seats here,
+   * rather than setting `maxClients` to the player cap, keeps the rest of
+   * `maxClients` free for spectators; two joins racing for the last seat are
+   * settled here too (the second gets a new room from quick match).
+   *
+   * For spectators later: a spectator must get past this lock (it also
+   * blocks joinById on a locked room), so its join needs its own entry, e.g.
+   * a seat reserved by a room method that skips the seat count.
+   */
+  override hasReachedMaxClients(): boolean {
+    return super.hasReachedMaxClients() || this.claimedSeats() >= this.rules.maxPlayers;
+  }
+
+  /** The lowest seat number nobody holds. */
+  private freeSlot(): number {
+    const taken = new Set<number>();
+    this.state.players.forEach((p) => taken.add(p.slot));
+    let slot = 0;
+    while (taken.has(slot)) slot++;
+    return slot;
+  }
+
   onJoin(client: Client, options?: unknown) {
-    // A dev `?map=` from the second player pins the room too. A join can
-    // only happen while waiting (the room holds two), so this is never
-    // mid-match. A server-pinned map wins.
-    const asked = devMap(options);
+    if (!wantsSeat(options)) return; // Spectators, later: no Player, no internals.
+    // The seat lock settles races, so this only trips on a bug; refuse
+    // rather than seat a 7th player.
+    if (this.seats >= this.rules.maxPlayers)
+      throw new ServerError(ErrorCode.MATCHMAKE_INVALID_ROOM_ID, `room "${this.roomId}" is full`);
+
+    // A dev `?map=` from a later player pins the room too, unless a match is
+    // running (a duel can't be mid-match here: the room holds two). A
+    // server-pinned map wins.
+    const asked = this.devMap(options);
     if (asked && !this.pinnedMap && this.state.phase !== "playing") {
       this.fixedMap = true;
       if (asked.id !== this.map.id) this.switchMap(asked);
     }
 
-    const taken = new Set<number>();
     const names = new Set<string>();
-    this.state.players.forEach((p) => {
-      taken.add(p.slot);
-      names.add(p.name);
-    });
-    const slot = taken.has(0) ? 1 : 0;
+    this.state.players.forEach((p) => names.add(p.name));
+    const slot = this.freeSlot();
     const identity: Identity = (client.auth as Identity | undefined) ?? { kind: "guest", name: guestName() };
     const hasUsername = identity.kind === "account" && !!identity.username;
     // A guest keeps the guest name the client shows on its menu, if it is one
@@ -290,19 +403,27 @@ export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
     // Two guests could draw the same number.
     if (names.has(name) && !hasUsername) name = guestName(names);
 
-    const spawn = this.map.spawns[slot];
     const player = new Player();
     player.slot = slot;
     player.name = name;
-    writeSim(player, spawnSim(spawn.x, spawn.z, player.weapon));
-    // Face the centre of the map.
-    player.aim = Math.atan2(-spawn.z, -spawn.x);
-    this.state.players.set(client.sessionId, player);
     player.account = hasUsername;
+    if (this.rules.mode === "duel") {
+      const spawn = duelSpawn(this.map, slot);
+      writeSim(player, spawnSim(spawn.x, spawn.z, player.weapon));
+      // Face the centre of the map.
+      player.aim = Math.atan2(-spawn.z, -spawn.x);
+    } else {
+      // FFA: out of everyone's sight, whatever the phase (a drop-in mid-match
+      // lands here too), facing the hub.
+      const spawn = ffaRespawnPoint(this.map, this.map.spawns, this.livingPositions(null));
+      writeSim(player, spawnSim(spawn.x, spawn.z, player.weapon));
+      player.aim = this.hubAim(spawn);
+    }
+    this.state.players.set(client.sessionId, player);
     this.internals.set(client.sessionId, { queue: [], tokens: INPUT_BURST, identity, deaths: 0, ping: null, baselined: false });
     this.joinOrder.push(client.sessionId);
 
-    if (this.bothConnected()) this.startMatch();
+    this.maybeStart();
     this.syncListing();
   }
 
@@ -340,15 +461,19 @@ export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
     internal.tokens = INPUT_BURST;
     internal.ping = null;
     // Someone took the other seat while this player was away.
-    if (this.state.phase === "waiting" && this.bothConnected()) this.startMatch();
+    this.maybeStart();
   }
 
-  /** Two players, both connected: a match can start. */
-  private bothConnected(): boolean {
-    if (this.state.players.size !== MAX_PLAYERS) return false;
-    let all = true;
-    this.state.players.forEach((p) => (all &&= p.connected));
-    return all;
+  /** Enough players, connected enough, for a match to start. */
+  private ready(): boolean {
+    const r = this.rules;
+    if (this.seats < r.minPlayers) return false;
+    return r.startNeedsAll ? this.connectedSeats() === this.seats : this.connectedSeats() >= r.minPlayers;
+  }
+
+  /** While waiting: start now if the mode has no countdown (the countdown itself runs in `tick`). */
+  private maybeStart() {
+    if (this.state.phase === "waiting" && this.rules.countdown === 0 && this.ready()) this.startMatch();
   }
 
   /**
@@ -360,23 +485,42 @@ export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
     console.error(`[room ${this.roomId}] ${methodName} failed:`, err.cause ?? err);
   }
 
-  /** Gone for good: a Leave, the grace period running out, or a shutdown. */
+  /** Gone for good: a Leave, the grace period running out, or a shutdown. Frees the seat. */
   onLeave(client: Client) {
-    this.state.players.delete(client.sessionId);
-    this.internals.delete(client.sessionId);
-    this.joinOrder = this.joinOrder.filter((id) => id !== client.sessionId);
-    this.clearProjectiles();
-    this.setPhase("waiting");
-    this.state.winner = "";
-    // The remaining player keeps playing alone, with a clean slate.
-    this.resetScoreboard();
-    this.state.startTick = 0;
-    this.state.endTick = 0;
-    this.state.players.forEach((p) => {
-      p.hp = MAX_HP;
-      p.alive = true;
-      p.respawnTicks = 0;
+    const id = client.sessionId;
+    if (!this.state.players.has(id)) return; // No seat (a refused join, later a spectator).
+    this.state.players.delete(id);
+    this.internals.delete(id);
+    this.joinOrder = this.joinOrder.filter((s) => s !== id);
+
+    if (this.rules.mode === "duel") {
+      this.clearProjectiles();
+      this.setPhase("waiting");
+      this.state.winner = "";
+      // The remaining player keeps playing alone, with a clean slate.
+      this.resetScoreboard();
+      this.state.startTick = 0;
+      this.state.endTick = 0;
+      this.state.players.forEach((p) => {
+        p.hp = MAX_HP;
+        p.alive = true;
+        p.respawnTicks = 0;
+      });
+      return;
+    }
+
+    // FFA: the others play on. The leaver's bullets go (a newcomer may reuse
+    // the slot, and so the bullet ids); their grenades still go off.
+    this.state.bullets.forEach((b, bid) => {
+      if (b.owner !== id) return;
+      this.state.bullets.delete(bid);
+      this.bulletInternals.delete(bid);
     });
+    if (this.state.phase === "playing") {
+      if (this.seats < this.rules.minToContinue) this.endMatch();
+      else if (this.state.suddenDeath && this.soleLeader()) this.endMatch();
+    }
+    this.syncListing();
   }
 
   private probeLatency() {
@@ -401,21 +545,24 @@ export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
 
   private setPhase(phase: Phase) {
     this.state.phase = phase;
+    if (phase !== "waiting") this.state.countdown = 0;
     this.syncListing();
   }
 
   /**
-   * Keeps the matchmaking metadata (host, map, phase, player count) in step
+   * Keeps the matchmaking metadata (mode, host, map, phase, seats) in step
    * with the room, for the menu's open games list. Written only when it
    * changed.
    */
   private syncListing() {
     const host = this.joinOrder.length > 0 ? this.state.players.get(this.joinOrder[0]) : undefined;
     const meta: RoomMeta = {
+      mode: this.rules.mode,
       hostName: host?.name ?? "",
       mapId: this.map.id,
       phase: this.state.phase as Phase,
-      players: this.state.players.size,
+      players: this.seats,
+      maxPlayers: this.rules.maxPlayers,
       createdAt: this.createdAt,
     };
     const key = JSON.stringify(meta);
@@ -426,12 +573,13 @@ export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
 
   /**
    * The map for the match about to start: the pinned one, or the current one
-   * for a room's first match (the waiting player is already on it), or a
-   * random other one after that.
+   * for a room's first match (the waiting players are already on it), or a
+   * random other one of this mode's pool after that.
    */
   private pickMap() {
-    if (!this.fixedMap && this.mapPlayed && MAPS.length > 1) {
-      const others = MAPS.filter((m) => m.id !== this.map.id);
+    const pool = this.rules.maps;
+    if (!this.fixedMap && this.mapPlayed && pool.length > 1) {
+      const others = pool.filter((m) => m.id !== this.map.id);
       this.switchMap(others[Math.floor(Math.random() * others.length)]);
     }
     this.mapPlayed = true;
@@ -440,17 +588,19 @@ export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
   /**
    * Changes the map. Only called between matches or while waiting, and always
    * together with putting the players on the new spawns (startMatch does it
-   * right after, and it is done here for a player waiting alone), before the
-   * tick's patch goes out: clients get the new mapId and the new positions in
-   * the same snapshot.
+   * right after, and it is done here for players waiting), before the tick's
+   * patch goes out: clients get the new mapId and the new positions in the
+   * same snapshot.
    */
   private switchMap(map: MapDef) {
     this.map = map;
     this.state.mapId = map.id;
     this.syncListing();
     this.clearProjectiles();
+    const starts = this.rules.mode === "duel" ? null : ffaStartSpawns(map, map.spawns, this.seats);
+    let i = 0;
     this.state.players.forEach((p) => {
-      const spawn = map.spawns[p.slot];
+      const spawn = starts ? starts[i++ % starts.length] : duelSpawn(map, p.slot);
       writeSim(p, spawnSim(spawn.x, spawn.z, p.weapon, readSim(p)));
     });
   }
@@ -459,16 +609,36 @@ export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
     this.pickMap();
     this.clearProjectiles();
     this.state.winner = "";
+    this.state.suddenDeath = false;
+    this.state.feed.clear();
     this.matchId = `${this.roomId}:${crypto.randomUUID()}`;
     this.internals.forEach((i) => (i.deaths = 0));
     this.resetScoreboard();
-    this.state.players.forEach((p) => {
-      const spawn = this.map.spawns[p.slot];
-      this.spawnAt(p, spawn.x, spawn.z);
-    });
+    if (this.rules.mode === "duel") {
+      this.state.players.forEach((p) => {
+        const spawn = duelSpawn(this.map, p.slot);
+        this.spawnAt(p, spawn.x, spawn.z);
+      });
+    } else {
+      // Spread out, each out of the others' sight, in a random order, facing the hub.
+      const ids = [...this.state.players.keys()].sort(() => Math.random() - 0.5);
+      const starts = ffaStartSpawns(this.map, this.map.spawns, ids.length);
+      ids.forEach((id, i) => {
+        const p = this.state.players.get(id)!;
+        const spawn = starts[i % starts.length];
+        this.spawnAt(p, spawn.x, spawn.z);
+        p.aim = this.hubAim(spawn);
+      });
+    }
     this.state.startTick = this.state.tick;
     this.state.endTick = 0;
     this.setPhase("playing");
+  }
+
+  /** Aim from a spawn toward the FFA map's hub (the centre on other maps). */
+  private hubAim(s: Spawn): number {
+    const hub = (this.map as Partial<FfaMapDef>).hub ?? { x: 0, z: 0 };
+    return Math.atan2(hub.z - s.z, hub.x - s.x);
   }
 
   /** Puts a player back in the game: picked weapon in hand, fresh HP, ammo and cooldowns. */
@@ -523,19 +693,65 @@ export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
       if (player.respawnTicks <= 0) this.respawn(id, player);
     });
 
-    // After the result delay: the rematch, or back to waiting if the
-    // opponent left. A player who dropped holds the result card up until they
-    // are back (or their grace period ends and onLeave sends the room back to
-    // waiting): a match never starts against an empty seat.
-    if (this.state.phase === "ended") {
+    // 4. The match clock: countdown before, time limit during, rematch after.
+    if (this.state.phase === "waiting") this.stepCountdown();
+    else if (this.state.phase === "playing") this.stepTimeLimit();
+    else if (this.state.phase === "ended") {
+      // After the result delay: the rematch, or back to waiting if too few
+      // are left. In a duel, a player who dropped holds the result card up
+      // until they are back (or their grace period ends and onLeave sends the
+      // room back to waiting): a match never starts against an empty seat.
       if (this.matchResetTicks > 0) this.matchResetTicks--;
       if (this.matchResetTicks <= 0) {
-        if (this.state.players.size < MAX_PLAYERS) this.setPhase("waiting");
-        else if (this.bothConnected()) this.startMatch();
+        if (this.seats < this.rules.minPlayers) this.setPhase("waiting");
+        else if (this.ready()) this.startMatch();
+        else if (!this.rules.startNeedsAll) this.setPhase("waiting");
       }
     }
 
     this.broadcastPatch();
+  }
+
+  /** Pre-match countdown (FFA): runs while enough players are connected, cancelled when they aren't. */
+  private stepCountdown() {
+    if (this.rules.countdown === 0) return;
+    if (!this.ready()) {
+      this.state.countdown = 0;
+      return;
+    }
+    if (this.state.countdown === 0) {
+      this.state.countdown = ticks(this.rules.countdown);
+      return;
+    }
+    this.state.countdown--;
+    if (this.state.countdown === 0) this.startMatch();
+  }
+
+  /** Time limit: the most kills wins; a tie goes to sudden death (see FFA_SUDDEN_DEATH_MAX). */
+  private stepTimeLimit() {
+    const limit = this.rules.timeLimit;
+    if (limit <= 0) return;
+    const elapsed = this.state.tick - this.state.startTick;
+    if (this.state.suddenDeath) {
+      if (elapsed >= ticks(limit + FFA_SUDDEN_DEATH_MAX)) this.endMatch();
+      return;
+    }
+    if (elapsed < ticks(limit)) return;
+    if (this.soleLeader()) this.endMatch();
+    else this.state.suddenDeath = true;
+  }
+
+  /** The one player with the most kills, or null on a tie. */
+  private soleLeader(): string | null {
+    let best = -1;
+    let who: string | null = null;
+    this.state.players.forEach((p, id) => {
+      if (p.kills > best) {
+        best = p.kills;
+        who = id;
+      } else if (p.kills === best) who = null;
+    });
+    return who;
   }
 
   private applyInput(id: string, player: Player, input: InputMessage) {
@@ -581,7 +797,7 @@ export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
       bullet.z = b.z;
       bullet.owner = owner;
       this.state.bullets.set(id, bullet);
-      this.bulletInternals.set(id, { vx: b.vx, vz: b.vz, ticksLeft: bulletLifeTicks(w), damage: w.damage });
+      this.bulletInternals.set(id, { vx: b.vx, vz: b.vz, ticksLeft: bulletLifeTicks(w), damage: w.damage, weapon: player.weapon });
     });
   }
 
@@ -623,7 +839,7 @@ export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
             hit = true;
             const shooter = this.state.players.get(bullet.owner);
             if (shooter && this.state.phase === "playing") shooter.hits = Math.min(0xffff, shooter.hits + 1);
-            this.damage(bullet.owner, targetId, target, internal.damage);
+            this.damage(bullet.owner, targetId, target, internal.damage, internal.weapon);
           }
         });
         return hit;
@@ -683,12 +899,16 @@ export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
     });
     for (const h of hits) {
       if (this.state.phase === "ended") break;
-      this.damage(owner, h.id, h.p, h.dmg);
+      this.damage(owner, h.id, h.p, h.dmg, KILL_GRENADE);
     }
   }
 
-  /** Shield first, then HP. Kills are credited to the attacker, never for self-damage. */
-  private damage(attackerId: string, targetId: string, target: Player, amount: number) {
+  /**
+   * Shield first, then HP. The kill goes to whoever dealt the killing blow;
+   * a self-kill (your own grenade) credits no one and counts as a death, with
+   * no kill taken away.
+   */
+  private damage(attackerId: string, targetId: string, target: Player, amount: number, weapon = 0) {
     if (!target.alive) return;
     // Scoreboard: what actually came off the opponent (shield, then HP down to 0).
     const dealt = Math.min(amount, target.shieldHp + target.hp);
@@ -706,7 +926,7 @@ export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
     if (target.hp > 0) return;
 
     target.alive = false;
-    target.respawnTicks = ticks(RESPAWN_DELAY);
+    target.respawnTicks = ticks(this.rules.respawnDelay);
     target.shieldTicks = 0;
     target.shieldHp = 0;
     // Waiting mode (alone in the room) still lets you shoot, but kills only
@@ -715,40 +935,99 @@ export class DuelRoom extends Room<{ state: DuelState; metadata: RoomMeta }> {
     const targetInternal = this.internals.get(targetId);
     if (targetInternal) targetInternal.deaths++;
     target.deaths = Math.min(0xff, target.deaths + 1);
-    if (attackerId === targetId) return;
-
-    const shooter = this.state.players.get(attackerId);
+    const shooter = attackerId === targetId ? undefined : this.state.players.get(attackerId);
+    this.addToFeed(shooter ? attackerId : "", shooter, targetId, target, weapon);
     if (!shooter) return;
-    shooter.kills++;
-    if (shooter.kills >= KILLS_TO_WIN) {
-      this.state.winner = attackerId;
-      this.state.endTick = this.state.tick;
-      this.setPhase("ended");
-      this.matchResetTicks = ticks(MATCH_END_DELAY);
-      this.clearProjectiles();
-      this.recordStats(attackerId);
-    }
+
+    shooter.kills = Math.min(0xff, shooter.kills + 1);
+    if (shooter.kills >= this.rules.killsToWin) this.endMatch(attackerId);
+    else if (this.state.suddenDeath && this.soleLeader()) this.endMatch();
   }
 
-  /** Sends the finished match to Convex for the account players (guests are skipped). */
-  private recordStats(winnerId: string) {
+  private addToFeed(killerId: string, killer: Player | undefined, victimId: string, victim: Player, weapon: number) {
+    const e = new KillEvent();
+    e.n = ++this.nextKill;
+    e.tick = this.state.tick;
+    e.killer = killerId;
+    e.killerName = killer?.name ?? "";
+    e.killerSlot = killer?.slot ?? 0;
+    e.victim = victimId;
+    e.victimName = victim.name;
+    e.victimSlot = victim.slot;
+    e.weapon = weapon;
+    this.state.feed.push(e);
+    while (this.state.feed.length > KILL_FEED_SIZE) this.state.feed.shift();
+  }
+
+  /**
+   * The match is over: first to the kill target (`winnerId`), the time limit,
+   * sudden death, or too few players left. Places come from `placements`
+   * (kills, then deaths); `winner` is the sole first place, "" if shared.
+   */
+  private endMatch(winnerId?: string) {
+    const standings: { id: string; kills: number; deaths: number }[] = [];
+    this.state.players.forEach((p, id) => standings.push({ id, kills: p.kills, deaths: this.internals.get(id)?.deaths ?? p.deaths }));
+    const places = placements(standings);
+    const firsts = places.filter((p) => p.place === 1);
+    this.state.winner = winnerId ?? (firsts.length === 1 ? firsts[0].player.id : "");
+    this.state.endTick = this.state.tick;
+    this.setPhase("ended");
+    this.matchResetTicks = ticks(this.rules.endDelay);
+    this.clearProjectiles();
+    this.recordStats(new Map(places.map((p) => [p.player.id, p.place])));
+  }
+
+  /**
+   * Sends the finished match to Convex for the account players (guests are
+   * skipped). A win is first place (a shared first counts for each); every
+   * other place is a loss.
+   */
+  private recordStats(places: Map<string, number>) {
     const results: MatchResult[] = [];
     this.state.players.forEach((p, id) => {
       const internal = this.internals.get(id);
       if (internal?.identity.kind !== "account") return;
-      results.push({ clerkId: internal.identity.clerkId, kills: p.kills, deaths: internal.deaths, won: id === winnerId });
+      const place = places.get(id) ?? places.size;
+      results.push({ clerkId: internal.identity.clerkId, kills: p.kills, deaths: internal.deaths, won: place === 1, place });
     });
     // Fire and forget: the game loop never waits on Convex.
-    void recordMatch(this.matchId, results);
+    void recordMatch(this.matchId, results, this.rules.mode);
   }
 
-  /** Respawns out of the opponent's sight if possible, then as far from them as possible. */
-  private respawn(id: string, player: Player) {
-    let opponent: Player | null = null;
-    this.state.players.forEach((p, pid) => {
-      if (pid !== id) opponent = p;
+  /** Where the living players other than `except` stand. */
+  private livingPositions(except: string | null): Vec2[] {
+    const out: Vec2[] = [];
+    this.state.players.forEach((p, id) => {
+      if (id !== except && p.alive) out.push({ x: p.x, z: p.z });
     });
-    const spawn = respawnPoint(this.map, this.map.spawns, opponent, this.map.spawns[player.slot]);
+    return out;
+  }
+
+  /**
+   * Duel: out of the opponent's sight if possible, then as far from them as
+   * possible. FFA: out of every living opponent's sight (ffaRespawnPoint).
+   */
+  private respawn(id: string, player: Player) {
+    if (this.rules.mode === "duel") {
+      let opponent: Player | null = null;
+      this.state.players.forEach((p, pid) => {
+        if (pid !== id) opponent = p;
+      });
+      const spawn = respawnPoint(this.map, this.map.spawns, opponent, duelSpawn(this.map, player.slot));
+      this.spawnAt(player, spawn.x, spawn.z);
+      return;
+    }
+    const spawn = ffaRespawnPoint(this.map, this.map.spawns, this.livingPositions(id));
     this.spawnAt(player, spawn.x, spawn.z);
   }
+}
+
+/** 1v1, first to KILLS_TO_WIN, matchmaking room "duel". */
+export class DuelRoom extends GameRoom {
+  static override rules = DUEL_RULES;
+}
+
+/** Free for all: 3-6 players, first to FFA_KILLS_TO_WIN or the most kills after FFA_TIME_LIMIT. Room "ffa". */
+export class FfaRoom extends GameRoom {
+  static override rules = FFA_RULES;
 }

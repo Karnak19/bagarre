@@ -16,7 +16,7 @@ if (process.argv.includes("--healthcheck")) {
 // container) and SIGINT run Colyseus' graceful shutdown, which createServer
 // turns on: every room is locked, then disconnects its clients with close
 // code 4001 (SERVER_SHUTDOWN), which the client shows as "the server is
-// restarting"; joins are refused meanwhile (DuelRoom.onAuth), then the
+// restarting"; joins are refused meanwhile (GameRoom.onAuth), then the
 // process exits 0.
 const server = createServer();
 server.onBeforeShutdown(() => console.log("[bagarre] shutting down: closing every room"));

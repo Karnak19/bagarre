@@ -1,4 +1,4 @@
-// The menu screen (`/`): title, Play (quick match), Private game, How to play
+// The menu screen (`/`): title, Play (quick duel), Free for all, Private game (duel or FFA), How to play
 // and Settings, the account chip and the open games list. The live 3D scene
 // behind it is attract.ts. Shown while the flow is on the menu; during a
 // quick match's join the joining card takes over (ui/game/Cards.tsx).
@@ -8,7 +8,7 @@ import { Heading } from "@astryxdesign/core/Heading";
 import { Icon } from "@astryxdesign/core/Icon";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { Text } from "@astryxdesign/core/Text";
-import { KILLS_TO_WIN, MAPS } from "@bagarre/shared";
+import { FFA_MAX_PLAYERS, FFA_MIN_PLAYERS, KILLS_TO_WIN, MAPS, type GameMode } from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { openPanel } from "../../uiState.ts";
@@ -69,7 +69,10 @@ const styles = stylex.create({
     fontWeight: 600,
     maxWidth: "34ch",
   },
-  actions: { maxWidth: { default: "340px", [PHONE]: "none" } },
+  actions: { maxWidth: { default: "400px", [PHONE]: "none" } },
+  row: { display: "grid", gridTemplateColumns: "minmax(0, 1.25fr) minmax(0, 1fr)", gap: "var(--spacing-3)" },
+  rowEven: { gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)" },
+  fill: { width: "100%" },
   play: {
     height: "auto",
     minHeight: 0,
@@ -88,6 +91,16 @@ const styles = stylex.create({
     transform: { default: "none", ":active": "translateY(2px)" },
   },
   playLabel: { fontSize: "40px", lineHeight: 1 },
+  // Free for all: the blue twin of Play, a size down.
+  ffa: {
+    color: "var(--bagarre-on-p1)",
+    backgroundColor: {
+      default: "var(--bagarre-p1)",
+      ":hover": { default: null, "@media (hover: hover)": "var(--bagarre-p1-hover)" },
+    },
+  },
+  // Wraps to two lines ("Free for / all") rather than being cut off in the narrow button.
+  ffaLabel: { fontSize: "24px", lineHeight: 1, whiteSpace: "normal", textAlign: "start", overflow: "visible" },
   playSub: {
     fontSize: "13px",
     fontWeight: 700,
@@ -173,7 +186,7 @@ function Menu({ focusPlay }: { focusPlay: boolean }) {
             Bagarre
           </Heading>
           <Text color="secondary" xstyle={styles.tagline}>
-            Isometric 1v1 duels. First to {KILLS_TO_WIN} kills.
+            Isometric 1v1 duels, first to {KILLS_TO_WIN} kills. Or a free for all, up to {FFA_MAX_PLAYERS} players.
           </Text>
         </VStack>
 
@@ -188,46 +201,51 @@ function Menu({ focusPlay }: { focusPlay: boolean }) {
         )}
 
         <VStack gap={3} xstyle={styles.actions}>
-          <Button
-            ref={play}
-            label="Play: quick match"
-            variant="primary"
-            size="lg"
-            xstyle={styles.play}
-            data-testid="play"
-            onClick={() => {
-              gesture();
-              app.quickMatch();
-            }}
-          >
-            <VStack as="span" gap={0.5} align="start">
-              <Text xstyle={[shared.display, styles.playLabel]} color="inherit">
-                Play
-              </Text>
-              <Text xstyle={styles.playSub}>Quick match</Text>
-            </VStack>
-          </Button>
-          <Button
-            label="Private game"
-            variant="secondary"
-            size="lg"
-            xstyle={styles.wide}
-            data-testid="private-game"
-            icon={<Icon icon={LockIcon} size="sm" />}
-            onClick={() => {
-              gesture();
-              app.privateGame();
-            }}
-          >
-            <VStack as="span" gap={0.5} align="start">
-              <Text weight="semibold" color="inherit">
-                Private game
-              </Text>
-              <Text type="supporting" color="secondary">
-                Play a friend with a link
-              </Text>
-            </VStack>
-          </Button>
+          <VStack xstyle={styles.row}>
+            <Button
+              ref={play}
+              label="Play: quick match"
+              variant="primary"
+              size="lg"
+              xstyle={[styles.play, styles.fill]}
+              data-testid="play"
+              onClick={() => {
+                gesture();
+                app.quickMatch();
+              }}
+            >
+              <VStack as="span" gap={0.5} align="start">
+                <Text xstyle={[shared.display, styles.playLabel]} color="inherit">
+                  Play
+                </Text>
+                <Text xstyle={styles.playSub}>Quick duel</Text>
+              </VStack>
+            </Button>
+            <Button
+              label="Free for all: quick match"
+              variant="primary"
+              size="lg"
+              xstyle={[styles.play, styles.ffa, styles.fill]}
+              data-testid="play-ffa"
+              onClick={() => {
+                gesture();
+                app.quickMatch("ffa");
+              }}
+            >
+              <VStack as="span" gap={1} align="start">
+                <Text xstyle={[shared.display, styles.ffaLabel]} color="inherit">
+                  Free for all
+                </Text>
+                <Text xstyle={styles.playSub}>
+                  {FFA_MIN_PLAYERS} to {FFA_MAX_PLAYERS} players
+                </Text>
+              </VStack>
+            </Button>
+          </VStack>
+          <VStack xstyle={[styles.row, styles.rowEven]}>
+            <PrivateButton mode="duel" />
+            <PrivateButton mode="ffa" />
+          </VStack>
           <HStack gap={1} xstyle={styles.links}>
             <Button label="How to play" variant="ghost" aria-haspopup="dialog" data-testid="open-howto" onClick={panel("howto")} />
             <Button label="Settings" variant="ghost" aria-haspopup="dialog" data-testid="open-settings" onClick={panel("settings")} />
@@ -252,5 +270,35 @@ function Menu({ focusPlay }: { focusPlay: boolean }) {
         <OpenGames />
       </VStack>
     </VStack>
+  );
+}
+
+/** Private game of a mode: a room joined by its link only. */
+function PrivateButton({ mode }: { mode: GameMode }) {
+  const { app, gesture } = useEngine();
+  const duel = mode === "duel";
+  const title = duel ? "Private game" : "Private free for all";
+  return (
+    <Button
+      label={title}
+      variant="secondary"
+      size="lg"
+      xstyle={[styles.wide, styles.fill]}
+      data-testid={duel ? "private-game" : "private-ffa"}
+      icon={<Icon icon={LockIcon} size="sm" />}
+      onClick={() => {
+        gesture();
+        app.privateGame(mode);
+      }}
+    >
+      <VStack as="span" gap={0.5} align="start">
+        <Text weight="semibold" color="inherit">
+          {duel ? "Private game" : "Private FFA"}
+        </Text>
+        <Text type="supporting" color="secondary">
+          {duel ? "Duel a friend with a link" : `Up to ${FFA_MAX_PLAYERS}, with a link`}
+        </Text>
+      </VStack>
+    </Button>
   );
 }
