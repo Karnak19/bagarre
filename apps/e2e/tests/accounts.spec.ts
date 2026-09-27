@@ -116,7 +116,41 @@ test("a signed-in player plays under their username against a guest, and the win
   await expect.poll(async () => (await a.state()).players.find((p) => p.id === other.id)?.alive).toBe(true);
   await kill(s.roomId, meA.id, other.id);
   await expect(a.testId("result-card")).toContainText("You win!");
-  await a.testId("main-menu").click();
+  await a.page.evaluate(() => {
+    const out: string[] = [];
+    // oxlint-disable-next-line typescript/no-explicit-any
+    (window as any).__probe = out;
+    const t0 = performance.now();
+    const tick = () => {
+      const el = document.querySelector('[data-testid="main-menu"]');
+      if (!el || performance.now() - t0 > 8000) return;
+      const b = el.getBoundingClientRect();
+      const c = document.querySelector('[data-testid="result-card"]')!;
+      // oxlint-disable-next-line typescript/no-explicit-any
+      const g = (window as any).__bagarre;
+      // oxlint-disable-next-line typescript/no-explicit-any
+      const ww = window as any;
+      if (ww.__el && ww.__el !== el) ww.__remounts = (ww.__remounts ?? 0) + 1;
+      ww.__el = el;
+      const k0 = `screen=${g.app.getState().screen} net=${g.app.match?.net.status} phase=${g.app.match?.latest?.phase} remounts=${ww.__remounts ?? 0} renders=${g.renders?.["card.result"] ?? "?"} `;
+      const k = k0 + `${b.x.toFixed(2)},${b.y.toFixed(2)},${b.width.toFixed(2)}x${b.height.toFixed(2)} card=${c.getBoundingClientRect().height.toFixed(2)} anim=${document.getAnimations().map((a) => (a as CSSAnimation).animationName ?? (a as CSSTransition).transitionProperty).join(",")} hover=${[...document.querySelectorAll(":hover")].pop()?.getAttribute("data-testid")}`;
+      const now = performance.now();
+      // oxlint-disable-next-line typescript/no-explicit-any
+      const w = window as any;
+      w.__gaps = [...(w.__gaps ?? []), Math.round(now - (w.__last ?? now))].slice(-400);
+      w.__last = now;
+      if (out.length === 0) out.push("bf=" + [...document.querySelectorAll("*")].filter((e) => getComputedStyle(e).backdropFilter !== "none").map((e) => (e.getAttribute("data-testid") ?? e.tagName) + ":" + getComputedStyle(e).backdropFilter).join(";"));
+      if (out[out.length - 1]?.split("|")[1] !== k) out.push(`${Math.round(performance.now() - t0)}|${k}`);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  try {
+    await a.testId("main-menu").click({ timeout: 6000 });
+  } finally {
+    // oxlint-disable-next-line typescript/no-explicit-any
+    console.log("PROBE", JSON.stringify(await a.page.evaluate(() => [...(window as any).__probe, "gaps " + (window as any).__gaps.join(",")]).catch(() => null), null, 1));
+  }
   await a.expectState("screen", "menu");
 
   // The server records the match on its own time: read the account until it shows.

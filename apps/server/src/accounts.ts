@@ -257,7 +257,9 @@ export async function recordMatch(matchId: string, players: MatchResult[], mode:
   accountHooks.onRecord?.(matchId, players, mode);
   for (let attempt = 1; ; attempt++) {
     try {
+      const probeT0 = performance.now();
       await writeMatch(matchId, players, mode);
+      console.error(`PROBE writeMatch ${Math.round(performance.now() - probeT0)} ms`);
       return;
     } catch (err) {
       if (attempt >= 3) {

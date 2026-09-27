@@ -855,7 +855,11 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     this.grenadeInternals.clear();
   }
 
+  private probeLast = 0;
   private tick() {
+    const probeNow = performance.now();
+    if (this.probeLast && probeNow - this.probeLast > 100) console.error(`PROBE tick gap ${Math.round(probeNow - this.probeLast)} ms at tick ${this.state.tick} phase ${this.state.phase}`);
+    this.probeLast = probeNow;
     this.state.tick++;
 
     // 1. Apply queued inputs. One input == one fixed step of TICK_DT, exactly
