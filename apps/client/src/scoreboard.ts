@@ -91,8 +91,6 @@ export interface ScoreboardModel {
   teams: ScoreboardTeam[] | null;
   /** Our team (NO_TEAM: none, or watching). */
   youTeam: number;
-  /** The winning team once the match ended (NO_TEAM: not over, or no teams). */
-  winningTeam: number;
 }
 
 export interface ScoreboardTeam {
@@ -102,8 +100,7 @@ export interface ScoreboardTeam {
   /** Paint index of the team colour. */
   slot: number;
   score: number;
-  /** Kills and deaths of the players on it right now. */
-  kills: number;
+  /** Deaths of the players on it right now. */
   deaths: number;
   you: boolean;
   won: boolean;
@@ -156,7 +153,6 @@ export function scoreboardModel(s: Snapshot | null, you: string): ScoreboardMode
             name: TEAM_NAMES[team],
             slot: TEAM_PAINT[team],
             score: team === TEAM_RED ? s.redScore : s.blueScore,
-            kills: on.reduce((n, p) => n + p.kills, 0),
             deaths: on.reduce((n, p) => n + p.deaths, 0),
             you: youTeam === team,
             won: winningTeam === team,
@@ -176,6 +172,5 @@ export function scoreboardModel(s: Snapshot | null, you: string): ScoreboardMode
     rows: placed.map(row),
     teams,
     youTeam,
-    winningTeam,
   };
 }

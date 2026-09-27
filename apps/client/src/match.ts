@@ -14,8 +14,6 @@ import {
   KILL_GRENADE,
   NO_TEAM,
   SHIELD,
-  TEAM_BLUE,
-  TEAM_RED,
   TICK_MS,
   TICK_RATE,
   WEAPONS,
@@ -702,9 +700,6 @@ export class Match {
 
   /** Team score, clock and our team for the team deathmatch HUD. */
   private teamHud(s: Snapshot, me: PlayerView | null): TeamHud {
-    let redPlayers = 0;
-    let bluePlayers = 0;
-    s.players.forEach((p) => (p.team === TEAM_RED ? redPlayers++ : p.team === TEAM_BLUE ? bluePlayers++ : 0));
     const left = secondsLeft(s);
     const running = s.phase === "playing";
     return {
@@ -712,8 +707,6 @@ export class Match {
       red: s.redScore,
       blue: s.blueScore,
       killsToWin: s.killsToWin,
-      redPlayers,
-      bluePlayers,
       timeLeft: running && left !== null && !s.suddenDeath ? clock(Math.ceil(left)) : "",
       lowTime: running && left !== null && left <= 30,
       suddenDeath: s.suddenDeath,

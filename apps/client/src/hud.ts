@@ -52,9 +52,6 @@ export interface TeamHud {
   red: number;
   blue: number;
   killsToWin: number;
-  /** Players on each team. */
-  redPlayers: number;
-  bluePlayers: number;
   /** Time left as "m:ss" ("" when not running). */
   timeLeft: string;
   lowTime: boolean;
