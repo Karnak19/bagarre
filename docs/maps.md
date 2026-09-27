@@ -27,7 +27,7 @@ bun run typecheck                       # type-checks the maps (src/) and the to
 ```
 
 `preview.ts` writes SVG and converts it with `sips` (macOS). Default output is
-the session scratchpad; pass a directory as the first argument to change it.
+`.previews/maps/` at the repo root (git-ignored); pass a directory as the first argument to change it.
 Each map gets `<id>-top.png` (plan with exposure heat, longest sightlines in
 yellow, the spawn-to-spawn path dotted, box heights written on the boxes) and
 `<id>-iso.png` (the game's camera angle, heights as drawn, players 1.8 m).

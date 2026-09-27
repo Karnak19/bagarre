@@ -13,7 +13,8 @@ import { FLAT_DECOR, type ObstacleKind } from "../../src/maps/types.ts";
 import { R } from "../analyze.ts";
 import { checkFfa, MAX_CAMP, type FfaReport } from "./analyze.ts";
 
-const DEFAULT_OUT = "/private/tmp/claude-501/-Users-basilevernouillet-work-perso-bagarre/241d3516-9eb3-43a0-a023-cb57b791d78d/scratchpad/ffa-maps";
+/** Git-ignored folder at the repo root. */
+const DEFAULT_OUT = join(import.meta.dir, "../../../..", ".previews", "ffa-maps");
 const args = process.argv.slice(2);
 const out = args[0] && !FFA_MAPS.some((m) => m.id === args[0]) ? args.shift()! : DEFAULT_OUT;
 const only = args;
