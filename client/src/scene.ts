@@ -5,12 +5,15 @@ import {
   BULLET_RADIUS,
   GRENADE,
   OBSTACLES,
-  PLAYER_SPEED,
   PLAYER_RADIUS,
-  WALL_HEIGHT,
+  PLAYER_SPEED,
   WALL_THICKNESS,
   type GrenadeView,
 } from "@bagarre/shared";
+import { buildArena } from "./arenaView.ts";
+import type { Assets } from "./assets.ts";
+import { Character } from "./character.ts";
+import { Vfx, shieldMaterial } from "./vfx.ts";
 
 export const PLAYER_COLORS = [0xff6b4a, 0x4ab8ff];
 export const PLAYER_CSS_COLORS = ["#ff6b4a", "#4ab8ff"];
@@ -23,68 +26,116 @@ const CAMERA_DISTANCE = 50;
  * about 35.26 degrees. Looking along (-1, -1, -1) gives exactly both.
  */
 const CAMERA_OFFSET = new THREE.Vector3(1, 1, 1).normalize().multiplyScalar(CAMERA_DISTANCE);
+const REDUCED_MOTION = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-export class PlayerMesh {
+/** Set once, before any PlayerMesh is made (see main.ts). */
+let assets: Assets | null = null;
+export function setAssets(a: Assets) {
+  assets = a;
+}
+
+/** The old capsule-and-box body, used when a character model failed to load. */
+class PlaceholderBody {
   readonly group = new THREE.Group();
   private bodyMat: THREE.MeshStandardMaterial;
   private flashUntil = 0;
+
+  constructor(color: number) {
+    this.bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.55, flatShading: true });
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(PLAYER_RADIUS, 0.8, 4, 10), this.bodyMat);
+    body.position.y = PLAYER_RADIUS + 0.4;
+    body.castShadow = true;
+    this.group.add(body);
+    const gun = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.18, 0.18), new THREE.MeshStandardMaterial({ color: 0x2b2f38, roughness: 0.4 }));
+    gun.position.set(PLAYER_RADIUS + 0.2, BULLET_HEIGHT, 0);
+    gun.castShadow = true;
+    this.group.add(gun);
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.16, 0.5), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x333333 }));
+    visor.position.set(PLAYER_RADIUS - 0.04, 1.35, 0);
+    this.group.add(visor);
+  }
+
+  setColor(color: number) {
+    this.bodyMat.color.set(color);
+  }
+
+  flash(at: number) {
+    this.flashUntil = at + 90;
+  }
+
+  update(now: number, aim: number, alive: boolean) {
+    this.group.rotation.y = -aim;
+    this.group.visible = alive;
+    const on = now < this.flashUntil;
+    this.bodyMat.emissive.set(on ? 0xffffff : 0x000000);
+    this.bodyMat.emissiveIntensity = on ? 0.8 : 0;
+  }
+}
+
+export class PlayerMesh {
+  readonly group = new THREE.Group();
+  readonly slot: number;
+  private character: Character | null = null;
+  private placeholder: PlaceholderBody | null = null;
   private baseColor: THREE.Color;
   private shield: THREE.Mesh;
-  private shieldMat: THREE.MeshStandardMaterial;
-  private lastPos = new THREE.Vector2();
-  private lastT = 0;
+  private shieldMat: THREE.ShaderMaterial;
+  private rings: THREE.Mesh[] = [];
+  private aim = 0;
+  private alive = true;
+  private weapon = 0;
+  private lastT = -1;
+  /** Hooked up by GameScene.addPlayer. */
+  scene: GameScene | null = null;
   /** Drawn speed above this means a dash (walking is PLAYER_SPEED). */
   private static DASH_SPEED_VISUAL = PLAYER_SPEED * 1.8;
   /** Set when the mesh moved at dash speed since the last update. */
   dashing = false;
 
-  constructor(color: number, isLocal: boolean) {
+  constructor(
+    color: number,
+    readonly isLocal: boolean,
+    slot = Math.max(0, PLAYER_COLORS.indexOf(color)),
+  ) {
+    this.slot = slot;
     this.baseColor = new THREE.Color(color);
-    this.bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.55, flatShading: true });
-    const body = new THREE.Mesh(
-      new THREE.CapsuleGeometry(PLAYER_RADIUS, 0.8, 4, 10),
-      this.bodyMat,
-    );
-    body.position.y = PLAYER_RADIUS + 0.4;
-    body.castShadow = true;
-    this.group.add(body);
-
-    // The gun points along +X in local space; the group is rotated to aim.
-    const gunMat = new THREE.MeshStandardMaterial({ color: 0x2b2f38, roughness: 0.4 });
-    const gun = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.18, 0.18), gunMat);
-    gun.position.set(PLAYER_RADIUS + 0.2, BULLET_HEIGHT, 0);
-    gun.castShadow = true;
-    this.group.add(gun);
-
-    // A little "visor" so the facing direction reads even without the gun.
-    const visor = new THREE.Mesh(
-      new THREE.BoxGeometry(0.12, 0.16, 0.5),
-      new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x333333 }),
-    );
-    visor.position.set(PLAYER_RADIUS - 0.04, 1.35, 0);
-    this.group.add(visor);
-
-    if (isLocal) {
-      const ring = new THREE.Mesh(
-        new THREE.RingGeometry(PLAYER_RADIUS + 0.12, PLAYER_RADIUS + 0.22, 32),
-        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 }),
-      );
-      ring.rotation.x = -Math.PI / 2;
-      ring.position.y = 0.02;
-      this.group.add(ring);
+    const gltf = assets?.characters[slot % 2] ?? null;
+    if (gltf) {
+      try {
+        // The kit's colours are dark and flat: tint the main cloth with a
+        // slightly darkened player colour so the two sides read at a glance.
+        this.character = new Character(gltf, this.baseColor.clone().multiplyScalar(0.8));
+        this.group.add(this.character.root);
+      } catch (err) {
+        console.warn("[scene] character setup failed, using the placeholder", err);
+        this.character = null;
+      }
+    }
+    if (!this.character) {
+      this.placeholder = new PlaceholderBody(color);
+      this.group.add(this.placeholder.group);
     }
 
-    this.shieldMat = new THREE.MeshStandardMaterial({
-      color: 0x9fe6ff,
-      emissive: 0x3aa8ff,
-      emissiveIntensity: 0.6,
-      transparent: true,
-      opacity: 0.3,
-      depthWrite: false,
-    });
-    this.shield = new THREE.Mesh(new THREE.SphereGeometry(1.05, 24, 16), this.shieldMat);
-    this.shield.position.y = 0.9;
+    // Ground ring in the player's colour (and a white one for "you").
+    const ring = (r0: number, r1: number, c: THREE.ColorRepresentation, opacity: number) => {
+      const m = new THREE.Mesh(
+        new THREE.RingGeometry(r0, r1, 40),
+        new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity, depthWrite: false }),
+      );
+      m.rotation.x = -Math.PI / 2;
+      m.position.y = 0.02;
+      m.renderOrder = 2;
+      this.group.add(m);
+      this.rings.push(m);
+    };
+    ring(PLAYER_RADIUS + 0.02, PLAYER_RADIUS + 0.12, color, 0.75);
+    if (isLocal) ring(PLAYER_RADIUS + 0.14, PLAYER_RADIUS + 0.2, 0xffffff, 0.55);
+
+    this.shieldMat = shieldMaterial(this.baseColor);
+    this.shield = new THREE.Mesh(new THREE.SphereGeometry(1.05, 32, 20), this.shieldMat);
+    this.shield.position.y = 0.95;
     this.shield.visible = false;
+    this.shield.renderOrder = 12;
     this.group.add(this.shield);
   }
 
@@ -95,36 +146,70 @@ export class PlayerMesh {
   /** `fraction` = shield strength left (0 hides the bubble). */
   setShield(fraction: number) {
     this.shield.visible = fraction > 0;
-    this.shieldMat.opacity = 0.15 + 0.3 * fraction;
+    this.shieldMat.uniforms.strength.value = 0.45 + 0.55 * fraction;
   }
 
   setColor(color: number) {
     this.baseColor.set(color);
-    this.bodyMat.color.set(color);
+    this.placeholder?.setColor(color);
   }
 
-  set(x: number, z: number, aim: number, visible: boolean) {
+  /**
+   * `alive` false plays the death animation (the body stays where it fell
+   * until the respawn moves it). `weapon` picks the gun in hand.
+   */
+  set(x: number, z: number, aim: number, alive: boolean, weapon = this.weapon) {
     this.group.position.set(x, 0, z);
-    // Rotating by -aim maps local +X onto (cos aim, 0, sin aim).
-    this.group.rotation.y = -aim;
-    this.group.visible = visible;
+    this.aim = aim;
+    this.alive = alive;
+    this.weapon = weapon;
+    this.group.visible = true;
   }
 
-  flash(now: number) {
-    this.flashUntil = now + 90;
+  /** HP went down: flash and flinch at `at` (a performance.now() time). */
+  flash(at: number) {
+    this.character?.hit(at);
+    this.placeholder?.flash(at);
+    if (this.isLocal) this.scene?.shake(0.35);
+  }
+
+  /** A shot left this player's gun: muzzle flash and the aiming pose. */
+  shot(now: number) {
+    if (!this.alive) return;
+    this.character?.shot(now);
+    this.scene?.muzzleFlash(this, this.aim, this.weapon);
+  }
+
+  /** Where the muzzle flash goes. */
+  muzzle(out: THREE.Vector3): THREE.Vector3 {
+    if (this.character) return this.character.muzzle(out);
+    const p = this.group.position;
+    return out.set(p.x + Math.cos(this.aim) * (PLAYER_RADIUS + 0.55), BULLET_HEIGHT, p.z + Math.sin(this.aim) * (PLAYER_RADIUS + 0.55));
   }
 
   update(now: number) {
-    const p = this.group.position;
-    const dt = (now - this.lastT) / 1000;
-    const moved = Math.hypot(p.x - this.lastPos.x, p.z - this.lastPos.y);
-    this.dashing = this.group.visible && dt > 0 && dt < 0.1 && moved < 3 && moved / dt > PlayerMesh.DASH_SPEED_VISUAL;
-    this.lastPos.set(p.x, p.z);
+    const dt = this.lastT < 0 ? 0 : Math.min(0.1, (now - this.lastT) / 1000);
     this.lastT = now;
-    const on = now < this.flashUntil;
-    this.bodyMat.emissive.set(on ? 0xffffff : 0x000000);
-    this.bodyMat.emissiveIntensity = on ? 0.8 : 0;
+    if (this.character) {
+      const p = this.group.position;
+      this.character.update(now, dt, { x: p.x, z: p.z, aim: this.aim, alive: this.alive, weapon: this.weapon });
+      this.dashing = this.alive && this.character.speed > PlayerMesh.DASH_SPEED_VISUAL;
+    } else {
+      this.placeholder!.update(now, this.aim, this.alive);
+      this.dashing = false;
+    }
+    for (const r of this.rings) r.visible = this.alive;
+    if (this.shield.visible) this.shieldMat.uniforms.time.value = now / 1000;
   }
+}
+
+interface DrawnBullet {
+  mesh: THREE.Mesh;
+  /** Last two drawn positions, for the impact point and direction. */
+  x: number;
+  z: number;
+  px: number;
+  pz: number;
 }
 
 export class GameScene {
@@ -132,23 +217,26 @@ export class GameScene {
   readonly scene = new THREE.Scene();
   readonly camera: THREE.OrthographicCamera;
   private cameraTarget = new THREE.Vector3();
-  private bullets = new Map<string, THREE.Mesh>();
+  private bullets = new Map<string, DrawnBullet>();
   private bulletGeo = new THREE.SphereGeometry(BULLET_RADIUS * 1.3, 10, 8);
   private bulletMats = PLAYER_COLORS.map(
     (c) => new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: c, emissiveIntensity: 1.6 }),
   );
-  private grenades = new Map<string, { ball: THREE.Mesh; ring: THREE.Mesh; ringMat: THREE.MeshBasicMaterial }>();
+  private grenades = new Map<string, { ball: THREE.Object3D; ring: THREE.Mesh; ringMat: THREE.MeshBasicMaterial }>();
   private grenadeGeo = new THREE.SphereGeometry(0.2, 12, 10);
   private grenadeMat = new THREE.MeshStandardMaterial({ color: 0x30343c, emissive: 0xffaa33, emissiveIntensity: 0.5 });
+  private grenadeModel: THREE.Object3D | null = null;
   private telegraphGeo = new THREE.CircleGeometry(GRENADE.radius, 40);
-  /** Short-lived effects: explosion flashes and dash ghosts. */
-  private effects: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; born: number; life: number; grow: number }[] = [];
-  private blastGeo = new THREE.SphereGeometry(1, 20, 14);
-  private ghostGeo = new THREE.CapsuleGeometry(PLAYER_RADIUS, 0.8, 4, 10);
   private raycaster = new THREE.Raycaster();
   private ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  private players = new Set<PlayerMesh>();
+  private vfx: Vfx;
+  private lastRender = -1;
+  private trauma = 0;
+  private shakeOffset = new THREE.Vector3();
+  private tmp = new THREE.Vector3();
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, loaded: Assets | null = assets) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
@@ -160,64 +248,28 @@ export class GameScene {
     this.camera.lookAt(0, 0, 0);
 
     this.buildLights();
-    this.buildArena();
+    buildArena(this.scene, loaded?.props ?? null);
+    const g = loaded?.props?.get("Grenade");
+    if (g) {
+      this.grenadeModel = g.clone();
+      this.grenadeModel.scale.setScalar(0.55);
+    }
+    this.vfx = new Vfx(this.scene, this.camera, loaded?.atlas ?? null);
     this.resize();
     window.addEventListener("resize", () => this.resize());
   }
 
   private buildLights() {
-    this.scene.add(new THREE.HemisphereLight(0xdde6ff, 0x3a3228, 1.1));
-    const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+    this.scene.add(new THREE.HemisphereLight(0xdde6ff, 0x3a3228, 1.25));
+    const sun = new THREE.DirectionalLight(0xfff4e0, 2.3);
     sun.position.set(12, 25, 6);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
     const s = ARENA_HALF + 3;
     Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 1, far: 70 });
     sun.shadow.bias = -0.0005;
+    sun.shadow.normalBias = 0.02;
     this.scene.add(sun);
-  }
-
-  private buildArena() {
-    const size = ARENA_HALF * 2;
-    const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(size, size),
-      new THREE.MeshStandardMaterial({ color: 0x565d6b, roughness: 0.95 }),
-    );
-    floor.rotation.x = -Math.PI / 2;
-    floor.receiveShadow = true;
-    this.scene.add(floor);
-
-    const grid = new THREE.GridHelper(size, size / 2, 0x6a7282, 0x6a7282);
-    grid.position.y = 0.01;
-    (grid.material as THREE.Material).transparent = true;
-    (grid.material as THREE.Material).opacity = 0.35;
-    this.scene.add(grid);
-
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x3b4150, roughness: 0.8, flatShading: true });
-    const len = size + WALL_THICKNESS * 2;
-    const off = ARENA_HALF + WALL_THICKNESS / 2;
-    const walls: [number, number, number, number][] = [
-      [0, -off, len, WALL_THICKNESS],
-      [0, off, len, WALL_THICKNESS],
-      [-off, 0, WALL_THICKNESS, len],
-      [off, 0, WALL_THICKNESS, len],
-    ];
-    for (const [x, z, w, d] of walls) {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(w, WALL_HEIGHT, d), wallMat);
-      m.position.set(x, WALL_HEIGHT / 2, z);
-      m.castShadow = true;
-      m.receiveShadow = true;
-      this.scene.add(m);
-    }
-
-    const boxMat = new THREE.MeshStandardMaterial({ color: 0xc9b98f, roughness: 0.7, flatShading: true });
-    for (const b of OBSTACLES) {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(b.w, b.h, b.d), boxMat);
-      m.position.set(b.x, b.h / 2, b.z);
-      m.castShadow = true;
-      m.receiveShadow = true;
-      this.scene.add(m);
-    }
   }
 
   resize() {
@@ -232,55 +284,146 @@ export class GameScene {
     this.renderer.setSize(w, h, false);
   }
 
+  /** Small screen shake, 0-1. Off with prefers-reduced-motion. */
+  shake(amount: number) {
+    if (REDUCED_MOTION) return;
+    this.trauma = Math.min(1, this.trauma + amount);
+  }
+
   /** Follows a ground point with a little smoothing. */
   follow(x: number, z: number, dtSeconds: number, snap = false) {
     const k = snap ? 1 : 1 - Math.exp(-10 * dtSeconds);
     this.cameraTarget.x += (x - this.cameraTarget.x) * k;
     this.cameraTarget.z += (z - this.cameraTarget.z) * k;
-    this.camera.position.copy(this.cameraTarget).add(CAMERA_OFFSET);
-    this.camera.lookAt(this.cameraTarget);
+    this.shakeOffset.set(0, 0, 0);
+    if (this.trauma > 0) {
+      this.trauma = Math.max(0, this.trauma - dtSeconds * 2.2);
+      const t = performance.now() / 1000;
+      const a = this.trauma * this.trauma * 0.35; // metres
+      // Offset in the camera plane only, so the view doesn't tilt.
+      this.shakeOffset
+        .set(Math.sin(t * 71) * a, Math.sin(t * 57 + 1.3) * a, 0)
+        .applyQuaternion(this.camera.quaternion);
+    }
+    this.camera.position.copy(this.cameraTarget).add(CAMERA_OFFSET).add(this.shakeOffset);
+    this.camera.lookAt(this.tmp.copy(this.cameraTarget).add(this.shakeOffset));
     this.camera.updateMatrixWorld();
   }
 
   /** Where the cursor ray hits the ground plane, or null. */
   cursorOnGround(ndc: THREE.Vector2): THREE.Vector3 | null {
+    // Aim against the unshaken camera, so a shake never moves the cursor.
+    this.camera.position.sub(this.shakeOffset);
+    this.camera.updateMatrixWorld();
     this.raycaster.setFromCamera(ndc, this.camera);
+    this.camera.position.add(this.shakeOffset);
+    this.camera.updateMatrixWorld();
     const hit = new THREE.Vector3();
     return this.raycaster.ray.intersectPlane(this.ground, hit);
   }
 
   addPlayer(mesh: PlayerMesh) {
+    mesh.scene = this;
+    this.players.add(mesh);
     this.scene.add(mesh.group);
   }
 
   removePlayer(mesh: PlayerMesh) {
+    mesh.scene = null;
+    this.players.delete(mesh);
     this.scene.remove(mesh.group);
   }
 
-  syncBullets(bullets: Map<string, { x: number; z: number; slot: number }>) {
-    for (const [id, mesh] of this.bullets) {
-      if (!bullets.has(id)) {
-        this.scene.remove(mesh);
-        this.bullets.delete(id);
-      }
-    }
-    for (const [id, b] of bullets) {
-      let mesh = this.bullets.get(id);
-      if (!mesh) {
-        mesh = new THREE.Mesh(this.bulletGeo, this.bulletMats[b.slot] ?? this.bulletMats[0]);
-        mesh.castShadow = true;
-        this.bullets.set(id, mesh);
-        this.scene.add(mesh);
-      }
-      mesh.position.set(b.x, BULLET_HEIGHT, b.z);
-    }
+  muzzleFlash(p: PlayerMesh, aim: number, weapon: number) {
+    const m = p.muzzle(this.tmp);
+    this.vfx.muzzle(m.x, m.y, m.z, aim, weapon);
   }
 
   /**
-   * Grenades: the ball follows its arc (y comes from the server), and a ground
-   * circle shows the blast radius at the landing point. Faint while it flies,
-   * pulsing red during the fuse so it can be dodged. (The blast flash is
-   * triggered separately, see `blast`.)
+   * Bullets. A new id with pellet 0 is a new shot: its shooter gets a muzzle
+   * flash (this covers our predicted shots, which appear the frame we fire,
+   * and the opponent's, which appear when their snapshot does). A bullet that
+   * vanishes next to cover or a player hit it: sparks. One that vanishes in
+   * the open ran out of range: nothing.
+   */
+  syncBullets(bullets: Map<string, { x: number; z: number; slot: number }>) {
+    for (const [id, b] of this.bullets) {
+      if (!bullets.has(id)) {
+        this.impact(b);
+        this.scene.remove(b.mesh);
+        this.bullets.delete(id);
+      }
+    }
+    const now = performance.now();
+    for (const [id, b] of bullets) {
+      let d = this.bullets.get(id);
+      if (!d) {
+        const mesh = new THREE.Mesh(this.bulletGeo, this.bulletMats[b.slot] ?? this.bulletMats[0]);
+        mesh.castShadow = true;
+        d = { mesh, x: b.x, z: b.z, px: b.x, pz: b.z };
+        this.bullets.set(id, d);
+        this.scene.add(mesh);
+        if (id.endsWith(":0")) for (const p of this.players) if (p.slot === b.slot) p.shot(now);
+      }
+      if (b.x !== d.x || b.z !== d.z) {
+        d.px = d.x;
+        d.pz = d.z;
+        d.x = b.x;
+        d.z = b.z;
+      }
+      d.mesh.position.set(b.x, BULLET_HEIGHT, b.z);
+    }
+  }
+
+  private impact(b: DrawnBullet) {
+    let dx = b.x - b.px;
+    let dz = b.z - b.pz;
+    const len = Math.hypot(dx, dz) || 1;
+    dx /= len;
+    dz /= len;
+    // A player it was about to reach?
+    for (const p of this.players) {
+      const q = p.group.position;
+      const ox = b.x - q.x;
+      const oz = b.z - q.z;
+      const dist = Math.hypot(ox, oz);
+      if (dist < PLAYER_RADIUS + 0.9) {
+        const nx = ox / (dist || 1);
+        const nz = oz / (dist || 1);
+        this.vfx.sparks(q.x + nx * PLAYER_RADIUS * 0.8, BULLET_HEIGHT, q.z + nz * PLAYER_RADIUS * 0.8, nx, nz, true);
+        return;
+      }
+    }
+    // Cover or the outer walls: the nearest surface point within reach.
+    const reach = 1.0;
+    let best = reach;
+    let hx = 0;
+    let hz = 0;
+    const test = (cx: number, cz: number, hw: number, hd: number) => {
+      const px = Math.max(cx - hw, Math.min(cx + hw, b.x));
+      const pz = Math.max(cz - hd, Math.min(cz + hd, b.z));
+      const d = Math.hypot(px - b.x, pz - b.z);
+      if (d < best) {
+        best = d;
+        hx = px;
+        hz = pz;
+      }
+    };
+    for (const o of OBSTACLES) test(o.x, o.z, o.w / 2, o.d / 2);
+    const e = ARENA_HALF + WALL_THICKNESS / 2;
+    const L = ARENA_HALF + WALL_THICKNESS;
+    test(0, -e, L, WALL_THICKNESS / 2);
+    test(0, e, L, WALL_THICKNESS / 2);
+    test(-e, 0, WALL_THICKNESS / 2, L);
+    test(e, 0, WALL_THICKNESS / 2, L);
+    if (best < reach) this.vfx.sparks(hx, BULLET_HEIGHT, hz, -dx, -dz, false);
+  }
+
+  /**
+   * Grenades: the grenade follows its arc (y comes from the server), and a
+   * ground circle shows the blast radius at the landing point. Faint while it
+   * flies, pulsing red during the fuse so it can be dodged. (The blast itself
+   * is triggered separately, see `blast`.)
    */
   syncGrenades(grenades: Map<string, GrenadeView>, now: number) {
     for (const [id, g] of this.grenades) {
@@ -292,8 +435,14 @@ export class GameScene {
     for (const [id, gv] of grenades) {
       let g = this.grenades.get(id);
       if (!g) {
-        const ball = new THREE.Mesh(this.grenadeGeo, this.grenadeMat);
-        ball.castShadow = true;
+        let ball: THREE.Object3D;
+        if (this.grenadeModel) {
+          ball = this.grenadeModel.clone();
+          ball.traverse((o) => (o.castShadow = true));
+        } else {
+          ball = new THREE.Mesh(this.grenadeGeo, this.grenadeMat);
+          ball.castShadow = true;
+        }
         const ringMat = new THREE.MeshBasicMaterial({ color: 0xff4030, transparent: true, opacity: 0.1, depthWrite: false });
         const ring = new THREE.Mesh(this.telegraphGeo, ringMat);
         ring.rotation.x = -Math.PI / 2;
@@ -302,6 +451,7 @@ export class GameScene {
         this.scene.add(ball, ring);
       }
       g.ball.position.set(gv.x, gv.y + 0.2, gv.z);
+      if (!gv.landed) g.ball.rotation.set(now / 90, now / 140, 0);
       g.ball.visible = !gv.exploded;
       g.ring.position.set(gv.tx, 0.03, gv.tz);
       g.ring.visible = !gv.exploded;
@@ -309,51 +459,21 @@ export class GameScene {
     }
   }
 
-  /** Explosion flash filling the blast radius. */
-  blast(x: number, z: number, now: number) {
-    this.addEffect(this.blastGeo, 0xffc060, x, 0.4, z, 0.9, now, 320, GRENADE.radius);
+  /** Grenade explosion. `own` = we threw it (shakes the camera a little). */
+  blast(x: number, z: number, now: number, own = false) {
+    this.vfx.explosion(x, z, GRENADE.radius, now);
+    if (own) this.shake(0.55);
   }
 
-  /** A fading afterimage, for the dash streak. */
-  addGhost(x: number, z: number, color: THREE.Color, now: number) {
-    this.addEffect(this.ghostGeo, color.getHex(), x, PLAYER_RADIUS + 0.4, z, 0.35, now, 220, 0);
-  }
-
-  private addEffect(
-    geo: THREE.BufferGeometry,
-    color: number,
-    x: number,
-    y: number,
-    z: number,
-    opacity: number,
-    now: number,
-    life: number,
-    grow: number,
-  ) {
-    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(x, y, z);
-    if (grow > 0) mesh.scale.setScalar(grow * 0.3);
-    this.scene.add(mesh);
-    this.effects.push({ mesh, mat, born: now, life, grow });
-  }
-
-  private updateEffects(now: number) {
-    this.effects = this.effects.filter((e) => {
-      const t = (now - e.born) / e.life;
-      if (t >= 1) {
-        this.scene.remove(e.mesh);
-        e.mat.dispose();
-        return false;
-      }
-      if (e.grow > 0) e.mesh.scale.setScalar(e.grow * (0.3 + 0.7 * Math.sqrt(t)));
-      e.mat.opacity = (e.grow > 0 ? 0.9 : 0.35) * (1 - t);
-      return true;
-    });
+  /** Dash streak: dust kicked up behind the runner. */
+  addGhost(x: number, z: number, _color: THREE.Color, _now: number) {
+    this.vfx.dust(x, z);
   }
 
   render(now: number) {
-    this.updateEffects(now);
+    const dt = this.lastRender < 0 ? 0 : Math.min(0.1, (now - this.lastRender) / 1000);
+    this.lastRender = now;
+    this.vfx.update(dt, now);
     this.renderer.render(this.scene, this.camera);
   }
 }

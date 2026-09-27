@@ -97,8 +97,15 @@ shared/src/     constants and balance tables, arena layout, message types,
                 combat.ts: the player step with dash, weapons, abilities)
 server/src/     Colyseus room (DuelRoom), synced state schema, bootstrap
 server/smoke.ts headless end-to-end test
-client/src/     Three.js scene, input, prediction, predicted bullets, interpolation, HUD
+client/src/     Three.js scene, input, prediction, predicted bullets, interpolation, HUD,
+                animated characters (character.ts), arena props (arenaView.ts), particles (vfx.ts)
+client/public/  models (glTF, meshopt-compressed) and the particle atlas, see ASSETS.md
 ```
+
+The characters, props and particles are CC0 packs by Quaternius and Kenney;
+[ASSETS.md](ASSETS.md) lists them and how the files were built. They load
+before the game starts; if one fails, the game falls back to plain boxes and
+capsules for that part.
 
 ## How the netcode works
 

@@ -17,7 +17,8 @@ import { Input, screenToWorldMove } from "./input.ts";
 import { SnapshotBuffer } from "./interpolation.ts";
 import { Net } from "./net.ts";
 import { Predictor } from "./prediction.ts";
-import { GameScene, PLAYER_COLORS, PlayerMesh } from "./scene.ts";
+import { loadAssets } from "./assets.ts";
+import { GameScene, PLAYER_COLORS, PlayerMesh, setAssets } from "./scene.ts";
 
 // --- Config from the URL ---------------------------------------------------
 const params = new URLSearchParams(location.search);
@@ -30,6 +31,12 @@ const serverUrl =
 
 // --- Setup -------------------------------------------------------------------
 const canvas = document.querySelector<HTMLCanvasElement>("#game")!;
+// Models, props and particles load before anything else. A file that fails
+// falls back to the placeholder look (see assets.ts), so this always resolves.
+const loadingEl = document.querySelector<HTMLElement>("#hud-status")!;
+const setLoading = (f: number) => (loadingEl.textContent = `Loading assets... ${Math.round(f * 100)}%`);
+setLoading(0);
+setAssets(await loadAssets(setLoading));
 const scene = new GameScene(canvas);
 const input = new Input(canvas);
 const hud = new Hud();
@@ -44,7 +51,7 @@ const lastHp = new Map<string, number>();
  * time reaches it. (Sampling the interpolated grenades could skip the single
  * snapshot where `exploded` is true on a slow frame.)
  */
-const blasts: { at: number; x: number; z: number }[] = [];
+const blasts: { at: number; x: number; z: number; own: boolean }[] = [];
 const announcedBlasts = new Set<string>();
 
 let seq = 0;
@@ -77,7 +84,7 @@ input.onPick = (weapon) => {
 function meshFor(id: string, slot: number): PlayerMesh {
   let m = meshes.get(id);
   if (!m) {
-    m = new PlayerMesh(PLAYER_COLORS[slot] ?? 0x888888, id === net.sessionId);
+    m = new PlayerMesh(PLAYER_COLORS[slot] ?? 0x888888, id === net.sessionId, slot);
     meshes.set(id, m);
     scene.addPlayer(m);
   }
@@ -102,7 +109,7 @@ net.onSnapshot = (s) => {
   s.grenades.forEach((g, id) => {
     if (!g.exploded || announcedBlasts.has(id)) return;
     announcedBlasts.add(id);
-    blasts.push({ at: s.t + INTERP_DELAY_MS, x: g.tx, z: g.tz });
+    blasts.push({ at: s.t + INTERP_DELAY_MS, x: g.tx, z: g.tz, own: g.owner === net.sessionId });
   });
   if (announcedBlasts.size > 64) for (const id of announcedBlasts) if (!s.grenades.has(id)) announcedBlasts.delete(id);
   s.players.forEach((p, id) => {
@@ -179,7 +186,7 @@ function frame(now: number) {
       }
     }
     const mine = meshFor(net.sessionId, meServer.slot);
-    mine.set(pos.x, pos.z, aim, meServer.alive);
+    mine.set(pos.x, pos.z, aim, meServer.alive, meServer.weapon);
     mine.setShield(meServer.shieldTicks > 0 ? meServer.shieldHp / SHIELD.absorb : 0);
     scene.follow(pos.x, pos.z, dt, !cameraSnapped);
     cameraSnapped = true;
@@ -195,7 +202,7 @@ function frame(now: number) {
     const s = buffer.samplePlayer(id, renderTime);
     if (!s) return;
     const m = meshFor(id, s.slot);
-    m.set(s.x, s.z, s.aim, s.alive);
+    m.set(s.x, s.z, s.aim, s.alive, s.weapon);
     m.setShield(s.shieldTicks > 0 ? s.shieldHp / SHIELD.absorb : 0);
     if (s.alive) opponentDrawn = { x: s.x, z: s.z };
   });
@@ -212,7 +219,7 @@ function frame(now: number) {
   scene.syncGrenades(buffer.sampleGrenades(renderTime), now);
   while (blasts.length > 0 && blasts[0].at <= now) {
     const b = blasts.shift()!;
-    scene.blast(b.x, b.z, now);
+    scene.blast(b.x, b.z, now, b.own);
   }
 
   for (const m of meshes.values()) {
