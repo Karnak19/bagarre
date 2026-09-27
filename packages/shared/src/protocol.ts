@@ -161,6 +161,8 @@ export interface RoomStateView {
   phase: Phase;
   winner: string;
   tick: number;
+  /** The map being played (a `MapDef.id`, see `mapById`). Only changes between matches. */
+  mapId: string;
   players: MapLike<PlayerView>;
   bullets: MapLike<BulletView>;
   grenades: MapLike<GrenadeView>;

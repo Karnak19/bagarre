@@ -7,14 +7,17 @@
 // grenade, and the shield. Part 3 (smoke-accounts.ts, run alongside part 2)
 // covers guest names, Clerk token checks and match stats in Convex.
 
+import { matchMaker } from "@colyseus/core";
 import { Client, type Room } from "@colyseus/sdk";
 import {
-  ARENA_HALF,
+  BULLET_RADIUS,
   DASH,
   DASH_COOLDOWN_TICKS,
   DASH_TICKS,
   GRENADE,
   INPUT_BURST,
+  KILLS_TO_WIN,
+  MATCH_END_DELAY,
   MAX_HP,
   MSG_INPUT,
   MSG_PICK,
@@ -25,25 +28,38 @@ import {
   TICK_DT,
   TICK_MS,
   TICK_RATE,
+  MAPS,
   WEAPONS,
+  bodiesSee,
+  circleOverlapsBox,
   grenadeDamage,
+  grenadeTarget,
+  mapById,
+  muzzle,
   readSim,
+  respawnPoint,
   shotPellets,
   spawnSim,
+  stepBullet,
   stepPlayer,
   ticks,
+  type Arena,
   type InputMessage,
+  type MapDef,
   type PlayerSim,
   type PlayerView,
   type RoomStateView,
   type Vec2,
 } from "@bagarre/shared";
 import { createServer } from "./src/app.ts";
+import { DuelRoom } from "./src/DuelRoom.ts";
 import { accountChecks, liveConvexChecks, setupTestAccounts } from "./smoke-accounts.ts";
 
 const PORT = 2599;
 const URL = `http://localhost:${PORT}`;
 const failures: string[] = [];
+/** The main server pins every room to Yard: the duel checks depend on its geometry. */
+const YARD = mapById("yard");
 
 function check(cond: boolean, label: string) {
   console.log(`${cond ? "PASS" : "FAIL"}  ${label}`);
@@ -79,7 +95,7 @@ type Controls = Pick<InputMessage, "mx" | "mz" | "aim" | "fire" | "gx" | "gz">;
  * state with the shared step function so we can compare with the server.
  * `spam` > 1 sends that many inputs per tick instead (a cheating client).
  */
-function driver(room: Room) {
+function driver(room: Room, map: MapDef = YARD) {
   let seq = 0;
   let current: Controls = { mx: 0, mz: 0, aim: 0, fire: false, gx: 0, gz: 0 };
   const presses = { dash: 0, grenade: 0, shield: 0, reload: 0 };
@@ -140,7 +156,7 @@ function driver(room: Room) {
         input.fire = true;
         fireOnce = false;
       }
-      sim = stepPlayer(sim, input, p.weapon, p.alive && state(room).phase !== "ended").sim;
+      sim = stepPlayer(map, sim, input, p.weapon, p.alive && state(room).phase !== "ended").sim;
       history.set(seq, sim);
       sent.set(seq, input);
       room.send(MSG_INPUT, input);
@@ -226,7 +242,7 @@ function pureChecks() {
   const base: InputMessage = { seq: 1, mx: 0, mz: 0, aim: 0, fire: false, gx: 0, gz: 0, dash: 1, grenade: 0, shield: 0, reload: 0 };
   let maxX = s.x;
   for (let i = 0; i < DASH_TICKS + 2; i++) {
-    s = stepPlayer(s, { ...base, seq: i + 1 }, 0, true).sim;
+    s = stepPlayer(YARD, s, { ...base, seq: i + 1 }, 0, true).sim;
     maxX = Math.max(maxX, s.x);
   }
   check(Math.abs(maxX - (6.5 - PLAYER_RADIUS)) < 1e-9, `dash into cover stops at the wall (x max ${maxX.toFixed(4)})`);
@@ -270,7 +286,7 @@ async function mainDuel() {
   d2.set({ aim: 0 });
   d2.press("dash");
   await sleep(400);
-  const wallX = ARENA_HALF - PLAYER_RADIUS;
+  const wallX = YARD.halfX - PLAYER_RADIUS;
   check(Math.abs(me(r2)!.x - wallX) < 1e-9, `dash stops at the arena wall (x=${me(r2)!.x.toFixed(3)})`);
 
   // Player 1 walks right for one second.
@@ -359,6 +375,16 @@ async function mainDuel() {
     me(r2)!.alive && me(r2)!.weapon === 2 && me(r2)!.ammo === WEAPONS[2].magazine,
     `weapon pick applies on respawn (weapon=${me(r2)!.weapon}, ammo=${me(r2)!.ammo})`,
   );
+  // The respawn follows the shared rule: out of the killer's sight first, then farthest.
+  {
+    const killer = me(r1)!;
+    const back = me(r2)!;
+    const want = respawnPoint(YARD, YARD.spawns, killer, YARD.spawns[back.slot]);
+    check(
+      Math.abs(back.x - want.x) < 1e-9 && Math.abs(back.z - want.z) < 1e-9,
+      `respawn at (${back.x}, ${back.z}), the spawn the rule picks (${want.x}, ${want.z}; ${bodiesSee(YARD, want, killer) ? "in" : "out of"} the killer's sight)`,
+    );
+  }
 
   d1.stop();
   d2.stop();
@@ -576,14 +602,272 @@ async function shieldDuel() {
 }
 
 // ---------------------------------------------------------------------------
+// Part 4: maps. Collision and bullets follow the room's map, the map is synced,
+// a random room changes map between matches, the dev `?map=` option.
+// ---------------------------------------------------------------------------
+
+/**
+ * A known wall per map: from the last `path` point, walking +x stops against
+ * the wall's -x face at `faceX`. The path is walkable in straight lines from
+ * spawn 0.
+ */
+const WALL_CASES: { map: string; path: Vec2[]; faceX: number; what: string }[] = [
+  { map: "runway", path: [{ x: -17.5, z: -11.5 }], faceX: -14, what: "bay sandbags" },
+  { map: "trenchworks", path: [{ x: -12.5, z: -5 }], faceX: -7, what: "Long Trench" },
+  { map: "fort", path: [{ x: -12, z: -2.5 }], faceX: -6, what: "fort west wall" },
+];
+
+const idle: InputMessage = { seq: 0, mx: 0, mz: 0, aim: 0, fire: false, gx: 0, gz: 0, dash: 0, grenade: 0, shield: 0, reload: 0 };
+
+/** Walks +x for `n` ticks on `arena` from `start`, returns the final x. */
+function walkRight(arena: Arena, start: Vec2, n = 60): number {
+  let s = spawnSim(start.x, start.z, 0);
+  for (let i = 1; i <= n; i++) s = stepPlayer(arena, s, { ...idle, seq: i, mx: 1 }, 0, true).sim;
+  return s.x;
+}
+
+/** A rifle bullet fired +x from a player at `from`: where it dies, or null if still flying after 1 s. */
+function bulletEnd(arena: Arena, from: Vec2): number | null {
+  const m = muzzle(from.x, from.z, 0);
+  const b = { x: m.x, z: m.z, vx: WEAPONS[0].bulletSpeed, vz: 0 };
+  for (let i = 0; i < TICK_RATE; i++) if (!stepBullet(arena, b)) return b.x;
+  return null;
+}
+
+function pureMapChecks() {
+  for (const c of WALL_CASES) {
+    const map = mapById(c.map);
+    const start = c.path[c.path.length - 1];
+    const x = walkRight(map, start);
+    const onYard = walkRight(YARD, start);
+    check(
+      Math.abs(x - (c.faceX - PLAYER_RADIUS)) < 1e-9 && Math.abs(onYard - x) > 0.1,
+      `[maps] ${c.map}: walking into the ${c.what} stops at its face (x ${x.toFixed(4)}; the same walk on Yard ends at ${onYard.toFixed(2)})`,
+    );
+    const end = bulletEnd(map, { x: c.faceX - 3, z: start.z });
+    check(
+      end !== null && end >= c.faceX - BULLET_RADIUS && end < c.faceX + 0.3,
+      `[maps] ${c.map}: a bullet fired into the ${c.what} dies at it (x ${end?.toFixed(3)}, face ${c.faceX})`,
+    );
+  }
+
+  // Grenades clamp to the map's own rectangle.
+  const runway = mapById("runway");
+  const g = grenadeTarget(runway, 19, 13, 25, 20);
+  check(
+    Math.abs(g.x - (runway.halfX - BULLET_RADIUS)) < 1e-9 && Math.abs(g.z - (runway.halfZ - BULLET_RADIUS)) < 1e-9,
+    `[maps] grenade target clamps to Runway's 40 x 28 floor (${g.x.toFixed(2)}, ${g.z.toFixed(2)})`,
+  );
+
+  // Respawn: wherever the opponent stands, if the farthest spawn is in their
+  // sight but another one isn't, the hidden one wins (the farthest of those).
+  let cases = 0;
+  let bad = 0;
+  for (const map of MAPS) {
+    for (let x = -map.halfX + 1; x <= map.halfX - 1; x += 1)
+      for (let z = -map.halfZ + 1; z <= map.halfZ - 1; z += 1) {
+        const o = { x, z };
+        if (map.obstacles.some((b) => circleOverlapsBox(x, z, PLAYER_RADIUS, b))) continue;
+        const d2 = (s: Vec2) => (s.x - o.x) ** 2 + (s.z - o.z) ** 2;
+        const farthest = [...map.spawns].sort((a, b) => d2(b) - d2(a))[0];
+        const hidden = map.spawns.filter((s) => !bodiesSee(map, s, o));
+        if (!bodiesSee(map, farthest, o) || hidden.length === 0) continue;
+        cases++;
+        const got = respawnPoint(map, map.spawns, o, map.spawns[0]);
+        const best = Math.max(...hidden.map(d2));
+        if (bodiesSee(map, got, o) || d2(got) !== best) bad++;
+      }
+  }
+  check(
+    cases > 0 && bad === 0,
+    `[maps] respawn with the opponent in view of the farthest spawn picks a hidden one (${cases} positions over ${MAPS.length} maps, ${bad} wrong)`,
+  );
+}
+
+const onSpawn = (p: PlayerView | undefined, map: MapDef) =>
+  !!p && Math.abs(p.x - map.spawns[p.slot].x) < 1e-9 && Math.abs(p.z - map.spawns[p.slot].z) < 1e-9;
+
+/** Records, per bullet id of `slot`, the largest x it was seen at and whether it is still there. */
+function watchBulletsX(room: Room, slot: number) {
+  const maxX = new Map<string, number>();
+  const live = new Set<string>();
+  const cb = (raw: unknown) => {
+    live.clear();
+    (raw as RoomStateView).bullets.forEach((b, id) => {
+      if (Number(id.split(":")[0]) !== slot) return;
+      live.add(id);
+      maxX.set(id, Math.max(maxX.get(id) ?? -Infinity, b.x));
+    });
+  };
+  room.onStateChange(cb);
+  return { maxX, live, stop: () => room.onStateChange.remove(cb) };
+}
+
+/** A room pinned to one map: synced mapId, spawns, wall collision, prediction, a bullet into the wall. */
+async function mapDuel(c: (typeof WALL_CASES)[number]) {
+  const map = mapById(c.map);
+  const tag = `[map ${c.map}]`;
+  const r1 = await new Client(URL).create(`duel_${c.map}`);
+  const r2 = await new Client(URL).joinById(r1.roomId);
+  const lines: [boolean, string][] = [];
+  const ok = (cond: boolean, l: string) => lines.push([cond, `${tag} ${l}`]);
+  const started = await waitFor(() => state(r1).phase === "playing" && !!me(r1) && !!me(r2), 3000);
+  if (!started) throw new Error(`${tag} match did not start`);
+  const d1 = driver(r1, map);
+  const d2 = driver(r2, map);
+  try {
+    ok(state(r1).mapId === c.map && state(r2).mapId === c.map, `mapId "${c.map}" synced to both clients`);
+    ok(onSpawn(me(r1), map) && onSpawn(me(r2), map), "both players start on the map's own spawns");
+
+    for (const p of c.path) if (!(await d1.goTo(p.x, p.z))) throw new Error(`${tag} did not reach (${p.x}, ${p.z})`);
+    d1.set({ mx: 1, mz: 0 });
+    await sleep(1500);
+    d1.set({ mx: 0 });
+    await caughtUp(r1, d1);
+    const p = me(r1)!;
+    ok(Math.abs(p.x - (c.faceX - PLAYER_RADIUS)) < 1e-9, `walking into the ${c.what} stops at its face on the server (x ${p.x.toFixed(4)})`);
+    const pred = d1.history.get(p.lastSeq);
+    ok(
+      !!pred && JSON.stringify(pred) === JSON.stringify(readSim(p)),
+      `client-side prediction matches the server exactly on ${map.name} (seq ${p.lastSeq}, x ${pred?.x})`,
+    );
+
+    // Back off 3 m and fire one rifle bullet into the wall.
+    const from = { x: c.faceX - 3, z: p.z };
+    if (!(await d1.goTo(from.x, from.z))) throw new Error(`${tag} did not back off`);
+    await caughtUp(r1, d1);
+    const w = watchBulletsX(r1, p.slot);
+    d1.set({ aim: 0 });
+    await sleep(2 * TICK_MS);
+    d1.fireOnce();
+    await sleep(700);
+    w.stop();
+    const xs = [...w.maxX.values()];
+    ok(
+      xs.length === 1 && w.live.size === 0 && xs[0] < c.faceX && xs[0] > from.x,
+      `a bullet fired into the ${c.what} dies there (seen up to x ${xs[0]?.toFixed(2)}, face ${c.faceX}, ${w.live.size} still flying)`,
+    );
+  } finally {
+    d1.stop();
+    d2.stop();
+    await r2.leave();
+    await r1.leave();
+  }
+  return lines;
+}
+
+const localRoom = (roomId: string) => matchMaker.getLocalRoomById(roomId) as unknown as DuelRoom;
+
+/**
+ * An unpinned room: every match start after the first moves to another map,
+ * synced to both clients, players on that map's spawns. The first switch is a
+ * real match end (five kills), the others leave-and-rejoin.
+ */
+async function randomMaps() {
+  const tag = "[random map]";
+  const lines: [boolean, string][] = [];
+  const ok = (cond: boolean, l: string) => lines.push([cond, `${tag} ${l}`]);
+  const r1 = await new Client(URL).create("duel_random");
+  let r2 = await new Client(URL).joinById(r1.roomId);
+  const ids: string[] = [];
+  let synced = true;
+  let spawned = true;
+  const record = async () => {
+    const up = await waitFor(() => state(r1).phase === "playing" && !!me(r2) && state(r2).mapId === state(r1).mapId, 3000);
+    const id = state(r1).mapId;
+    const map = mapById(id);
+    synced &&= up && MAPS.some((m) => m.id === id);
+    spawned &&= onSpawn(me(r1), map) && onSpawn(me(r2), map);
+    ids.push(id);
+  };
+  try {
+    await record();
+
+    // A real match end: the room's own damage path, five kills for player 1.
+    const room = localRoom(r1.roomId) as unknown as {
+      damage(a: string, t: string, target: unknown, n: number): void;
+      state: { players: Map<string, { alive: boolean }> };
+    };
+    for (let k = 0; k < KILLS_TO_WIN; k++) {
+      // Read the room itself: the clients' view lags a tick behind.
+      await waitFor(() => !!room.state.players.get(r2.sessionId)?.alive, 4000);
+      room.damage(r1.sessionId, r2.sessionId, room.state.players.get(r2.sessionId), MAX_HP);
+    }
+    const ended = await waitFor(() => state(r1).phase === "ended" && state(r2).phase === "ended", 2000);
+    ok(ended && state(r1).mapId === ids[0], `five kills end the match, still on ${ids[0]}`);
+    await waitFor(() => state(r1).phase === "playing", (MATCH_END_DELAY + 2) * 1000);
+    await record();
+
+    for (let i = 0; i < 4; i++) {
+      await r2.leave();
+      await waitFor(() => state(r1).phase === "waiting", 2000);
+      r2 = await new Client(URL).joinById(r1.roomId);
+      await record();
+    }
+    const changed = ids.every((id, i) => i === 0 || id !== ids[i - 1]);
+    ok(changed, `each new match is on a different map than the last: ${ids.join(" -> ")}`);
+    ok(synced, "every match's mapId is a known map, the same on both clients");
+    ok(spawned, "every match starts both players on that map's spawns");
+  } finally {
+    await r2.leave();
+    await r1.leave();
+  }
+  return lines;
+}
+
+/** The dev `?map=` join option: honoured in dev (from either player), ignored with NODE_ENV=production. */
+async function devMapOption() {
+  const saved = process.env.NODE_ENV;
+  const matches = async (opt1: object, opt2: object, n: number) => {
+    const r1 = await new Client(URL).create("duel_random", opt1);
+    let r2 = await new Client(URL).joinById(r1.roomId, opt2);
+    const ids: string[] = [];
+    try {
+      for (let i = 0; i < n; i++) {
+        if (i > 0) {
+          await r2.leave();
+          await waitFor(() => state(r1).phase === "waiting", 2000);
+          r2 = await new Client(URL).joinById(r1.roomId, opt2);
+        }
+        await waitFor(() => state(r1).phase === "playing" && state(r2).phase === "playing", 3000);
+        ids.push(state(r2).mapId);
+      }
+    } finally {
+      await r2.leave();
+      await r1.leave();
+    }
+    return ids;
+  };
+  try {
+    delete process.env.NODE_ENV;
+    const dev1 = await matches({ map: "nest" }, {}, 3);
+    check(dev1.every((id) => id === "nest"), `[map option] dev: ?map=nest from the room's creator holds for every match (${dev1.join(", ")})`);
+    const dev2 = await matches({}, { map: "dockside" }, 2);
+    check(dev2.every((id) => id === "dockside"), `[map option] dev: ?map=dockside from the second player applies from the first match (${dev2.join(", ")})`);
+    const bogus = await matches({ map: "nope" }, { map: 42 }, 2);
+    check(bogus[0] !== bogus[1], `[map option] dev: an unknown map id is ignored (${bogus.join(", ")})`);
+    process.env.NODE_ENV = "production";
+    const prod = await matches({ map: "nest" }, { map: "nest" }, 2);
+    check(prod[0] !== prod[1], `[map option] NODE_ENV=production: ?map=nest is ignored, matches still rotate (${prod.join(", ")})`);
+  } finally {
+    if (saved === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = saved;
+  }
+}
+
+// ---------------------------------------------------------------------------
 
 const accounts = await setupTestAccounts();
-const server = createServer({ gracefullyShutdown: false });
+const server = createServer({ gracefullyShutdown: false, mapId: "yard" });
 await server.listen(PORT);
+// Extra room types for the map checks: one unpinned (random maps), one pinned per wall case.
+matchMaker.defineRoomType("duel_random", DuelRoom);
+for (const c of WALL_CASES) matchMaker.defineRoomType(`duel_${c.map}`, DuelRoom.pinnedTo(c.map));
 
 let exitCode = 0;
 try {
   pureChecks();
+  pureMapChecks();
   await mainDuel();
 
   console.log("\n-- parallel rooms: weapons, grenade, shield, accounts --");
@@ -594,6 +878,8 @@ try {
     ...WEAPONS.map((_, i) => weaponDuel(i)),
     grenadeDuel(),
     shieldDuel(),
+    ...WALL_CASES.map((c) => mapDuel(c)),
+    randomMaps(),
   ]);
   for (const r of results) {
     if (r.status === "fulfilled") for (const [c, l] of r.value) check(c, l);
@@ -602,6 +888,10 @@ try {
       check(false, `scenario crashed: ${r.reason instanceof Error ? r.reason.message : r.reason}`);
     }
   }
+
+  // Last and alone: it flips NODE_ENV for the whole process.
+  console.log("\n-- dev ?map= option --");
+  await devMapOption();
 } catch (err) {
   console.error(err);
   failures.push("uncaught error");

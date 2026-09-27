@@ -1,5 +1,5 @@
-// Every playable map. A match picks one at random (see docs/maps.md for the
-// wiring plan); `MAPS[0]` is the original arena, kept as the default.
+// Every playable map. Each match picks one at random (DuelRoom.pickMap);
+// `MAPS[0]` is the original arena, kept as the default.
 import { DOCKSIDE } from "./dockside.ts";
 import { FORT } from "./fort.ts";
 import { NEST } from "./nest.ts";

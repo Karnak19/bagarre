@@ -14,28 +14,17 @@ export interface Box {
   h: number;
 }
 
-/** The floor is a square from -ARENA_HALF to +ARENA_HALF on both axes. */
-export const ARENA_HALF = 15;
+/**
+ * What the simulation collides against: a rectangular floor from -halfX to
+ * +halfX on X and -halfZ to +halfZ on Z, walled all round, plus cover boxes.
+ * Every `MapDef` (maps/) is one. There is no "current arena": every physics
+ * function takes it as a parameter, since one server runs several rooms.
+ */
+export interface Arena {
+  halfX: number;
+  halfZ: number;
+  obstacles: readonly Box[];
+}
+
 export const WALL_HEIGHT = 1.4;
 export const WALL_THICKNESS = 0.6;
-
-/**
- * Cover. The layout is point-symmetric around the origin, so neither spawn
- * side has an advantage.
- */
-export const OBSTACLES: readonly Box[] = [
-  { x: 0, z: 0, w: 3, d: 3, h: 1.8 },
-  { x: -7, z: -4, w: 1, d: 5, h: 1.6 },
-  { x: 7, z: 4, w: 1, d: 5, h: 1.6 },
-  { x: -4, z: 8, w: 5, d: 1, h: 1.6 },
-  { x: 4, z: -8, w: 5, d: 1, h: 1.6 },
-  { x: -9.5, z: 9.5, w: 2, d: 2, h: 1.2 },
-  { x: 9.5, z: -9.5, w: 2, d: 2, h: 1.2 },
-];
-
-export const SPAWN_POINTS: readonly { x: number; z: number }[] = [
-  { x: -12, z: -12 },
-  { x: 12, z: 12 },
-  { x: -12, z: 12 },
-  { x: 12, z: -12 },
-];

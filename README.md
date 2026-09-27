@@ -122,6 +122,35 @@ The pick is shown above the ability bar. It only goes in your hand when you
 All of these live in `packages/shared/src/constants.ts`, one table per weapon and
 ability, so balancing is a one-file change.
 
+## Maps
+
+Each match is played on a random map, never the same one twice in a row. The
+map changes only between matches (both players go to the new map's spawns),
+and its name and a one-line blurb show at the top of the screen for a few
+seconds when the match starts. A room's first match stays on the map the room
+was created on, so a player waiting alone is already on it.
+
+| Map (`id`)    | Size    | Plays like                                          | Favours          |
+| ------------- | ------- | --------------------------------------------------- | ---------------- |
+| Yard (`yard`) | 30 x 30 | The original: open, four pieces of cover            | rifle, SMG       |
+| Runway (`runway`) | 40 x 28 | Big open airstrip, long lanes, few islands      | sniper, rifle    |
+| Trenchworks (`trenchworks`) | 28 x 28 | Sandbag maze of 3 m trenches around a plaza | shotgun, SMG |
+| Fort (`fort`) | 32 x 32 | A walled blockhouse around a crate keep             | rifle, SMG       |
+| Dockside (`dockside`) | 36 x 28 | Three lanes split by container rows         | rifle, SMG       |
+| Nest (`nest`) | 30 x 30 | King of the hill: one sandbag pit in an open field  | rifle, shotgun   |
+| Scrapyard (`scrapyard`) | 34 x 30 | Junk piles that look random but mirror exactly | SMG, shotgun, rifle |
+
+You respawn on a spawn the opponent can't see if there is one, else on the one
+farthest from them. The maps are plain data in `packages/shared/src/maps/`;
+[docs/maps.md](docs/maps.md) has the design notes, the format and the
+validator.
+
+In dev, add `?map=<id>` to the client URL to play a given map, for example
+http://localhost:5173/?map=trenchworks. It holds for every match of that room
+(if the other tab already made a room, its next match start switches to it).
+The server ignores it when `NODE_ENV=production`. `createServer({ mapId })`
+pins every room of a server to one map (the smoke test pins `yard`).
+
 ## Testing with latency: `?lag=`
 
 Everything is instant on localhost, which hides netcode bugs. Add `?lag=` to
@@ -156,9 +185,10 @@ apps/
     smoke.ts          headless end-to-end test (smoke-accounts.ts: its account part)
 packages/
   shared/             @bagarre/shared: TypeScript source, no build step
-    src/              constants and balance tables, maps and arena layout, message types,
-                      the pure step functions (physics.ts: movement/bullets,
-                      combat.ts: the player step with dash, weapons, abilities)
+    src/              constants and balance tables, the maps (maps/) and the Arena shape,
+                      message types, the pure step functions (physics.ts: movement/bullets,
+                      combat.ts: the player step with dash, weapons, abilities),
+                      line of sight and the respawn rule (sight.ts)
     scripts/          map validator and preview renderer
   backend/            @bagarre/backend: the Convex functions
     convex/           schema, users, matches, Clerk auth config, _generated/
@@ -220,3 +250,17 @@ bullet it predicted, so there is no second bullet trailing behind. The server's
 copy only decides when the bullet ends: if the server never spawned it, or it
 hit something, the predicted one is removed. The opponent's bullets and all
 grenades are interpolated like before.
+
+### Map changes
+
+Every physics function takes the map as its first argument (there is no
+"current map": one server runs several rooms). The server syncs `mapId` in the
+room state and changes it only when a match starts, in the same tick as it puts
+both players on the new spawns, so the client gets the new map and the new
+positions in one snapshot. The client treats a new `mapId` as a hard boundary,
+handled before that snapshot is buffered or reconciled: it empties the
+interpolation buffer (so the opponent doesn't slide from an old-map position),
+drops its predicted bullets and every drawn bullet and grenade, rebuilds the
+arena, and resets the prediction to restart from the server's state on the new
+map. The inputs still waiting for the server are replayed on the new map,
+which is where the server will run them, so the prediction stays exact.

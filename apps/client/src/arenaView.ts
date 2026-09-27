@@ -1,87 +1,112 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { ARENA_HALF, OBSTACLES, WALL_HEIGHT, WALL_THICKNESS, type Box } from "@bagarre/shared";
+import { WALL_HEIGHT, WALL_THICKNESS, type Box, type MapDef, type Obstacle, type WallStyle } from "@bagarre/shared";
 
 /**
- * The arena's looks. Collision is defined by `packages/shared/src/arena.ts` only: every
- * prop here is scaled and placed to cover one of its boxes, and nothing added
- * here blocks anything. Decoration inside the arena stays flat (papers,
- * pallets, debris) so it never hides a player; the taller clutter sits outside
- * the walls.
+ * The arena's looks, built from a `MapDef`. Collision is defined by the map
+ * data only: every prop here is scaled and placed to cover one of its boxes
+ * (at the box's `h`), and nothing added here blocks anything. The map's decor
+ * inside the walls is flat (papers, pallets, debris) so it never hides a
+ * player; the taller clutter sits outside the walls.
+ *
+ * Everything goes into `group`. Its geometries are all made here (merged or
+ * built), so `disposeArena` frees them all; materials are only freed when made
+ * here too (`userData.ownMaterial`), never the loaded props' shared ones.
  */
-export function buildArena(scene: THREE.Scene, props: Map<string, THREE.Object3D> | null) {
-  buildFloor(scene);
+export function buildArena(group: THREE.Group, props: Map<string, THREE.Object3D> | null, map: MapDef) {
+  buildFloor(group, map);
   if (!props || !hasAll(props)) {
-    buildPlaceholder(scene);
+    buildPlaceholder(group, map);
     return;
   }
   const solid: THREE.Object3D[] = [];
-  const size = ARENA_HALF * 2;
-  const len = size + WALL_THICKNESS * 2;
-  const off = ARENA_HALF + WALL_THICKNESS / 2;
-  const walls: Box[] = [
-    { x: 0, z: -off, w: len, d: WALL_THICKNESS, h: WALL_HEIGHT },
-    { x: 0, z: off, w: len, d: WALL_THICKNESS, h: WALL_HEIGHT },
-    { x: -off, z: 0, w: WALL_THICKNESS, d: len, h: WALL_HEIGHT },
-    { x: off, z: 0, w: WALL_THICKNESS, d: len, h: WALL_HEIGHT },
-  ];
-  for (const w of walls) solid.push(...fill(props, "BrickWall_2", w, WALL_HEIGHT, true));
-  for (const b of OBSTACLES) solid.push(...cover(props, b));
-  scene.add(bake(solid, true));
-  scene.add(bake(decor(props), false));
+  for (const w of outerWalls(map)) solid.push(...wall(props, map.theme.wall, w));
+  for (const b of map.obstacles) solid.push(...cover(props, b));
+  group.add(bake(solid, true));
+  group.add(bake(decor(props, map), false));
 }
 
-const NEEDED = ["BrickWall_2", "Crate", "Container_Small", "SackTrench_Small", "Barrier_Single"];
+/** Frees what `buildArena` made. The group itself is left empty. */
+export function disposeArena(group: THREE.Group) {
+  group.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.geometry) return;
+    m.geometry.dispose();
+    if (m.userData.ownMaterial) for (const mat of Array.isArray(m.material) ? m.material : [m.material]) mat.dispose();
+  });
+  group.clear();
+}
+
+const NEEDED = ["BrickWall_2", "Crate", "Container_Small", "SackTrench_Small", "Barrier_Single", "ExplodingBarrel"];
 function hasAll(props: Map<string, THREE.Object3D>) {
   return NEEDED.every((n) => props.has(n));
 }
 
-function buildFloor(scene: THREE.Scene) {
-  const size = ARENA_HALF * 2;
-  const outer = new THREE.Mesh(new THREE.PlaneGeometry(120, 120), new THREE.MeshStandardMaterial({ color: 0x3a3e46, roughness: 1 }));
+/** The four outer walls, just outside the floor. */
+function outerWalls(map: MapDef): Box[] {
+  const lx = map.halfX * 2 + WALL_THICKNESS * 2;
+  const lz = map.halfZ * 2 + WALL_THICKNESS * 2;
+  const ox = map.halfX + WALL_THICKNESS / 2;
+  const oz = map.halfZ + WALL_THICKNESS / 2;
+  return [
+    { x: 0, z: -oz, w: lx, d: WALL_THICKNESS, h: WALL_HEIGHT },
+    { x: 0, z: oz, w: lx, d: WALL_THICKNESS, h: WALL_HEIGHT },
+    { x: -ox, z: 0, w: WALL_THICKNESS, d: lz, h: WALL_HEIGHT },
+    { x: ox, z: 0, w: WALL_THICKNESS, d: lz, h: WALL_HEIGHT },
+  ];
+}
+
+/** An outer wall in the map's style. All stay at 1.4 m or lower. */
+function wall(props: Map<string, THREE.Object3D>, style: WallStyle, b: Box): THREE.Object3D[] {
+  if (style === "barrier") return fill(props, "Barrier_Single", b, 1.3);
+  if (style === "sandbags") return fill(props, "SackTrench_Small", b, 1.35);
+  return fill(props, "BrickWall_2", b, WALL_HEIGHT, true);
+}
+
+function own<T extends THREE.Mesh | THREE.LineSegments>(o: T): T {
+  o.userData.ownMaterial = true;
+  return o;
+}
+
+function buildFloor(group: THREE.Group, map: MapDef) {
+  const t = map.theme;
+  const sx = map.halfX * 2;
+  const sz = map.halfZ * 2;
+  const outer = own(new THREE.Mesh(new THREE.PlaneGeometry(160, 160), new THREE.MeshStandardMaterial({ color: t.outerFloor, roughness: 1 })));
   outer.rotation.x = -Math.PI / 2;
   outer.position.y = -0.01;
   outer.receiveShadow = true;
-  scene.add(outer);
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(size, size), new THREE.MeshStandardMaterial({ color: 0x5f6570, roughness: 0.95 }));
+  group.add(outer);
+  const floor = own(new THREE.Mesh(new THREE.PlaneGeometry(sx, sz), new THREE.MeshStandardMaterial({ color: t.floor, roughness: 0.95 })));
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
-  scene.add(floor);
-  // Faint 2 m grid, so movement still reads on the flat floor.
-  const grid = new THREE.GridHelper(size, size / 2, 0x6d7380, 0x6d7380);
+  group.add(floor);
+  // Faint 2 m grid, so movement still reads on the flat floor. (GridHelper
+  // is square only; the maps are rectangles.)
+  const pts: number[] = [];
+  for (let x = -map.halfX; x <= map.halfX + 1e-6; x += 2) pts.push(x, 0, -map.halfZ, x, 0, map.halfZ);
+  for (let z = -map.halfZ; z <= map.halfZ + 1e-6; z += 2) pts.push(-map.halfX, 0, z, map.halfX, 0, z);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+  const grid = own(
+    new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: t.grid, transparent: true, opacity: t.gridOpacity, depthWrite: false })),
+  );
   grid.position.y = 0.005;
-  const gm = grid.material as THREE.Material;
-  gm.transparent = true;
-  gm.opacity = 0.18;
-  gm.depthWrite = false;
-  scene.add(grid);
+  group.add(grid);
 }
 
-/** The pre-asset look: grey walls and sand-coloured boxes. */
-function buildPlaceholder(scene: THREE.Scene) {
-  const size = ARENA_HALF * 2;
+/** The pre-asset look: grey walls and sand-coloured boxes, at the map's heights. */
+function buildPlaceholder(group: THREE.Group, map: MapDef) {
   const wallMat = new THREE.MeshStandardMaterial({ color: 0x3b4150, roughness: 0.8, flatShading: true });
-  const len = size + WALL_THICKNESS * 2;
-  const off = ARENA_HALF + WALL_THICKNESS / 2;
-  const walls: [number, number, number, number][] = [
-    [0, -off, len, WALL_THICKNESS],
-    [0, off, len, WALL_THICKNESS],
-    [-off, 0, WALL_THICKNESS, len],
-    [off, 0, WALL_THICKNESS, len],
-  ];
-  for (const [x, z, w, d] of walls) {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, WALL_HEIGHT, d), wallMat);
-    m.position.set(x, WALL_HEIGHT / 2, z);
-    m.castShadow = m.receiveShadow = true;
-    scene.add(m);
-  }
   const boxMat = new THREE.MeshStandardMaterial({ color: 0xc9b98f, roughness: 0.7, flatShading: true });
-  for (const b of OBSTACLES) {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(b.w, b.h, b.d), boxMat);
+  const add = (b: Box, mat: THREE.Material) => {
+    const m = own(new THREE.Mesh(new THREE.BoxGeometry(b.w, b.h, b.d), mat));
     m.position.set(b.x, b.h / 2, b.z);
     m.castShadow = m.receiveShadow = true;
-    scene.add(m);
-  }
+    group.add(m);
+  };
+  for (const w of outerWalls(map)) add(w, wallMat);
+  for (const b of map.obstacles) add(b, boxMat);
 }
 
 /** Local bounds of a prop template. */
@@ -149,79 +174,65 @@ function fill(props: Map<string, THREE.Object3D>, name: string, box: Box, h: num
   return out;
 }
 
-/** Picks and places the props for one obstacle box. */
-function cover(props: Map<string, THREE.Object3D>, b: Box): THREE.Object3D[] {
-  const long = Math.max(b.w, b.d);
-  const short = Math.min(b.w, b.d);
-  if (long / short >= 2) {
-    // Long cover: sandbags along Z, concrete barriers along X.
-    return b.d > b.w ? fill(props, "SackTrench_Small", b, 1.35) : fill(props, "Barrier_Single", b, 1.3);
-  }
-  if (short >= 2.5) {
-    // Big square: a stack of crates, 2 x 2 (or more), with a box on top.
-    const n = Math.max(2, Math.round(short / 1.5));
-    const cw = b.w / n;
-    const cd = b.d / n;
-    const crateH = Math.min(cw, cd);
-    const out: THREE.Object3D[] = [];
-    for (let i = 0; i < n; i++)
-      for (let j = 0; j < n; j++) {
-        const x = b.x - b.w / 2 + cw * (i + 0.5);
-        const z = b.z - b.d / 2 + cd * (j + 0.5);
-        out.push(place(props.get("Crate")!, x, z, cw, cd, crateH, (i + j) % 4));
+/** Dresses one obstacle box according to its `kind`, at its `h` height. */
+function cover(props: Map<string, THREE.Object3D>, b: Obstacle): THREE.Object3D[] {
+  switch (b.kind) {
+    case "barrier":
+      return fill(props, "Barrier_Single", b, b.h);
+    case "sandbags":
+      return fill(props, "SackTrench_Small", b, b.h);
+    case "wall":
+      return fill(props, "BrickWall_2", b, b.h);
+    case "container":
+      // One container cut to the footprint, doors facing away from the centre line.
+      return [place(props.get("Container_Small")!, b.x, b.z, b.w, b.d, b.h, b.x < 0 ? 1 : 3)];
+    case "barrels":
+      return grid(props.get("ExplodingBarrel")!, b, 1, b.h);
+    case "crate": {
+      // A stack of ~1.5 m crates, with a box on top of the big ones.
+      const out = grid(props.get("Crate")!, b, 1.5, b.h, true);
+      const top = props.get("CardboardBoxes_1");
+      if (top && b.w >= 2.5 && b.d >= 2.5) {
+        const cw = b.w / Math.max(1, Math.round(b.w / 1.5));
+        const cd = b.d / Math.max(1, Math.round(b.d / 1.5));
+        out.push(place(top, b.x - cw * 0.25, b.z + cd * 0.2, 1.0, 0.75, 0.5, 1, b.h));
       }
-    const top = props.get("CardboardBoxes_1");
-    if (top) out.push(place(top, b.x - cw * 0.25, b.z + cd * 0.2, 1.0, 0.75, 0.5, 1, crateH));
-    return out;
+      return out;
+    }
   }
-  // Small square: a shipping container cut to size.
-  return [place(props.get("Container_Small")!, b.x, b.z, b.w, b.d, Math.min(2, b.h + 0.6), b.x < 0 ? 1 : 3)];
 }
 
-/** Ground clutter with no collision. */
-function decor(props: Map<string, THREE.Object3D>): THREE.Object3D[] {
+/**
+ * Fills a box with a grid of one prop, cells of about `cell` metres a side,
+ * each scaled to the cell and `h` tall. `turns` varies the facing per cell.
+ */
+function grid(t: THREE.Object3D, b: Box, cell: number, h: number, turns = false): THREE.Object3D[] {
+  const nx = Math.max(1, Math.round(b.w / cell));
+  const nz = Math.max(1, Math.round(b.d / cell));
+  const cw = b.w / nx;
+  const cd = b.d / nz;
   const out: THREE.Object3D[] = [];
-  const put = (name: string, x: number, z: number, yaw: number, scale = 1) => {
-    const t = props.get(name);
-    if (!t) return;
+  for (let i = 0; i < nx; i++)
+    for (let j = 0; j < nz; j++) {
+      const x = b.x - b.w / 2 + cw * (i + 0.5);
+      const z = b.z - b.d / 2 + cd * (j + 0.5);
+      out.push(place(t, x, z, cw, cd, h, turns ? (i + j) % 4 : 0));
+    }
+  return out;
+}
+
+/** The map's decor, with no collision. */
+function decor(props: Map<string, THREE.Object3D>, map: MapDef): THREE.Object3D[] {
+  const out: THREE.Object3D[] = [];
+  for (const d of map.decor) {
+    const t = props.get(d.prop);
+    if (!t) continue;
     const o = t.clone();
-    o.position.set(x, 0, z);
-    o.rotation.y = yaw;
-    o.scale.multiplyScalar(scale);
+    o.position.set(d.x, 0, d.z);
+    o.rotation.y = d.yaw;
+    o.scale.multiplyScalar(d.scale ?? 1);
     out.push(o);
-  };
-  // Flat stuff inside the arena (never taller than a player's ankles).
-  put("Debris_Papers_1", -3, -3.5, 0.4);
-  put("Debris_Papers_2", 3.5, 3, 2.1);
-  put("Debris_Papers_3", -10.5, 2.5, 1.2);
-  put("Debris_Papers_1", 10, -2, 3.3);
-  put("Debris_Papers_3", 1.5, 11.5, 0.2);
-  put("Debris_Papers_2", -1, -11.8, 4.1);
-  put("Debris_Pile", -12.6, -3.5, 0.6, 0.9);
-  put("Debris_Pile", 12.6, 3.5, 3.7, 0.9);
-  put("Pallet", -12.8, 6.5, 0.3);
-  put("Pallet_Broken", 12.8, -6.5, 2.0);
-  put("WoodPlanks", 6.5, 10.5, 1.1);
-  put("WoodPlanks", -6.5, -10.5, 2.4);
-  // Clutter outside the walls, framing the arena.
-  const e = ARENA_HALF + WALL_THICKNESS + 0.9;
-  put("TrafficCone", -e, -6, 0);
-  put("TrafficCone", -e, -4.6, 0.7);
-  put("TrafficCone", e, 6, 0.2);
-  put("TrafficCone", e + 0.4, 4.8, 1.3);
-  put("TrafficCone", 5, e, 0);
-  put("TrafficCone", -5, -e, 0.9);
-  put("Debris_Tires", -e - 0.3, 9, 0.5);
-  put("Debris_Tires", e + 0.3, -9, 2.5);
-  put("ExplodingBarrel", 9, -e - 0.2, 0);
-  put("ExplodingBarrel", 9.9, -e - 0.3, 0.8);
-  put("ExplodingBarrel", -9, e + 0.2, 0.3);
-  put("CardboardBoxes_2", -11, -e - 0.3, 0.2);
-  put("CardboardBoxes_4", 11, e + 0.4, 2.8);
-  put("CardboardBoxes_1", -e - 0.2, 12, 1.4);
-  put("CardboardBoxes_1", e + 0.2, -12, 4.2);
-  put("Pallet", 0, e + 1, 0.1);
-  put("Pallet", 0.3, -e - 1, 1.7);
+  }
   return out;
 }
 

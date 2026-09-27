@@ -5,7 +5,7 @@
 // results, so: no Math.random, no wall clock, and every piece of state it
 // reads is in PlayerSim (which is synced).
 
-import { ARENA_HALF } from "./arena.ts";
+import type { Arena } from "./arena.ts";
 import {
   BULLET_RADIUS,
   DASH_COOLDOWN_TICKS,
@@ -89,7 +89,7 @@ const dec = (v: number) => (v > 0 ? v - 1 : 0);
  * match ended: cooldowns still run and presses are still consumed (so a press
  * made while dead doesn't fire on respawn), but nothing moves or happens.
  */
-export function stepPlayer(prev: PlayerSim, input: InputMessage, weaponId: number, canAct: boolean): StepResult {
+export function stepPlayer(arena: Arena, prev: PlayerSim, input: InputMessage, weaponId: number, canAct: boolean): StepResult {
   const w = weaponDef(weaponId);
   const s: PlayerSim = { ...prev };
   const res: StepResult = { sim: s, fired: false, grenade: null, shield: false, dashing: false };
@@ -138,9 +138,9 @@ export function stepPlayer(prev: PlayerSim, input: InputMessage, weaponId: numbe
   if (s.dashTicks > 0) {
     s.dashTicks--;
     res.dashing = true;
-    p = movePlayer(s, s.dashDx * DASH_SPEED * TICK_DT, s.dashDz * DASH_SPEED * TICK_DT);
+    p = movePlayer(arena, s, s.dashDx * DASH_SPEED * TICK_DT, s.dashDz * DASH_SPEED * TICK_DT);
   } else {
-    p = movePlayer(s, move.x * PLAYER_SPEED * TICK_DT, move.z * PLAYER_SPEED * TICK_DT);
+    p = movePlayer(arena, s, move.x * PLAYER_SPEED * TICK_DT, move.z * PLAYER_SPEED * TICK_DT);
   }
   s.x = p.x;
   s.z = p.z;
@@ -154,7 +154,7 @@ export function stepPlayer(prev: PlayerSim, input: InputMessage, weaponId: numbe
 
   if (pressGrenade && s.grenadeCd === 0) {
     s.grenadeCd = GRENADE_COOLDOWN_TICKS;
-    res.grenade = grenadeTarget(s.x, s.z, input.gx, input.gz);
+    res.grenade = grenadeTarget(arena, s.x, s.z, input.gx, input.gz);
   }
 
   if (pressShield && s.shieldCd === 0) {
@@ -209,7 +209,7 @@ export function shotPellets(weaponId: number, x: number, z: number, aim: number,
 // --- Grenades ----------------------------------------------------------------
 
 /** Where a grenade thrown from (x, z) at (gx, gz) lands: within range, inside the arena. */
-export function grenadeTarget(x: number, z: number, gx: number, gz: number): Vec2 {
+export function grenadeTarget(arena: Arena, x: number, z: number, gx: number, gz: number): Vec2 {
   let dx = (Number.isFinite(gx) ? gx : x) - x;
   let dz = (Number.isFinite(gz) ? gz : z) - z;
   const len = Math.sqrt(dx * dx + dz * dz);
@@ -217,8 +217,9 @@ export function grenadeTarget(x: number, z: number, gx: number, gz: number): Vec
     dx *= GRENADE.range / len;
     dz *= GRENADE.range / len;
   }
-  const lim = ARENA_HALF - BULLET_RADIUS;
-  return { x: clamp(x + dx, -lim, lim), z: clamp(z + dz, -lim, lim) };
+  const limX = arena.halfX - BULLET_RADIUS;
+  const limZ = arena.halfZ - BULLET_RADIUS;
+  return { x: clamp(x + dx, -limX, limX), z: clamp(z + dz, -limZ, limZ) };
 }
 
 export function grenadeFlightTicks(distance: number): number {

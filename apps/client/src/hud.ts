@@ -24,6 +24,8 @@ export interface HudModel {
   /** Weapon picks are accepted right now (dead or between matches). */
   canPick: boolean;
   banner: { title: string; sub: string } | null;
+  /** The map's name and blurb, for a few seconds at match start. */
+  mapCard: { title: string; sub: string; opacity: number } | null;
   debug: string;
   /** Sound muted (M toggles). */
   muted: boolean;
@@ -35,6 +37,7 @@ export class Hud {
   private score = $("#hud-score");
   private status = $("#hud-status");
   private banner = $("#hud-banner");
+  private mapCard = $("#hud-map");
   private debug = $("#hud-debug");
   private weapon = $("#hud-weapon");
   private picker = $("#hud-picker");
@@ -84,6 +87,14 @@ export class Hud {
     if (m.banner) {
       this.banner.querySelector(".title")!.textContent = m.banner.title;
       this.banner.querySelector(".sub")!.textContent = m.banner.sub;
+    }
+    this.mapCard.hidden = !m.mapCard;
+    if (m.mapCard) {
+      const title = this.mapCard.querySelector(".title")!;
+      const sub = this.mapCard.querySelector(".sub")!;
+      if (title.textContent !== m.mapCard.title) title.textContent = m.mapCard.title;
+      if (sub.textContent !== m.mapCard.sub) sub.textContent = m.mapCard.sub;
+      this.mapCard.style.opacity = String(m.mapCard.opacity);
     }
     if (this.debug.textContent !== m.debug) this.debug.textContent = m.debug;
 

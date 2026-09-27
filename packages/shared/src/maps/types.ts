@@ -118,7 +118,8 @@ export interface MapDef {
   /**
    * Spawns, in mirrored pairs: `spawns[2k + 1]` is the mirror image of
    * `spawns[2k]`. Slot 0 starts a match on `spawns[0]`, slot 1 on `spawns[1]`;
-   * respawns may use any of them (arena.ts's "farthest from the opponent").
+   * respawns may use any of them (sight.ts's `respawnPoint`: out of the
+   * opponent's sight first, then farthest).
    */
   spawns: readonly Spawn[];
   decor: readonly Decor[];

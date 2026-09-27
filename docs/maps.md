@@ -1,8 +1,9 @@
 # Maps
 
 Seven maps live in `packages/shared/src/maps/`: the original arena (Yard) plus six new
-ones. They are plain data, not wired into the game yet. A match will pick one
-at random; the wiring plan at the end of this file lists every change needed.
+ones. They are plain data, and each match picks one at random (never the one
+just played). The wiring plan at the end of this file is implemented; its
+"As built" notes list where the code differs from it.
 
 | Map | Size | Symmetry | Plays like | Favours |
 | --- | --- | --- | --- | --- |
@@ -115,8 +116,9 @@ interface MapDef {
   | `barrels` | `ExplodingBarrel` | packed on a ~1 m grid (visual only, no explosion) |
 
 - Spawn order: slot 0 starts a match on `spawns[0]`, slot 1 on `spawns[1]`.
-  Respawns keep today's rule (farthest spawn from the opponent) over all of
-  them. Every map has two pairs.
+  Respawns pick among all of them: a spawn the opponent can't see first
+  (`bodiesSee`), then the farthest from the opponent (`respawnPoint` in
+  `packages/shared/src/sight.ts`). Every map has two pairs.
 - `Decor.prop` is a union of prop names. Flat ones (`Debris_*`, `Pallet*`,
   `WoodPlanks`) may sit anywhere; tall ones (`TrafficCone`, `Debris_Tires`,
   `ExplodingBarrel`, `CardboardBoxes_*`) only outside the walls, where nobody
@@ -287,6 +289,9 @@ purpose: no straight lanes, piles of different sizes.
 
 ## Wiring plan
 
+**Implemented.** The plan below is kept as written; "As built" at the end
+lists what changed on the way.
+
 Order matters: shared first (the compiler then points at every caller).
 
 ### 1. `packages/shared/src/arena.ts`
@@ -450,6 +455,62 @@ Add to `DuelState`: `mapId: t.string().default(DEFAULT_MAP_ID)`.
 - Run `bun run maps:validate` next to `smoke` (it is a root script, through
   turbo).
 
+### As built (differences from the plan)
+
+- **Pinning a map.** `createServer({ mapId })` registers
+  `DuelRoom.pinnedTo(mapId)`, a subclass that carries the map, instead of
+  `defineRoom(DuelRoom, { mapId })`. Colyseus merges the client's join options
+  into the room options, so a room option could be spoofed by any client
+  sending `mapId`. `pinnedTo` throws on an unknown id.
+- **Dev `?map=<id>`.** The client sends it as the join option `map`. The room
+  honours it when `NODE_ENV` isn't `"production"` (read at join time), from
+  the creator (`onCreate`) or from the second player (`onJoin`, while
+  waiting); an unknown id is ignored and a pinned server wins. It then holds
+  for every match of that room.
+- **Which map when.** A room starts on a random map (not always Yard), and
+  its first match stays on it, so the waiting player isn't moved when the
+  opponent arrives. Every later match start (after a match end, or after the
+  opponent left and someone joined again) picks a random map other than the
+  current one. A dev `?map=` from the second player moves a waiting player to
+  that map's spawn right away, in the same tick as the match start.
+- **Respawn.** `segHitsBox`, `clearShot` and `bodiesSee` moved from
+  `scripts/analyze.ts` to `packages/shared/src/sight.ts` (typed on `Arena`;
+  `analyze.ts` re-exports them), with the new `respawnPoint(arena, spawns,
+  opponent, fallback)`: out of the opponent's sight first, then farthest.
+- **`ARENA_HALF`, `OBSTACLES`, `SPAWN_POINTS` are deleted**; `arena.ts` keeps
+  `Box`, `Arena`, `WALL_HEIGHT`, `WALL_THICKNESS`. `RoomStateView` (protocol.ts)
+  has `mapId` too.
+- **Client map switch.** Each `Snapshot` carries `mapId`; main.ts's
+  `switchMap` runs before the snapshot is buffered or reconciled. Besides the
+  planned steps it empties the interpolation buffer, drops drawn bullets and
+  grenades without sparks, pending blasts and opponent flashes, and re-snaps
+  the camera. `Predictor.setMap` forgets the predicted state but keeps the
+  pending inputs: the server applied everything up to the snapshot's
+  `lastSeq` on the old map and will apply the rest on the new one, so
+  replaying them on the new map is exact.
+- **arenaView.** `buildArena(group, props, map)` plus `disposeArena(group)`,
+  which frees every geometry in the group and only the materials made for the
+  arena (marked `userData.ownMaterial`), never the loaded props'. The grid is
+  a `LineSegments` every 2 m; the outer ground plane is 160 m (Runway is 40 m
+  wide). Crates use the planned grid; barrels a 1 m grid; containers keep
+  today's facing (`b.x < 0 ? 1 : 3` quarter turns).
+- **HUD.** The map's name and blurb show for 3.5 s at each match start. The
+  time counts in frames (at most 100 ms per frame), not wall clock: the first
+  frames of a match can take seconds while shaders compile, and would
+  otherwise use the card up before anyone sees it.
+- **Muzzle flash.** The opponent's flash now comes from their ammo count
+  going down (one per round, at the same moment as the shot sound), not from
+  a new bullet showing up: at point blank a bullet can hit and vanish within
+  one tick. Our own flash still comes from our predicted bullets.
+- **Smoke test.** It registers extra room types on the running server with
+  `matchMaker.defineRoomType`: `duel_random` (unpinned) and one pinned room per
+  wall case (Runway, Trenchworks, Fort). Checks: collision and bullets follow
+  the map (pure and live), prediction exact on non-Yard maps, the synced
+  `mapId` and spawns, a real match end (five kills through the room's own
+  damage path) then leave-and-rejoin cycles each landing on a different map,
+  the respawn rule, and the `?map=` option in dev and with
+  `NODE_ENV=production`.
+
 ## Limits of the current mechanics
 
 - Every box blocks bullets. There is no low cover to shoot over, so heights
@@ -469,7 +530,5 @@ Add to `DuelState`: `mapId: t.string().default(DEFAULT_MAP_ID)`.
 - The camera shows about 19-27 m around the player, less than the sniper's 30
   m range: long shots on Runway can be at targets off screen. A camera that
   leans toward the aim direction would fix it.
-- Respawn picks the spawn farthest from the opponent, ignoring line of sight.
-  With the maps' mirrored pairs that is fine, but a "farthest spawn the
-  opponent can't see" rule (the validator's `bodiesSee` is a ready-made
-  check) would be safer on open maps.
+- Respawn line of sight is checked against where the opponent stands at that
+  moment, not where they will be a second later.

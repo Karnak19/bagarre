@@ -1,16 +1,15 @@
 import * as THREE from "three";
 import {
-  ARENA_HALF,
   BULLET_HEIGHT,
   BULLET_RADIUS,
   GRENADE,
-  OBSTACLES,
   PLAYER_RADIUS,
   PLAYER_SPEED,
   WALL_THICKNESS,
   type GrenadeView,
+  type MapDef,
 } from "@bagarre/shared";
-import { buildArena } from "./arenaView.ts";
+import { buildArena, disposeArena } from "./arenaView.ts";
 import type { Assets } from "./assets.ts";
 import { Character } from "./character.ts";
 import { Vfx, shieldMaterial } from "./vfx.ts";
@@ -236,6 +235,13 @@ export class GameScene {
   private trauma = 0;
   private shakeOffset = new THREE.Vector3();
   private tmp = new THREE.Vector3();
+  /** The current map's floor, walls, cover and decor (rebuilt by `setMap`). */
+  private arena = new THREE.Group();
+  /** The map on screen, null until the first snapshot says which. */
+  map: MapDef | null = null;
+  private props: Map<string, THREE.Object3D> | null;
+  private hemi!: THREE.HemisphereLight;
+  private sun!: THREE.DirectionalLight;
 
   constructor(canvas: HTMLCanvasElement, loaded: Assets | null = assets) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -249,7 +255,8 @@ export class GameScene {
     this.camera.lookAt(0, 0, 0);
 
     this.buildLights();
-    buildArena(this.scene, loaded?.props ?? null);
+    this.props = loaded?.props ?? null;
+    this.scene.add(this.arena);
     const g = loaded?.props?.get("Grenade");
     if (g) {
       this.grenadeModel = g.clone();
@@ -260,17 +267,53 @@ export class GameScene {
     window.addEventListener("resize", () => this.resize());
   }
 
+  /** The lights. Their colours, strength and the sun's direction come from the map theme (`setMap`). */
   private buildLights() {
-    this.scene.add(new THREE.HemisphereLight(0xdde6ff, 0x3a3228, 1.25));
+    this.hemi = new THREE.HemisphereLight(0xdde6ff, 0x3a3228, 1.25);
+    this.scene.add(this.hemi);
     const sun = new THREE.DirectionalLight(0xfff4e0, 2.3);
     sun.position.set(12, 25, 6);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
-    const s = ARENA_HALF + 3;
-    Object.assign(sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s, near: 1, far: 70 });
+    Object.assign(sun.shadow.camera, { near: 1, far: 70 });
     sun.shadow.bias = -0.0005;
     sun.shadow.normalBias = 0.02;
+    this.sun = sun;
     this.scene.add(sun);
+  }
+
+  /**
+   * Shows another map: frees the old arena's geometries (and the materials
+   * made for it, never the loaded props'), builds the new one and applies its
+   * theme. Also drops every drawn bullet and grenade, without sparks: they
+   * belonged to the old map.
+   */
+  setMap(map: MapDef) {
+    if (this.map?.id === map.id) return;
+    this.map = map;
+    disposeArena(this.arena);
+    buildArena(this.arena, this.props, map);
+    this.clearProjectiles();
+
+    const t = map.theme;
+    (this.scene.background as THREE.Color | null)?.set(t.background);
+    this.hemi.color.set(t.hemiSky);
+    this.hemi.groundColor.set(t.hemiGround);
+    this.hemi.intensity = t.hemiIntensity;
+    this.sun.color.set(t.sun);
+    this.sun.intensity = t.sunIntensity;
+    this.sun.position.set(t.sunDir.x, t.sunDir.y, t.sunDir.z);
+    const s = Math.max(map.halfX, map.halfZ) + 3;
+    Object.assign(this.sun.shadow.camera, { left: -s, right: s, top: s, bottom: -s });
+    this.sun.shadow.camera.updateProjectionMatrix();
+  }
+
+  /** Removes every drawn bullet and grenade at once (map change). */
+  clearProjectiles() {
+    for (const b of this.bullets.values()) this.scene.remove(b.mesh);
+    this.bullets.clear();
+    for (const g of this.grenades.values()) this.scene.remove(g.ball, g.ring);
+    this.grenades.clear();
   }
 
   resize() {
@@ -341,9 +384,11 @@ export class GameScene {
   }
 
   /**
-   * Bullets. A new id with pellet 0 is a new shot: its shooter gets a muzzle
-   * flash (this covers our predicted shots, which appear the frame we fire,
-   * and the opponent's, which appear when their snapshot does). A bullet that
+   * Bullets. A new id with pellet 0 of our own is a new shot of ours: muzzle
+   * flash (our predicted bullets appear the frame we fire). The opponent's
+   * flash is not read from here: at close range their bullet can hit and
+   * vanish within one tick, never showing in a snapshot, so main.ts drives it
+   * from their ammo count instead, like their shot sound. A bullet that
    * vanishes next to cover or a player hit it: sparks. One that vanishes in
    * the open ran out of range: nothing.
    */
@@ -364,7 +409,7 @@ export class GameScene {
         d = { mesh, x: b.x, z: b.z, px: b.x, pz: b.z };
         this.bullets.set(id, d);
         this.scene.add(mesh);
-        if (id.endsWith(":0")) for (const p of this.players) if (p.slot === b.slot) p.shot(now);
+        if (id.endsWith(":0")) for (const p of this.players) if (p.isLocal && p.slot === b.slot) p.shot(now);
       }
       if (b.x !== d.x || b.z !== d.z) {
         d.px = d.x;
@@ -411,13 +456,16 @@ export class GameScene {
         hz = pz;
       }
     };
-    for (const o of OBSTACLES) test(o.x, o.z, o.w / 2, o.d / 2);
-    const e = ARENA_HALF + WALL_THICKNESS / 2;
-    const L = ARENA_HALF + WALL_THICKNESS;
-    test(0, -e, L, WALL_THICKNESS / 2);
-    test(0, e, L, WALL_THICKNESS / 2);
-    test(-e, 0, WALL_THICKNESS / 2, L);
-    test(e, 0, WALL_THICKNESS / 2, L);
+    const map = this.map;
+    if (!map) return;
+    for (const o of map.obstacles) test(o.x, o.z, o.w / 2, o.d / 2);
+    // Walls at z = +-ez run along X, walls at x = +-ex run along Z.
+    const ex = map.halfX + WALL_THICKNESS / 2;
+    const ez = map.halfZ + WALL_THICKNESS / 2;
+    test(0, -ez, map.halfX + WALL_THICKNESS, WALL_THICKNESS / 2);
+    test(0, ez, map.halfX + WALL_THICKNESS, WALL_THICKNESS / 2);
+    test(-ex, 0, WALL_THICKNESS / 2, map.halfZ + WALL_THICKNESS);
+    test(ex, 0, WALL_THICKNESS / 2, map.halfZ + WALL_THICKNESS);
     if (best < reach) this.vfx.sparks(hx, BULLET_HEIGHT, hz, -dx, -dz, false);
   }
 

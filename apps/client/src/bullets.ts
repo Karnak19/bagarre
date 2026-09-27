@@ -1,13 +1,16 @@
 import {
   BULLET_RADIUS,
+  DEFAULT_MAP_ID,
   PLAYER_RADIUS,
   bulletId,
   bulletLifeTicks,
   circlesOverlap,
   shotPellets,
   stepBullet,
+  mapById,
   weaponDef,
   type BulletSim,
+  type MapDef,
   type Vec2,
 } from "@bagarre/shared";
 import type { Snapshot } from "./net.ts";
@@ -47,6 +50,14 @@ const FORGET_AFTER_SEQ = 90;
  */
 export class LocalBullets {
   private bullets = new Map<string, Predicted>();
+  /** The map the bullets fly on, the latest snapshot's (see Predictor.map). */
+  private map: MapDef = mapById(DEFAULT_MAP_ID);
+
+  /** The server moved to another map: bullets of the old one are dropped, never drawn on the new one. */
+  setMap(map: MapDef) {
+    this.map = map;
+    this.bullets.clear();
+  }
 
   /** Spawns the pellets of a shot fired by input `seq`, and steps them like the server's spawn tick. */
   spawn(slot: number, seq: number, weapon: number, x: number, z: number, aim: number) {
@@ -69,6 +80,7 @@ export class LocalBullets {
       if (b.dead) continue;
       b.prev = { x: b.sim.x, z: b.sim.z };
       const alive = stepBullet(
+        this.map,
         b.sim,
         (x, z) => !!opponent && circlesOverlap(x, z, BULLET_RADIUS, opponent.x, opponent.z, PLAYER_RADIUS),
       );

@@ -1,6 +1,7 @@
 import { ErrorCode, Room, ServerError, type AuthContext, type Client } from "@colyseus/core";
 import {
   BULLET_RADIUS,
+  DEFAULT_MAP_ID,
   GRENADE_FUSE_TICKS,
   INPUT_BURST,
   KILLS_TO_WIN,
@@ -9,12 +10,12 @@ import {
   MAX_INPUT_QUEUE,
   MAX_PLAYERS,
   MSG_INPUT,
+  MAPS,
   MSG_PICK,
   PLAYER_RADIUS,
   RESPAWN_DELAY,
   SHIELD,
   SHIELD_TICKS,
-  SPAWN_POINTS,
   TICK_RATE,
   bulletId,
   bulletLifeTicks,
@@ -23,7 +24,9 @@ import {
   grenadeDamage,
   grenadeFlightTicks,
   isWeaponId,
+  mapById,
   readSim,
+  respawnPoint,
   shotPellets,
   spawnSim,
   stepBullet,
@@ -32,6 +35,7 @@ import {
   weaponDef,
   writeSim,
   type InputMessage,
+  type MapDef,
   type Phase,
   type Vec2,
 } from "@bagarre/shared";
@@ -75,6 +79,20 @@ interface GrenadeInternal {
 
 const MAX_COUNTER = 0xffffffff;
 
+/** A map id that exists, or null. */
+function knownMap(id: unknown): MapDef | null {
+  return typeof id === "string" ? (MAPS.find((m) => m.id === id) ?? null) : null;
+}
+
+/**
+ * The dev-only `?map=<id>` join option (the client passes it as `map`). Honoured
+ * only when NODE_ENV isn't "production", read at join time.
+ */
+function devMap(options: unknown): MapDef | null {
+  if (process.env.NODE_ENV === "production") return null;
+  return typeof options === "object" && options !== null ? knownMap((options as Record<string, unknown>).map) : null;
+}
+
 function sanitizeInput(raw: unknown): InputMessage | null {
   if (typeof raw !== "object" || raw === null) return null;
   const m = raw as Record<string, unknown>;
@@ -111,6 +129,12 @@ export class DuelRoom extends Room<{ state: DuelState }> {
   private matchResetTicks = 0;
   /** Unique per match, so a retried stats write is applied once. */
   private matchId = "";
+  /** The map being played; `state.mapId` mirrors it. Only changes between matches (see `pickMap`). */
+  private map: MapDef = mapById(DEFAULT_MAP_ID);
+  /** Pinned (`pinnedTo`) or forced by the dev `?map=` option: every match stays on `map`. */
+  private fixedMap = false;
+  /** A match has been started on `map`, so the next one moves to another map. */
+  private mapPlayed = false;
 
   /**
    * Runs before a seat is reserved (Colyseus 0.18 only calls the static
@@ -126,7 +150,34 @@ export class DuelRoom extends Room<{ state: DuelState }> {
     }
   }
 
-  onCreate() {
+  /**
+   * A room class pinned to one map, for `createServer({ mapId })` and the
+   * smoke test. A subclass rather than a room option: clients' join options
+   * are merged into the room options, so an option could be spoofed.
+   */
+  static pinnedTo(mapId: string): typeof DuelRoom {
+    const map = knownMap(mapId);
+    if (!map) throw new Error(`Unknown map "${mapId}" (known: ${MAPS.map((m) => m.id).join(", ")})`);
+    return class PinnedDuelRoom extends DuelRoom {
+      protected override pinnedMap: MapDef | null = map;
+    };
+  }
+
+  /** Set by `pinnedTo`: every match of this room is on that map. */
+  protected pinnedMap: MapDef | null = null;
+
+  onCreate(options?: unknown) {
+    // Map: pinned by the server, else by the dev `?map=` option of whoever
+    // created the room, else random.
+    const pinned = this.pinnedMap ?? devMap(options);
+    if (pinned) {
+      this.map = pinned;
+      this.fixedMap = true;
+    } else {
+      this.map = MAPS[Math.floor(Math.random() * MAPS.length)];
+    }
+    this.state.mapId = this.map.id;
+
     this.onMessage(MSG_INPUT, (client, raw: unknown) => {
       const input = sanitizeInput(raw);
       const internal = this.internals.get(client.sessionId);
@@ -162,7 +213,16 @@ export class DuelRoom extends Room<{ state: DuelState }> {
     this.patchRate = null;
   }
 
-  onJoin(client: Client) {
+  onJoin(client: Client, options?: unknown) {
+    // A dev `?map=` from the second player pins the room too. A join can
+    // only happen while waiting (the room holds two), so this is never
+    // mid-match. A server-pinned map wins.
+    const asked = devMap(options);
+    if (asked && !this.pinnedMap && this.state.phase !== "playing") {
+      this.fixedMap = true;
+      if (asked.id !== this.map.id) this.switchMap(asked);
+    }
+
     const taken = new Set<number>();
     const names = new Set<string>();
     this.state.players.forEach((p) => {
@@ -175,12 +235,13 @@ export class DuelRoom extends Room<{ state: DuelState }> {
     let name = identity.name;
     if (names.has(name) && !(identity.kind === "account" && identity.username)) name = guestName(names);
 
-    const spawn = SPAWN_POINTS[slot];
+    const spawn = this.map.spawns[slot];
     const player = new Player();
     player.slot = slot;
     player.name = name;
     writeSim(player, spawnSim(spawn.x, spawn.z, player.weapon));
-    player.aim = slot === 0 ? Math.PI / 4 : (-3 * Math.PI) / 4;
+    // Face the centre of the map.
+    player.aim = Math.atan2(-spawn.z, -spawn.x);
     this.state.players.set(client.sessionId, player);
     this.internals.set(client.sessionId, { queue: [], tokens: INPUT_BURST, identity, deaths: 0 });
 
@@ -206,13 +267,44 @@ export class DuelRoom extends Room<{ state: DuelState }> {
     this.state.phase = phase;
   }
 
+  /**
+   * The map for the match about to start: the pinned one, or the current one
+   * for a room's first match (the waiting player is already on it), or a
+   * random other one after that.
+   */
+  private pickMap() {
+    if (!this.fixedMap && this.mapPlayed && MAPS.length > 1) {
+      const others = MAPS.filter((m) => m.id !== this.map.id);
+      this.switchMap(others[Math.floor(Math.random() * others.length)]);
+    }
+    this.mapPlayed = true;
+  }
+
+  /**
+   * Changes the map. Only called between matches or while waiting, and always
+   * together with putting the players on the new spawns (startMatch does it
+   * right after, and it is done here for a player waiting alone), before the
+   * tick's patch goes out: clients get the new mapId and the new positions in
+   * the same snapshot.
+   */
+  private switchMap(map: MapDef) {
+    this.map = map;
+    this.state.mapId = map.id;
+    this.clearProjectiles();
+    this.state.players.forEach((p) => {
+      const spawn = map.spawns[p.slot];
+      writeSim(p, spawnSim(spawn.x, spawn.z, p.weapon, readSim(p)));
+    });
+  }
+
   private startMatch() {
+    this.pickMap();
     this.clearProjectiles();
     this.state.winner = "";
     this.matchId = `${this.roomId}:${crypto.randomUUID()}`;
     this.internals.forEach((i) => (i.deaths = 0));
     this.state.players.forEach((p) => {
-      const spawn = SPAWN_POINTS[p.slot];
+      const spawn = this.map.spawns[p.slot];
       this.spawnAt(p, spawn.x, spawn.z);
       p.kills = 0;
     });
@@ -289,7 +381,7 @@ export class DuelRoom extends Room<{ state: DuelState }> {
     const canAct = player.alive && this.state.phase !== "ended";
     // The same function the client predicts with. It enforces the fire
     // interval, magazine, reload and ability cooldowns.
-    const res = stepPlayer(readSim(player), input, player.weapon, canAct);
+    const res = stepPlayer(this.map, readSim(player), input, player.weapon, canAct);
     writeSim(player, res.sim);
     if (!canAct) return;
     player.aim = input.aim;
@@ -346,7 +438,7 @@ export class DuelRoom extends Room<{ state: DuelState }> {
         return;
       }
       const sim = { x: bullet.x, z: bullet.z, vx: internal.vx, vz: internal.vz };
-      const alive = stepBullet(sim, (bx, bz) => {
+      const alive = stepBullet(this.map, sim, (bx, bz) => {
         let hit = false;
         this.state.players.forEach((target, targetId) => {
           if (hit || targetId === bullet.owner || !target.alive) return;
@@ -465,23 +557,13 @@ export class DuelRoom extends Room<{ state: DuelState }> {
     void recordMatch(this.matchId, results);
   }
 
-  /** Respawns at the spawn point farthest from the opponent. */
+  /** Respawns out of the opponent's sight if possible, then as far from them as possible. */
   private respawn(id: string, player: Player) {
-    let opponent: Player | undefined;
+    let opponent: Player | null = null;
     this.state.players.forEach((p, pid) => {
       if (pid !== id) opponent = p;
     });
-    let best = SPAWN_POINTS[player.slot];
-    if (opponent) {
-      let bestD = -1;
-      for (const s of SPAWN_POINTS) {
-        const d = (s.x - opponent.x) ** 2 + (s.z - opponent.z) ** 2;
-        if (d > bestD) {
-          bestD = d;
-          best = s;
-        }
-      }
-    }
-    this.spawnAt(player, best.x, best.z);
+    const spawn = respawnPoint(this.map, this.map.spawns, opponent, this.map.spawns[player.slot]);
+    this.spawnAt(player, spawn.x, spawn.z);
   }
 }

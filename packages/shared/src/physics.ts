@@ -3,7 +3,7 @@
 // own player. No randomness, no wall-clock time, no side effects.
 // (Player abilities and weapons build on these in combat.ts.)
 
-import { ARENA_HALF, OBSTACLES, type Box } from "./arena.ts";
+import type { Arena, Box } from "./arena.ts";
 import {
   BULLET_RADIUS,
   BULLET_MAX_SUBSTEP,
@@ -102,39 +102,41 @@ export function circlesOverlap(
 const MOVE_SUBSTEP = 0.25;
 
 /**
- * Moves a player circle by (dx, dz) with collision against the cover and the
- * arena walls. Long moves (a dash covers ~1 m per tick, as thick as the thinnest
+ * Moves a player circle by (dx, dz) with collision against the arena's cover
+ * and walls. Long moves (a dash covers ~1 m per tick, as thick as the thinnest
  * wall) are split into sub-steps so they can't tunnel through cover. A normal
  * walking step is shorter than one sub-step, so it takes exactly one pass.
  */
-export function movePlayer(pos: Vec2, dx: number, dz: number): Vec2 {
+export function movePlayer(arena: Arena, pos: Vec2, dx: number, dz: number): Vec2 {
   const len = Math.sqrt(dx * dx + dz * dz);
   const n = Math.max(1, Math.ceil(len / MOVE_SUBSTEP));
   const sx = dx / n;
   const sz = dz / n;
-  const lim = ARENA_HALF - PLAYER_RADIUS;
+  const limX = arena.halfX - PLAYER_RADIUS;
+  const limZ = arena.halfZ - PLAYER_RADIUS;
   let p: Vec2 = pos;
   for (let i = 0; i < n; i++) {
     p = { x: p.x + sx, z: p.z + sz };
     // Two passes settle the case of being wedged between two boxes.
     for (let pass = 0; pass < 2; pass++) {
-      for (const b of OBSTACLES) p = resolveCircleBox(p, PLAYER_RADIUS, b);
+      for (const b of arena.obstacles) p = resolveCircleBox(p, PLAYER_RADIUS, b);
     }
-    p = { x: clamp(p.x, -lim, lim), z: clamp(p.z, -lim, lim) };
+    p = { x: clamp(p.x, -limX, limX), z: clamp(p.z, -limZ, limZ) };
   }
   return p;
 }
 
 /** Plain walking for one tick (no abilities). */
-export function walk(pos: Vec2, input: MoveInput, dt: number = TICK_DT): Vec2 {
+export function walk(arena: Arena, pos: Vec2, input: MoveInput, dt: number = TICK_DT): Vec2 {
   const m = clampMove(input.mx, input.mz);
-  return movePlayer(pos, m.x * PLAYER_SPEED * dt, m.z * PLAYER_SPEED * dt);
+  return movePlayer(arena, pos, m.x * PLAYER_SPEED * dt, m.z * PLAYER_SPEED * dt);
 }
 
-export function bulletBlocked(x: number, z: number): boolean {
-  const lim = ARENA_HALF - BULLET_RADIUS;
-  if (x < -lim || x > lim || z < -lim || z > lim) return true;
-  for (const b of OBSTACLES) {
+export function bulletBlocked(arena: Arena, x: number, z: number): boolean {
+  const limX = arena.halfX - BULLET_RADIUS;
+  const limZ = arena.halfZ - BULLET_RADIUS;
+  if (x < -limX || x > limX || z < -limZ || z > limZ) return true;
+  for (const b of arena.obstacles) {
     if (circleOverlapsBox(x, z, BULLET_RADIUS, b)) return true;
   }
   return false;
@@ -146,6 +148,7 @@ export function bulletBlocked(x: number, z: number): boolean {
  * (the server uses it for player hits). Returns false once the bullet is dead.
  */
 export function stepBullet(
+  arena: Arena,
   b: BulletSim,
   onSubstep?: (x: number, z: number) => boolean,
   dt: number = TICK_DT,
@@ -155,7 +158,7 @@ export function stepBullet(
   for (let i = 0; i < steps; i++) {
     b.x += b.vx * sdt;
     b.z += b.vz * sdt;
-    if (bulletBlocked(b.x, b.z)) return false;
+    if (bulletBlocked(arena, b.x, b.z)) return false;
     if (onSubstep && onSubstep(b.x, b.z)) return false;
   }
   return true;

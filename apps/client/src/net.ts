@@ -20,6 +20,8 @@ export interface Snapshot {
   tick: number;
   phase: Phase;
   winner: string;
+  /** The map this snapshot is on. A change is a hard boundary, see main.ts. */
+  mapId: string;
   players: Map<string, PlayerView>;
   bullets: Map<string, BulletView>;
   grenades: Map<string, GrenadeView>;
@@ -47,7 +49,7 @@ function capture(state: RoomStateView): Omit<Snapshot, "t"> {
       owner: g.owner,
     }),
   );
-  return { tick: state.tick, phase: state.phase, winner: state.winner, players, bullets, grenades };
+  return { tick: state.tick, phase: state.phase, winner: state.winner, mapId: state.mapId, players, bullets, grenades };
 }
 
 export type NetStatus = "connecting" | "connected" | "disconnected";
@@ -63,10 +65,13 @@ export class Net {
   status: NetStatus = "connecting";
   error = "";
   readonly lagMs: number;
+  /** Join options: `{ map }` from the dev `?map=` toggle (the server ignores it in production). */
+  private readonly joinOptions: Record<string, unknown>;
   onSnapshot: (s: Snapshot) => void = () => {};
 
-  constructor(lagMs: number) {
+  constructor(lagMs: number, map: string | null = null) {
     this.lagMs = Math.max(0, lagMs);
+    this.joinOptions = map ? { map } : {};
   }
 
   private delay(fn: () => void) {
@@ -85,12 +90,12 @@ export class Net {
     const client = new Client(url);
     if (token) client.auth.token = token;
     try {
-      return await client.joinOrCreate(ROOM_NAME);
+      return await client.joinOrCreate(ROOM_NAME, this.joinOptions);
     } catch (err) {
       if (!token || (err as { code?: number }).code !== ErrorCode.AUTH_FAILED) throw err;
       console.warn("[net] session token refused, joining as guest:", err);
       account.setNotice("Your session couldn't be verified, so you're playing as a guest.");
-      return await new Client(url).joinOrCreate(ROOM_NAME);
+      return await new Client(url).joinOrCreate(ROOM_NAME, this.joinOptions);
     }
   }
 

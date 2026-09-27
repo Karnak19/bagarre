@@ -1,5 +1,5 @@
 import { schema, t, type SchemaType } from "@colyseus/schema";
-import { DEFAULT_WEAPON, MAX_HP, WEAPONS } from "@bagarre/shared";
+import { DEFAULT_MAP_ID, DEFAULT_WEAPON, MAX_HP, WEAPONS } from "@bagarre/shared";
 
 // Positions and the dash direction are float64 on purpose: the client re-runs
 // the shared step function from these exact values during reconciliation. A
@@ -74,6 +74,11 @@ export const DuelState = schema(
     phase: t.string().default("waiting"),
     winner: t.string().default(""),
     tick: t.uint32().default(0),
+    /**
+     * The map being played (a `MapDef.id`). Only changes between matches, in
+     * the same tick that puts the players on the new map's spawns.
+     */
+    mapId: t.string().default(DEFAULT_MAP_ID),
     players: t.map(Player),
     bullets: t.map(Bullet),
     grenades: t.map(Grenade),

@@ -6,6 +6,7 @@ import {
   SHIELD,
   TICK_MS,
   weaponDef,
+  mapById,
   TICK_RATE,
   type InputMessage,
   type Phase,
@@ -14,7 +15,7 @@ import {
 } from "@bagarre/shared";
 import { WEAPON_SFX, initAudioOnFirstGesture, isMuted, play, setListener, setMuted, type PlayOptions, type SfxName } from "./audio.ts";
 import { LocalBullets } from "./bullets.ts";
-import { Hud } from "./hud.ts";
+import { Hud, type HudModel } from "./hud.ts";
 import { Input, screenToWorldMove } from "./input.ts";
 import { SnapshotBuffer } from "./interpolation.ts";
 import { Net } from "./net.ts";
@@ -26,6 +27,8 @@ import { GameScene, PLAYER_COLORS, PlayerMesh, setAssets } from "./scene.ts";
 const params = new URLSearchParams(location.search);
 /** `?lag=100` adds 100 ms of round-trip latency (50 ms each way). */
 const lagMs = Math.max(0, Number(params.get("lag")) || 0);
+/** `?map=runway` asks for that map (dev servers only, the server ignores it in production). */
+const mapParam = params.get("map");
 const serverUrl =
   params.get("server") ??
   (import.meta.env.VITE_SERVER_URL as string | undefined) ??
@@ -42,7 +45,7 @@ setAssets(await loadAssets(setLoading));
 const scene = new GameScene(canvas);
 const input = new Input(canvas);
 const hud = new Hud();
-const net = new Net(lagMs);
+const net = new Net(lagMs, mapParam);
 const buffer = new SnapshotBuffer();
 const predictor = new Predictor();
 const localBullets = new LocalBullets();
@@ -59,6 +62,28 @@ const landedGrenades = new Set<string>();
  */
 const blasts: { at: number; x: number; z: number; own: boolean }[] = [];
 const announcedBlasts = new Set<string>();
+/**
+ * The opponent's muzzle flashes, due when render time reaches the shot. Read
+ * from their ammo count like their shot sound (a point-blank bullet can hit
+ * and vanish before any snapshot shows it, so "a new bullet appeared" misses
+ * shots). One flash per round spent.
+ */
+const remoteShots: { at: number; id: string }[] = [];
+/** The map of the latest snapshot ("" before the first one). */
+let mapId = "";
+/**
+ * Time left on the map name card shown at match start, in ms. It counts down
+ * by frame time capped at 100 ms per frame, not by the wall clock: the first
+ * frames of a match can take seconds (shaders compiling for the new props and
+ * the opponent's model) and would otherwise use it up before it is seen.
+ */
+let mapCardLeft = 0;
+/**
+ * Dev-only autopilot for the headless browser check: when `on`, it replaces
+ * the mouse and keyboard (world-space move, aim angle, fire). Never set
+ * outside dev (only reachable through `window.__bagarre`).
+ */
+const bot = { on: false, mx: 0, mz: 0, aim: 0, fire: false };
 
 let seq = 0;
 let accumulator = 0;
@@ -80,6 +105,10 @@ let wasFiring = false;
 // Everything read from a snapshot about the opponent is delayed by the
 // interpolation delay, so it is heard when it is drawn.
 const REMOTE_DELAY = INTERP_DELAY_MS / 1000;
+/** How long the map name stays up at match start. */
+const MAP_CARD_MS = 3500;
+/** ...fading out over its last this many ms. */
+const MAP_CARD_FADE_MS = 500;
 /** Dev-only log of every sound played, read by the headless check. */
 const sfxLog: { t: number; name: SfxName; delay: number; x?: number; z?: number }[] = [];
 function sfx(name: SfxName, opts?: PlayOptions) {
@@ -117,7 +146,32 @@ function meshFor(id: string, slot: number): PlayerMesh {
   return m;
 }
 
+/**
+ * The server switched maps (or this is the first snapshot). It does so
+ * between matches, in the same tick as it puts both players on the new
+ * spawns, so this snapshot carries the new map and the new positions
+ * together. Everything from before is dropped rather than blended: the
+ * interpolation buffer (the opponent would slide from an old-map position),
+ * our predicted bullets and drawn projectiles (they flew on the old map),
+ * pending flashes and blasts. The predictor forgets its state and restarts
+ * from this snapshot on the new map (see Predictor.setMap). This runs before
+ * the snapshot is buffered or reconciled, so nothing ever uses two maps.
+ */
+function switchMap(id: string) {
+  const map = mapById(id);
+  mapId = id;
+  buffer.clear();
+  predictor.setMap(map);
+  localBullets.setMap(map);
+  scene.setMap(map);
+  blasts.length = 0;
+  remoteShots.length = 0;
+  opponentDrawn = null;
+  cameraSnapped = false;
+}
+
 net.onSnapshot = (s) => {
+  if (s.mapId !== mapId) switchMap(s.mapId);
   buffer.push(s);
   const me = s.players.get(net.sessionId);
   if (me) {
@@ -126,6 +180,7 @@ net.onSnapshot = (s) => {
   }
 
   if (s.phase !== phase) {
+    if (s.phase === "playing") mapCardLeft = MAP_CARD_MS;
     if (s.phase === "ended") {
       endedAt = performance.now();
       sfx(s.winner === net.sessionId ? "match_win" : "match_lose");
@@ -177,8 +232,10 @@ net.onSnapshot = (s) => {
     if (mine || !prev.alive || !p.alive) return;
     const shots = p.weapon === prev.weapon ? prev.ammo - p.ammo : 0;
     const gap = weaponDef(p.weapon).fireInterval;
-    for (let i = 0; i < shots; i++)
+    for (let i = 0; i < shots; i++) {
       sfx(WEAPON_SFX[p.weapon] ?? "rifle", { ...at, delay: REMOTE_DELAY + i * gap });
+      remoteShots.push({ at: now + INTERP_DELAY_MS + i * gap * 1000, id });
+    }
     if (p.dashCd > prev.dashCd) sfx("dash", at);
     if (prev.reloadTicks === 0 && p.reloadTicks > 0) sfx("reload", { ...at, volume: 0.7 });
     if (p.shieldTicks > prev.shieldTicks) sfx("shield_up", at);
@@ -197,7 +254,7 @@ net.onSnapshot = (s) => {
 void net.connect(serverUrl);
 
 // Dev-only handle for poking at the game from the console or a test script.
-if (import.meta.env.DEV) Object.assign(window, { __bagarre: { scene, net, predictor, localBullets, input, sfxLog } });
+if (import.meta.env.DEV) Object.assign(window, { __bagarre: { scene, net, predictor, localBullets, input, sfxLog, buffer, bot } });
 
 // --- Game loop ---------------------------------------------------------------
 function frame(now: number) {
@@ -216,7 +273,7 @@ function frame(now: number) {
     while (accumulator >= TICK_MS && steps < 5) {
       accumulator -= TICK_MS;
       steps++;
-      const move = screenToWorldMove(scene.camera, input.screenAxes());
+      const move = bot.on ? { mx: bot.mx, mz: bot.mz } : screenToWorldMove(scene.camera, input.screenAxes());
       const here = predictor.sim ?? meServer;
       const target = cursor ?? { x: here.x + Math.cos(aim) * 6, z: here.z + Math.sin(aim) * 6 };
       const msg: InputMessage = {
@@ -224,7 +281,7 @@ function frame(now: number) {
         mx: move.mx,
         mz: move.mz,
         aim,
-        fire: input.firing,
+        fire: bot.on ? bot.fire : input.firing,
         gx: target.x,
         gz: target.z,
         ...input.presses,
@@ -253,7 +310,8 @@ function frame(now: number) {
   if (meServer) {
     const pos = predictor.render(accumulator / TICK_MS, dt);
     setListener(pos.x, pos.z);
-    if (input.hasPointer) {
+    if (bot.on) aim = bot.aim;
+    else if (input.hasPointer) {
       const hit = scene.cursorOnGround(input.ndc);
       cursor = hit ? { x: hit.x, z: hit.z } : null;
       if (hit) {
@@ -283,6 +341,11 @@ function frame(now: number) {
     m.setShield(s.shieldTicks > 0 ? s.shieldHp / SHIELD.absorb : 0);
     if (s.alive) opponentDrawn = { x: s.x, z: s.z };
   });
+  for (let i = remoteShots.length - 1; i >= 0; i--) {
+    if (remoteShots[i].at > now) continue;
+    meshes.get(remoteShots[i].id)?.shot(now);
+    remoteShots.splice(i, 1);
+  }
 
   // Our own bullets are drawn from the prediction; the server's copies of
   // them are skipped (see LocalBullets). Everyone else's are interpolated.
@@ -324,6 +387,13 @@ function frame(now: number) {
     };
   }
 
+  const map = scene.map;
+  let mapCard: HudModel["mapCard"] = null;
+  if (map && latest?.phase === "playing" && mapCardLeft > 0) {
+    mapCard = { title: map.name, sub: map.blurb, opacity: Math.min(1, mapCardLeft / MAP_CARD_FADE_MS) };
+    mapCardLeft -= Math.min(dtMs, 100);
+  }
+
   const debugParts = [`pending inputs ${predictor.pendingCount}`, `correction ${predictor.lastError.toFixed(3)} m`];
   if (lagMs > 0) debugParts.unshift(`lag +${lagMs} ms`);
   hud.update({
@@ -333,6 +403,7 @@ function frame(now: number) {
     sim: predictor.sim,
     canPick: !!latest && canPick(meServer, latest.phase),
     banner,
+    mapCard,
     debug: debugParts.join("  |  "),
     muted: isMuted(),
   });

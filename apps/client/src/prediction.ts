@@ -1,7 +1,10 @@
 import {
+  DEFAULT_MAP_ID,
+  mapById,
   readSim,
   stepPlayer,
   type InputMessage,
+  type MapDef,
   type PlayerSim,
   type PlayerView,
   type StepResult,
@@ -33,16 +36,37 @@ export class Predictor {
   prev: Vec2 = { x: 0, z: 0 };
   /** Weapon in hand, from the latest snapshot. */
   weapon = 0;
+  /**
+   * The map we predict on: always the one of the latest snapshot (main.ts
+   * calls `setMap` before `reconcile`). Predicting on any other map than the
+   * server's would desync, so this placeholder is replaced before the first prediction.
+   */
+  map: MapDef = mapById(DEFAULT_MAP_ID);
   private pending: InputMessage[] = [];
   private offset: Vec2 = { x: 0, z: 0 };
   /** Last reconciliation error, for the debug line. */
   lastError = 0;
 
+  /**
+   * The server moved to another map. It does that in the same tick as it puts
+   * us on the new spawn, and after applying every input up to the snapshot's
+   * `lastSeq`: everything older ran on the old map, everything still pending
+   * will run on the new one. So we forget our predicted state (the next
+   * `reconcile` restarts from the server's, on the new map, and replays the
+   * pending inputs there) and drop any smoothing: nothing slides across maps.
+   */
+  setMap(map: MapDef) {
+    this.map = map;
+    this.sim = null;
+    this.offset = { x: 0, z: 0 };
+    this.lastError = 0;
+  }
+
   /** Applies an input we just sent. `canAct` mirrors the server's rules. */
   apply(input: InputMessage, canAct: boolean): StepResult | null {
     if (!this.sim) return null;
     this.prev = { x: this.sim.x, z: this.sim.z };
-    const res = stepPlayer(this.sim, input, this.weapon, canAct);
+    const res = stepPlayer(this.map, this.sim, input, this.weapon, canAct);
     this.sim = res.sim;
     this.pending.push(input);
     if (this.pending.length > MAX_PENDING) this.pending.shift();
@@ -53,7 +77,7 @@ export class Predictor {
     this.weapon = server.weapon;
     this.pending = this.pending.filter((i) => i.seq > server.lastSeq);
     let s = readSim(server);
-    for (const input of this.pending) s = stepPlayer(s, input, this.weapon, canAct).sim;
+    for (const input of this.pending) s = stepPlayer(this.map, s, input, this.weapon, canAct).sim;
 
     if (!this.sim) {
       this.sim = s;
