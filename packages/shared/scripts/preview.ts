@@ -7,12 +7,13 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { MAPS, type MapDef, type Obstacle, type ObstacleKind } from "../src/maps/index.ts";
 import { FLAT_DECOR } from "../src/maps/types.ts";
 import { check, R, type Report } from "./analyze.ts";
 
 /** Git-ignored folder at the repo root. */
-const DEFAULT_OUT = join(import.meta.dir, "../../..", ".previews", "maps");
+const DEFAULT_OUT = join(fileURLToPath(new URL(".", import.meta.url)), "../../..", ".previews", "maps");
 const args = process.argv.slice(2);
 const out = args[0] && !MAPS.some((m) => m.id === args[0]) ? args.shift()! : DEFAULT_OUT;
 const only = args;

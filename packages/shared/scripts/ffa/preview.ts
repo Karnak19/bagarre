@@ -8,13 +8,14 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { FFA_MAPS, type FfaMapDef } from "../../src/maps/ffa/index.ts";
 import { FLAT_DECOR, type ObstacleKind } from "../../src/maps/types.ts";
 import { R } from "../analyze.ts";
 import { checkFfa, MAX_CAMP, type FfaReport } from "./analyze.ts";
 
 /** Git-ignored folder at the repo root. */
-const DEFAULT_OUT = join(import.meta.dir, "../../../..", ".previews", "ffa-maps");
+const DEFAULT_OUT = join(fileURLToPath(new URL(".", import.meta.url)), "../../../..", ".previews", "ffa-maps");
 const args = process.argv.slice(2);
 const out = args[0] && !FFA_MAPS.some((m) => m.id === args[0]) ? args.shift()! : DEFAULT_OUT;
 const only = args;
