@@ -68,7 +68,8 @@ const styles = stylex.create({
     backgroundColor: "var(--color-background-card)",
     boxShadow: "var(--shadow-med)",
     animationName: {
-      default: stylex.keyframes({ from: { opacity: 0, transform: "translateY(8px) scale(0.985)" } }),
+      // A fade only: the card's buttons are where they will stay from the first frame.
+      default: stylex.keyframes({ from: { opacity: 0 } }),
       "@media (prefers-reduced-motion: reduce)": "none",
     },
     animationDuration: "220ms",
