@@ -234,6 +234,17 @@ export async function countListeners(page: Page): Promise<void> {
   });
 }
 
+/**
+ * Waits for the menu's attract characters to wear their skins and be drawn a
+ * couple of times: a skin loads on its own schedule, and the leak checks'
+ * first count must already include its GPU uploads.
+ */
+export async function attractSettled(page: Page) {
+  await page.waitForFunction(() => (window as any).__bagarre.attract?.loaded === true, null, { timeout: 30_000 });
+  const frames = await page.evaluate(() => (window as any).__bagarre.stats().frames as number);
+  await page.waitForFunction((f) => (window as any).__bagarre.stats().frames >= f + 2, frames, { timeout: 30_000 });
+}
+
 /** The dev handle's stats, the live listener count, and how many frames the app drew per animation frame (1: one loop). */
 export function leakCounts(page: Page): Promise<LeakCounts> {
   return page.evaluate(async () => {

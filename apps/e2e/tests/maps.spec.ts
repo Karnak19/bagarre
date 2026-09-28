@@ -5,7 +5,7 @@
 
 import { FFA_MAPS, MAPS, type FfaMapDef } from "@bagarre/shared";
 import type { Page } from "@playwright/test";
-import { countListeners, expect, leakCounts, test, type Player } from "./fixtures.ts";
+import { attractSettled, countListeners, expect, leakCounts, test, type Player } from "./fixtures.ts";
 
 const DUEL = "runway";
 const FFA = FFA_MAPS[0].id;
@@ -135,6 +135,8 @@ test("list and walk round trips leave nothing behind", async ({ players }) => {
 
   // One trip: list → walk (counted there: same map every time) → Back → list (counted too).
   const trip = async () => {
+    // The list's characters in their skins first, so every count has their uploads.
+    await attractSettled(a.page);
     await a.testId(`walk-${DUEL}`).click();
     await expect.poll(() => walk(a).then((w) => w?.mapId)).toBe(DUEL);
     const walking = await counts();

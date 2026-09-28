@@ -89,6 +89,11 @@ export class Attract {
     this.frame(now);
   }
 
+  /** Both characters are drawn as their skins (not the capsules they start as). */
+  get loaded(): boolean {
+    return this.running && this.meshes.every((m) => m.loaded);
+  }
+
   stop() {
     if (!this.running) return;
     this.running = false;

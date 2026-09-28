@@ -1,4 +1,4 @@
-import { countListeners, expect, leakCounts, test } from "./fixtures.ts";
+import { attractSettled, countListeners, expect, leakCounts, test } from "./fixtures.ts";
 
 test("menu and game round trips leave nothing behind", async ({ players }) => {
   const a = await players.open("A");
@@ -15,7 +15,8 @@ test("menu and game round trips leave nothing behind", async ({ players }) => {
     await a.testId("waiting-cancel").click();
     await expect(a.testId("menu")).toBeVisible();
     await a.expectState("roomId", "");
-    // Let the menu settle (the attract scene, sounds fading out).
+    // Let the menu settle (the attract scene's skins, sounds fading out).
+    await attractSettled(a.page);
     await expect.poll(async () => (await counts()).voices).toBe(0);
     return counts();
   };
