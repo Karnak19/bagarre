@@ -163,8 +163,6 @@ interface GrenadeInternal {
   fuseLeft: number;
   /** The thrower's team when it was thrown: its blast spares that team (and the thrower, with teams). */
   team: number;
-  /** Its type (GRENADES index), fixed at the throw: a pick made meanwhile doesn't change it. */
-  kind: number;
 }
 
 const PING_INTERVAL_MS = 2000;
@@ -1066,7 +1064,6 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       age: 0,
       fuseLeft: GRENADE_FUSE_TICKS,
       team: player.team,
-      kind: player.grenade,
     });
   }
 
@@ -1131,7 +1128,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       internal.fuseLeft--;
       if (internal.fuseLeft <= 0) {
         g.exploded = true;
-        blasts.push({ owner: g.owner, x: g.tx, z: g.tz, team: internal.team, kind: internal.kind });
+        blasts.push({ owner: g.owner, x: g.tx, z: g.tz, team: internal.team, kind: g.kind });
       }
     });
     for (const id of dead) {
