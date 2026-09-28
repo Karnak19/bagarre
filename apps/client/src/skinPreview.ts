@@ -1,11 +1,13 @@
 // The account panel's skin preview: one character on its own small canvas,
 // standing (Idle legs, the rifle held out like in a match), turning slowly.
 //
-// It has its own small WebGL renderer: the game's renderer draws to the
-// full-screen canvas behind the menu, and sharing it would mean copying
-// pixels across every frame. This one only exists while the picker is
-// mounted, draws only while its canvas is on screen, and frees everything on
-// `dispose()`. The skin loads through the same cache as the game's
+// It draws with one small WebGL renderer of its own, made the first time a
+// preview mounts and kept for the page's life, on a canvas nobody sees; each
+// frame is copied onto the panel's canvas (a 2D one). The panel mounts a new
+// canvas every time it opens, and a WebGL context per open would pile up:
+// browsers cap live contexts and drop the oldest, which is the game's own.
+// A preview draws only while its canvas is on screen, and `dispose()` frees
+// its character. The skin loads through the same cache as the game's
 // (assets.ts' skinModel), so a skin previewed here is ready in the next match.
 
 import * as THREE from "three";
@@ -21,22 +23,31 @@ const WEAPON = 0;
 export interface SkinPreview {
   /** Shows another skin (a SKINS id; anything else leaves the stage empty). */
   setSkin(id: string): void;
-  /** Stops drawing and frees the renderer and the character. */
+  /** Stops drawing and frees the character (the shared renderer stays). */
   dispose(): void;
+}
+
+/** The one renderer every preview draws with; null once WebGL turned out to be missing. */
+let shared: THREE.WebGLRenderer | null | undefined;
+function previewRenderer(): THREE.WebGLRenderer | null {
+  if (shared !== undefined) return shared;
+  try {
+    shared = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    // The panel canvas' own width and height attributes already carry the pixel ratio.
+    shared.setPixelRatio(1);
+    shared.setClearColor(0x000000, 0);
+  } catch (err) {
+    console.warn("[skinPreview] no WebGL, no preview", err);
+    shared = null;
+  }
+  return shared;
 }
 
 /** Draws `skin` on `canvas` until `dispose()`. `setSkin` swaps the character. */
 export function mountSkinPreview(canvas: HTMLCanvasElement, skin: string): SkinPreview {
-  let renderer: THREE.WebGLRenderer;
-  try {
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-  } catch (err) {
-    console.warn("[skinPreview] no WebGL, no preview", err);
-    return { setSkin() {}, dispose() {} };
-  }
-  // The canvas' own width and height attributes already carry the pixel ratio.
-  renderer.setPixelRatio(1);
-  renderer.setClearColor(0x000000, 0);
+  const renderer = previewRenderer();
+  const out = canvas.getContext("2d");
+  if (!renderer || !out) return { setSkin() {}, dispose() {} };
 
   const scene = new THREE.Scene();
   scene.add(new THREE.HemisphereLight(0xdde6ff, 0x3a3228, 1.25));
@@ -115,6 +126,8 @@ export function mountSkinPreview(canvas: HTMLCanvasElement, skin: string): SkinP
       camera.updateProjectionMatrix();
     }
     renderer.render(scene, camera);
+    out.clearRect(0, 0, w, h);
+    out.drawImage(renderer.domElement, 0, 0);
   };
 
   setSkin(skin);
@@ -129,9 +142,7 @@ export function mountSkinPreview(canvas: HTMLCanvasElement, skin: string): SkinP
       clear();
       shadowGeo.dispose();
       shadowMat.dispose();
-      // No forceContextLoss: React may mount a new preview on the same canvas
-      // (StrictMode does, in dev), and a lost context can't be used again.
-      renderer.dispose();
+      // The renderer stays, for the next preview.
     },
   };
 }
