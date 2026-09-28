@@ -238,6 +238,10 @@ Router routes (`src/routes/`): entering `/` or `/game/$code` calls the flow's
 `routeMenu()` / `routeGame(code)` (the route's `onEnter` / `onStay`), so
 Back, Forward and pasted links all go through the same join and leave;
 `/game/$code/watch` calls `routeWatch(code)` (see [Spectating](#spectating)).
+`/maps` (the menu's Maps button) lists every map with its plan, size, modes
+and favoured weapons; `/maps/<id>` walks around one: the real arena with the
+spectator's free camera (WASD, drag, wheel, 2 / 3), built in the browser
+alone, with no server and no room (`src/walk.ts`, `src/ui/maps/`).
 See [Client UI](#client-ui) below.
 
 ## Client UI
@@ -261,8 +265,9 @@ TypeScript: React never runs per frame and there is no React Three Fiber.
   input isolation rules; `src/uiState.ts` says which panel is open, so the
   loop keeps the game's input off meanwhile.
 - `src/ui/`: `Shell.tsx` (root layout: theme, cards, Tab scoreboard, panels),
-  `menu/`, `game/` (HUD, cards, scoreboard, weapon
-  picker), `account/`, `Panels.tsx` and `Settings.tsx`.
+  `menu/`, `maps/` (the Maps page, the map plans, the walk's bar), `game/`
+  (HUD, cards, scoreboard, weapon picker), `account/`, `Panels.tsx` and
+  `Settings.tsx`.
 - Stable `data-testid`s mark the pieces tests drive: `play`, `private-game`,
   `open-games`, `open-game`, `invite-link`, `copy-invite`, `waiting-card`,
   `scoreboard`, `scoreboard-row`, `esc-menu`, `esc-resume`, `esc-settings`,
@@ -292,7 +297,11 @@ TypeScript: React never runs per frame and there is no React Three Fiber.
   `spectate-watching`, `spectate-mode` (and `spectate-mode-{follow,overview,free}`),
   `spectate-hints`, `spectate-count`, `spectate-join`, `spectate-leave`,
   `spectate-players`, `spectate-player`, `spectate-status` and the players'
-  `hud-spectators`; open games rows carry `data-action="join"` or `"watch"`.
+  `hud-spectators`. The Maps page adds `open-maps`, `maps`, `maps-back`,
+  `map-card-<id>`, `map-size-<id>`, `map-plan-<id>`, `map-teams-<id>`,
+  `walk-<id>`, and the walk's `walk` (with `data-mode`), `walk-map`,
+  `walk-mode` (and `walk-mode-{overview,free}`) and `walk-back`. Open games
+  rows carry `data-action="join"` or `"watch"`.
 
 Astryx conventions (the agent cheat sheet `astryx init` wrote is
 `apps/client/.claude/CLAUDE.md`; `bun run astryx docs <topic>` and
@@ -693,6 +702,7 @@ apps/
                       predicted bullets, interpolation, animated characters (character.ts),
                       arena props (arenaView.ts), particles (vfx.ts), one game (match.ts),
                       the menu's background scene (attract.ts);
+                      walking around a map without a server (walk.ts);
                       stores: app.ts (flow), lobby.ts, auth.ts (account), hud.ts, scoreboard.ts (model);
                       routes/ (TanStack Router pages), ui/ (React + Astryx views, theme/)
     public/           models (glTF, meshopt-compressed), particle atlas and sounds, see ASSETS.md

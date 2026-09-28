@@ -1,9 +1,10 @@
 // TanStack Router, file-based (src/routes/, compiled to routeTree.gen.ts by
 // the Vite plugin). `/` is the menu, `/game/$code` is one game's page (the
-// code is the Colyseus room id), `/game/$code/watch` watches it, and
-// `/reset-password` is where the password reset email lands. The query string's dev switches
-// (`?lag=`, `?map=`, `?server=`) ride along on every navigation, minus the
-// one-shot dev `?play`.
+// code is the Colyseus room id), `/game/$code/watch` watches it, `/maps`
+// lists the maps and `/maps/$id` walks around one (client-only, no room),
+// and `/reset-password` is where the password reset email lands. The query
+// string's dev switches (`?lag=`, `?map=`, `?server=`) ride along on every
+// navigation, minus the one-shot dev `?play`.
 //
 // Production hosting needs an SPA rewrite: every path serves index.html.
 
@@ -35,6 +36,8 @@ declare module "@tanstack/react-router" {
   interface HistoryState {
     /** This entry was pushed from the menu, so "back to the menu" is `history.back()`. */
     fromMenu?: boolean;
+    /** This entry was pushed from the maps list, so "back to the list" is `history.back()`. */
+    fromMaps?: boolean;
   }
 }
 

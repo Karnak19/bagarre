@@ -9,6 +9,7 @@ import { Icon } from "@astryxdesign/core/Icon";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { Text } from "@astryxdesign/core/Text";
 import { FFA_MAX_PLAYERS, FFA_MIN_PLAYERS, KILLS_TO_WIN, MAPS, TEAM_SIZE, type GameMode } from "@bagarre/shared";
+import { useNavigate } from "@tanstack/react-router";
 import * as stylex from "@stylexjs/stylex";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { openPanel } from "../../uiState.ts";
@@ -172,6 +173,7 @@ function Menu({ focusPlay }: { focusPlay: boolean }) {
   const progress = useStore(loading);
   const touch = useSyncExternalStore(subscribeResize, isTouchOrSmall);
   const play = useRef<HTMLButtonElement>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (focusPlay) play.current?.focus({ preventScroll: true });
@@ -282,6 +284,7 @@ function Menu({ focusPlay }: { focusPlay: boolean }) {
           </VStack>
           <HStack gap={1} xstyle={styles.links}>
             <Button label="How to play" variant="ghost" aria-haspopup="dialog" data-testid="open-howto" onClick={panel("howto")} />
+            <Button label="Maps" variant="ghost" data-testid="open-maps" onClick={() => void navigate({ to: "/maps", state: { fromMenu: true } })} />
             <Button label="Settings" variant="ghost" aria-haspopup="dialog" data-testid="open-settings" onClick={panel("settings")} />
             <Button
               label="Leaderboard"

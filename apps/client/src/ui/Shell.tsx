@@ -1,5 +1,6 @@
 // The root layout, around every page: the theme, the page itself (<Outlet>:
-// the menu on `/`, the HUD on `/game/$code`), and what can sit over any page:
+// the menu on `/`, the maps on `/maps`, the walk's bar on `/maps/$id`, the
+// HUD on `/game/$code`), and what can sit over any page:
 // the in-game cards (joining shows up on `/` too, during a quick match), the
 // Tab scoreboard and the panels (dialogs).
 
