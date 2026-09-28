@@ -38,6 +38,11 @@ jobs:
       - name: Lint
         run: bun run lint
 
+      - name: Map fairness
+        # The duel and FFA validators: layout rules plus the side-by-side fairness checks.
+        working-directory: packages/shared
+        run: bun scripts/validate.ts && bun scripts/ffa/validate.ts
+
       - name: Smoke
         run: bun run smoke
 

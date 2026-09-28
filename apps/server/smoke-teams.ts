@@ -220,7 +220,7 @@ async function friendlyFire(url: string): Promise<Lines> {
     place(a, -7, 2.8);
     place(b, -3.5, 2.8);
     place(c, 1, 2.8);
-    place(d, 8, -8);
+    place(d, 9, -4);
     ok(clearShot(CROSSROADS, P(a), P(c)), "the lane from A to C is clear (test setup)");
 
     let seq = 0;

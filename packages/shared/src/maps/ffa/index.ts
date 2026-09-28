@@ -57,8 +57,10 @@ export interface FfaMapDef extends MapDef {
  * One team's half of an FFA map: where that team starts and respawns. Its
  * spawns are indices into the map's own `spawns` (the ones the FFA validator
  * checks), so a team side is a subset of the FFA spawns, never new points.
- * The two sides are disjoint and mirror each other (the validator's team
- * check: enough spawns each, balanced in distance to the hub).
+ * The two sides are disjoint and need not mirror each other: the validator's
+ * team check (scripts/ffa/teams.ts) measures them side by side (enough
+ * spawns each, distance and walk to the hub, exposure, cover, territory and
+ * camera occlusion).
  */
 export interface FfaTeamSide {
   /** The side's name on this map ("West", "North Quay"), for callouts. */

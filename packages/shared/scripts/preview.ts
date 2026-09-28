@@ -56,7 +56,7 @@ function topDown(m: MapDef, r: Report, S = 20): string {
   o.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" font-family="Helvetica, Arial" >`);
   o.push(`<rect width="${W}" height="${H}" fill="#15171c"/>`);
   const s = r.stats;
-  o.push(`<text x="${pad}" y="30" font-size="22" font-weight="bold" fill="#fff">${esc(m.name)}  <tspan font-size="14" fill="#aaa">(${m.id}, ${m.symmetry}, favours ${m.favours.join(" / ")})</tspan></text>`);
+  o.push(`<text x="${pad}" y="30" font-size="22" font-weight="bold" fill="#fff">${esc(m.name)}  <tspan font-size="14" fill="#aaa">(${m.id}, favours ${m.favours.join(" / ")})</tspan></text>`);
   o.push(`<text x="${pad}" y="52" font-size="13" fill="#ccc">${esc(m.blurb)}</text>`);
   o.push(`<text x="${pad}" y="72" font-size="12" fill="#9ab">${s.size} m, ${s.obstacles} boxes, cover ${(s.density * 100).toFixed(1)}%, longest LOS ${s.longest.toFixed(1)} m, LOS&gt;18m ${(s.longShare * 100).toFixed(0)}%, open ${(s.openness * 100).toFixed(0)}%</text>`);
   o.push(`<text x="${pad}" y="88" font-size="12" fill="#9ab">spawn path ${s.path.toFixed(1)} m, contact ${s.meet.toFixed(2)} s, first sight ${s.sight.toFixed(2)} s @${s.sightDist.toFixed(0)} m, cam-hidden ${(s.hidden * 100).toFixed(1)}%</text>`);

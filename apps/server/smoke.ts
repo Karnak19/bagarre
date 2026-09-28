@@ -793,9 +793,9 @@ async function shieldDuel() {
  * spawn 0.
  */
 const WALL_CASES: { map: string; path: Vec2[]; faceX: number; what: string }[] = [
-  { map: "runway", path: [{ x: -17.5, z: -11.5 }], faceX: -14, what: "bay sandbags" },
+  { map: "runway", path: [{ x: -17.5, z: -11.5 }], faceX: -14, what: "terminal" },
   { map: "trenchworks", path: [{ x: -12.5, z: -5 }], faceX: -7, what: "Long Trench" },
-  { map: "fort", path: [{ x: -12, z: -2.5 }], faceX: -6, what: "fort west wall" },
+  { map: "fort", path: [{ x: -8.2, z: -12 }, { x: -8.2, z: -2.5 }, { x: -12, z: -2.5 }], faceX: -6, what: "fort west wall" },
 ];
 
 const idle: InputMessage = { seq: 0, mx: 0, mz: 0, aim: 0, fire: false, gx: 0, gz: 0, dash: 0, grenade: 0, shield: 0, reload: 0 };

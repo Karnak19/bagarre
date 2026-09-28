@@ -416,7 +416,7 @@ into a red side and a blue side. The rules are `TEAM_RULES` in
   living enemies; `ffaStartSpawns` per side at the start). The sides are
   additive map data: `teams` on an `FfaMapDef`, two `{ name, spawns }` whose
   `spawns` are indices into the map's own 16 FFA spawns (Crossroads and
-  Bastion: West / East, Freight: North Quay / South Quay). `TEAM_MAPS` is the
+  Bastion: West / East, Freight: North Quay / Container Yard). `TEAM_MAPS` is the
   FFA maps that have them, `teamSpawns(map, team)` a side's spawns.
   `bun scripts/ffa/validate.ts` (in `packages/shared`) checks them next to
   the FFA checks: valid and disjoint indices, at least 6 spawns a side, the
@@ -644,16 +644,17 @@ was created on, so a player waiting alone is already on it.
 
 | Map (`id`)    | Size    | Plays like                                          | Favours          |
 | ------------- | ------- | --------------------------------------------------- | ---------------- |
-| Yard (`yard`) | 30 x 30 | The original: open, four pieces of cover            | rifle, SMG       |
-| Runway (`runway`) | 40 x 28 | Big open airstrip, long lanes, few islands      | sniper, rifle    |
-| Trenchworks (`trenchworks`) | 28 x 28 | Sandbag maze of 3 m trenches around a plaza | shotgun, SMG |
-| Fort (`fort`) | 32 x 32 | A walled blockhouse around a crate keep             | rifle, SMG       |
-| Dockside (`dockside`) | 36 x 28 | Three lanes split by container rows         | rifle, SMG       |
-| Nest (`nest`) | 30 x 30 | King of the hill: one sandbag pit in an open field  | rifle, shotgun   |
-| Scrapyard (`scrapyard`) | 34 x 30 | Junk piles that look random but mirror exactly | SMG, shotgun, rifle |
+| Yard (`yard`) | 30 x 30 | The original: open, a different bit of cover in each corner | rifle, SMG |
+| Runway (`runway`) | 40 x 28 | A long airstrip: low cover at the terminal, hangars and a fuel depot at the far end | sniper, rifle |
+| Trenchworks (`trenchworks`) | 28 x 28 | Sandbag trenches round a broken crater | shotgun, SMG |
+| Fort (`fort`) | 32 x 32 | A brick blockhouse with a guardroom annex and four offset doors | rifle, SMG |
+| Dockside (`dockside`) | 36 x 28 | Three lanes: tall container stacks on one side, crates and barrels on the other | rifle, SMG |
+| Nest (`nest`) | 30 x 30 | King of the hill: a lopsided sandbag nest, a trench on one side, crate hops on the other | rifle, shotgun |
+| Scrapyard (`scrapyard`) | 34 x 30 | A maze of low junk walls on one side, open ground and big wrecks on the other | SMG, shotgun, rifle |
 
 You respawn on a spawn the opponent can't see if there is one, else on the one
-farthest from them. The maps are plain data in `packages/shared/src/maps/`;
+farthest from them. No map is mirrored: each side is built its own way and
+the validator measures that both get the same deal. The maps are plain data in `packages/shared/src/maps/`;
 [docs/maps.md](docs/maps.md) has the design notes, the format and the
 validator.
 
