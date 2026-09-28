@@ -13,6 +13,8 @@ import { Route as IndexRouteImport } from "./routes/index";
 import { Route as SplatRouteImport } from "./routes/$";
 import { Route as ResetPasswordRouteImport } from "./routes/reset-password";
 import { Route as GameCodeRouteImport } from "./routes/game.$code";
+import { Route as MapsIndexRouteImport } from "./routes/maps.index";
+import { Route as MapsIdRouteImport } from "./routes/maps.$id";
 import { Route as GameCodeWatchRouteImport } from "./routes/game.$code_.watch";
 
 const IndexRoute = IndexRouteImport.update({
@@ -35,6 +37,16 @@ const GameCodeRoute = GameCodeRouteImport.update({
   path: "/game/$code",
   getParentRoute: () => rootRouteImport,
 } as any);
+const MapsIndexRoute = MapsIndexRouteImport.update({
+  id: "/maps/",
+  path: "/maps/",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const MapsIdRoute = MapsIdRouteImport.update({
+  id: "/maps/$id",
+  path: "/maps/$id",
+  getParentRoute: () => rootRouteImport,
+} as any);
 const GameCodeWatchRoute = GameCodeWatchRouteImport.update({
   id: "/game/$code_/watch",
   path: "/game/$code/watch",
@@ -46,6 +58,8 @@ export interface FileRoutesByFullPath {
   "/$": typeof SplatRoute;
   "/reset-password": typeof ResetPasswordRoute;
   "/game/$code": typeof GameCodeRoute;
+  "/maps/$id": typeof MapsIdRoute;
+  "/maps/": typeof MapsIndexRoute;
   "/game/$code/watch": typeof GameCodeWatchRoute;
 }
 export interface FileRoutesByTo {
@@ -53,6 +67,8 @@ export interface FileRoutesByTo {
   "/$": typeof SplatRoute;
   "/reset-password": typeof ResetPasswordRoute;
   "/game/$code": typeof GameCodeRoute;
+  "/maps/$id": typeof MapsIdRoute;
+  "/maps": typeof MapsIndexRoute;
   "/game/$code/watch": typeof GameCodeWatchRoute;
 }
 export interface FileRoutesById {
@@ -61,20 +77,37 @@ export interface FileRoutesById {
   "/$": typeof SplatRoute;
   "/reset-password": typeof ResetPasswordRoute;
   "/game/$code": typeof GameCodeRoute;
+  "/maps/$id": typeof MapsIdRoute;
+  "/maps/": typeof MapsIndexRoute;
   "/game/$code_/watch": typeof GameCodeWatchRoute;
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath;
   fullPaths:
-    "/" | "/$" | "/reset-password" | "/game/$code" | "/game/$code/watch";
+    | "/"
+    | "/$"
+    | "/reset-password"
+    | "/game/$code"
+    | "/maps/$id"
+    | "/maps/"
+    | "/game/$code/watch";
   fileRoutesByTo: FileRoutesByTo;
-  to: "/" | "/$" | "/reset-password" | "/game/$code" | "/game/$code/watch";
+  to:
+    | "/"
+    | "/$"
+    | "/reset-password"
+    | "/game/$code"
+    | "/maps/$id"
+    | "/maps"
+    | "/game/$code/watch";
   id:
     | "__root__"
     | "/"
     | "/$"
     | "/reset-password"
     | "/game/$code"
+    | "/maps/$id"
+    | "/maps/"
     | "/game/$code_/watch";
   fileRoutesById: FileRoutesById;
 }
@@ -83,6 +116,8 @@ export interface RootRouteChildren {
   SplatRoute: typeof SplatRoute;
   ResetPasswordRoute: typeof ResetPasswordRoute;
   GameCodeRoute: typeof GameCodeRoute;
+  MapsIdRoute: typeof MapsIdRoute;
+  MapsIndexRoute: typeof MapsIndexRoute;
   GameCodeWatchRoute: typeof GameCodeWatchRoute;
 }
 
@@ -116,6 +151,20 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof GameCodeRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/maps/": {
+      id: "/maps/";
+      path: "/maps";
+      fullPath: "/maps/";
+      preLoaderRoute: typeof MapsIndexRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/maps/$id": {
+      id: "/maps/$id";
+      path: "/maps/$id";
+      fullPath: "/maps/$id";
+      preLoaderRoute: typeof MapsIdRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     "/game/$code_/watch": {
       id: "/game/$code_/watch";
       path: "/game/$code/watch";
@@ -131,6 +180,8 @@ const rootRouteChildren: RootRouteChildren = {
   SplatRoute: SplatRoute,
   ResetPasswordRoute: ResetPasswordRoute,
   GameCodeRoute: GameCodeRoute,
+  MapsIdRoute: MapsIdRoute,
+  MapsIndexRoute: MapsIndexRoute,
   GameCodeWatchRoute: GameCodeWatchRoute,
 };
 export const routeTree = rootRouteImport

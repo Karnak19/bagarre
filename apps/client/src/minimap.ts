@@ -29,9 +29,28 @@ export interface MinimapPing {
   at: number;
 }
 
-const isFfa = (m: MapDef | null): m is FfaMapDef => !!m && (m as Partial<FfaMapDef>).mode === "ffa";
+export const isFfa = (m: MapDef | null): m is FfaMapDef => !!m && (m as Partial<FfaMapDef>).mode === "ffa";
 
-const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
+export const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
+
+/**
+ * World (x, z) to plan pixels, for the minimap and the Maps page's drawings
+ * (ui/maps/MapPlan.tsx). The plan is turned like the iso camera (45°), so
+ * "up" on it is "up" on screen: the -x/-z corner is at the top. A square of
+ * side `size` holds the rotated map, `pad` pixels in from its edges.
+ */
+export function planProjector(map: { halfX: number; halfZ: number }, size: number, pad = 2): (x: number, z: number) => [number, number] {
+  const c = Math.SQRT1_2;
+  // Rotated extent: |u| <= (halfX + halfZ) * c on both axes.
+  const ext = (map.halfX + map.halfZ) * c;
+  const k = (size / 2 - pad) / ext;
+  return (x, z) => {
+    // Screen right is +x/-z, screen up is -x/-z.
+    const u = (x - z) * c;
+    const v = (x + z) * c;
+    return [size / 2 + u * k, size / 2 + v * k];
+  };
+}
 
 export class Minimap {
   private canvas: HTMLCanvasElement | null = null;
@@ -102,7 +121,7 @@ export class Minimap {
     ctx.clearRect(0, 0, s, s);
     ctx.drawImage(this.base, 0, 0, s, s);
 
-    const toPx = this.projector(map);
+    const toPx = planProjector(map, this.size);
     // Enemy shots, fading.
     for (let i = this.pings.length - 1; i >= 0; i--) {
       const p = this.pings[i];
@@ -171,25 +190,6 @@ export class Minimap {
     canvas.height = Math.round(size * dpr);
   }
 
-  /**
-   * World (x, z) to canvas pixels. The minimap is turned like the iso camera
-   * (45°), so "up" on the minimap is "up" on screen: the -x/-z corner is at
-   * the top. A square of side `size` holds the rotated map.
-   */
-  private projector(map: FfaMapDef): (x: number, z: number) => [number, number] {
-    const s = this.size;
-    const c = Math.SQRT1_2;
-    // Rotated extent: |u| <= (halfX + halfZ) * c on both axes.
-    const ext = (map.halfX + map.halfZ) * c;
-    const k = (s / 2 - 2) / ext;
-    return (x, z) => {
-      // Screen right is +x/-z, screen up is -x/-z.
-      const u = (x - z) * c;
-      const v = (x + z) * c;
-      return [s / 2 + u * k, s / 2 + v * k];
-    };
-  }
-
   /** Zones, cover, walls and landmark labels: drawn once per map (and size). */
   private drawBase(map: FfaMapDef): HTMLCanvasElement {
     const s = this.size;
@@ -198,7 +198,7 @@ export class Minimap {
     out.height = Math.round(s * this.dpr);
     const g = out.getContext("2d")!;
     g.scale(this.dpr, this.dpr);
-    const toPx = this.projector(map);
+    const toPx = planProjector(map, this.size);
     const quad = (x0: number, z0: number, x1: number, z1: number) => {
       const pts = [toPx(x0, z0), toPx(x1, z0), toPx(x1, z1), toPx(x0, z1)];
       g.beginPath();

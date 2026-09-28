@@ -1,9 +1,11 @@
 // The non-React side of the client: the Three.js scene, the menu's attract
-// loop, the match frames, the input, and the one requestAnimationFrame loop
-// that drives them all. React (ui/) never runs per frame: the loop publishes
-// what the views need into small stores (`view`, the HUD model, `loading`),
-// and each React widget subscribes to just the fields it shows.
+// loop, the Maps page's walk around (walk.ts), the match frames, the input,
+// and the one requestAnimationFrame loop that drives them all. React (ui/)
+// never runs per frame: the loop publishes what the views need into small
+// stores (`view`, the HUD model, `loading`, `walkUi`), and each React widget
+// subscribes to just the fields it shows.
 
+import { findMap } from "@bagarre/shared";
 import { App, type GameView, type Navigator } from "./app.ts";
 import { Attract } from "./attract.ts";
 import { activeVoiceCount, initAudio, initAudioOnFirstGesture } from "./audio.ts";
@@ -19,8 +21,9 @@ import { Minimap } from "./minimap.ts";
 import { GameScene, setAssets } from "./scene.ts";
 import { installSpectatorControls } from "./spectate/controls.ts";
 import { devRenders } from "./renders.ts";
-import { Store } from "./store.ts";
+import { Store, type Readable } from "./store.ts";
 import { ui, type PanelName } from "./uiState.ts";
+import { Walk, type WalkMode, type WalkUi } from "./walk.ts";
 
 export interface Engine {
   app: App;
@@ -35,6 +38,15 @@ export interface Engine {
   loading: Store<number | null>;
   /** Call from any button: sound may start from a user gesture (autoplay rules). */
   gesture: () => void;
+  /**
+   * Route lifecycle of `/maps/$id`: walk around this map (no server, no room),
+   * or null to stop and give the menu its attract scene back.
+   */
+  walk: (mapId: string | null) => void;
+  /** The walk's map and camera mode, for its top bar. */
+  walkUi: Readable<WalkUi>;
+  /** The walk bar's Overview / Free switcher. */
+  setWalkMode: (mode: WalkMode) => void;
 }
 
 export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
@@ -49,6 +61,10 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
   const loading = new Store<number | null>(0);
   let scene: GameScene | null = null;
   let attract: Attract | null = null;
+  let walker: Walk | null = null;
+  /** The map `/maps/$id` wants walked on (null: none), kept until the scene exists. */
+  let walkMapId: string | null = null;
+  const walkUi = new Store<WalkUi>({ mapId: null, mode: "free" });
 
   // Assets load while the menu is already up; a join waits for them if needed.
   const ready = loadAssets((f) => loading.set(f)).then((a) => {
@@ -56,7 +72,11 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
     loading.set(null);
     scene = new GameScene(canvas);
     attract = new Attract(scene);
-    if (app.getState().screen !== "game") attract.start(performance.now());
+    walker = new Walk(scene, canvas, walkUi);
+    if (app.getState().screen !== "game") {
+      if (walkMapId) startWalk(walkMapId);
+      else attract.start(performance.now());
+    }
     document.body.classList.add("scene-ready");
     return scene;
   });
@@ -64,9 +84,13 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
   const app = new App(
     {
       ready,
-      enterMenu: () => attract?.start(performance.now()),
+      // Never under a walk: `/maps/$id` is on the menu screen too.
+      enterMenu: () => {
+        if (!walkMapId) attract?.start(performance.now());
+      },
       createMatch: (net) => {
         attract?.stop();
+        stopWalk();
         scene!.resetView();
         hud.clear();
         // Press counters start over with each game (the server takes a new
@@ -88,6 +112,28 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
     },
     { serverUrl: config.serverUrl, lagMs: config.lagMs, mapParam: config.mapParam, nav: config.nav },
   );
+
+  function startWalk(id: string) {
+    const map = findMap(id);
+    if (!map || !walker) return;
+    attract?.stop();
+    walker.start(map, performance.now());
+  }
+  function stopWalk() {
+    walkMapId = null;
+    walker?.stop();
+  }
+  const walk = (id: string | null) => {
+    if (id && !findMap(id)) id = null;
+    if (id) {
+      walkMapId = id;
+      startWalk(id);
+      return;
+    }
+    if (!walkMapId && !walker?.running) return;
+    stopWalk();
+    if (app.getState().screen === "menu") attract?.start(performance.now());
+  };
 
   // Sound can only start after a user gesture: every menu and card button
   // calls `gesture()`, and the first click or key press anywhere does too.
@@ -137,7 +183,8 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
         input.enabled = v.card === "none" && !ui.getState().panel && !v.spectating;
       } else {
         input.enabled = false;
-        attract?.frame(now);
+        if (walker?.running) walker.frame(now, dtMs);
+        else attract?.frame(now);
       }
       if (now - lastDraw >= drawGap - 1) {
         lastDraw = now;
@@ -184,6 +231,11 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
         },
         get buffer() {
           return app.match?.buffer ?? null;
+        },
+        /** The walk around a map (`/maps/$id`), while on (null otherwise). */
+        get walk() {
+          const s = walkUi.getState();
+          return walker?.running && s.mapId ? { mapId: s.mapId, mode: s.mode } : null;
         },
         /** The spectator view, while watching (null otherwise). */
         get spectator() {
@@ -234,5 +286,7 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
     });
   }
 
-  return { app, lobby, hud, input, minimap, view, loading, gesture };
+  const setWalkMode = (mode: WalkMode) => walker?.setMode(mode);
+
+  return { app, lobby, hud, input, minimap, view, loading, gesture, walk, walkUi, setWalkMode };
 }

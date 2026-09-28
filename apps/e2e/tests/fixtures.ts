@@ -190,6 +190,65 @@ export class Player {
   }
 }
 
+/** What the leak checks count: GPU resources, scene objects, sounds, frames, listeners (see `countListeners`). */
+export interface LeakCounts {
+  geometries: number;
+  textures: number;
+  programs: number;
+  objects: number;
+  voices: number;
+  inRoom: boolean;
+  frames: number;
+  listeners: number;
+  /** Frames the app drew per animation frame the browser gave it (1: one loop). */
+  loopsPerFrame: number;
+}
+
+/** From the next navigation on, counts the window's and the document's live event listeners (for `leakCounts`). */
+export async function countListeners(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const live = new Set<string>();
+    const key = (t: EventTarget, type: string, fn: unknown, opts: unknown) =>
+      `${t === window ? "w" : "d"}:${type}:${String((fn as { name?: string })?.name)}:${typeof opts === "object" ? !!(opts as { capture?: boolean })?.capture : !!opts}`;
+    const ids = new WeakMap<object, number>();
+    let n = 0;
+    const id = (fn: unknown) => {
+      if (typeof fn !== "function" && typeof fn !== "object") return 0;
+      if (!ids.has(fn as object)) ids.set(fn as object, ++n);
+      return ids.get(fn as object)!;
+    };
+    for (const target of [window, document] as EventTarget[]) {
+      const add = target.addEventListener.bind(target);
+      const remove = target.removeEventListener.bind(target);
+      target.addEventListener = (type: string, fn: EventListenerOrEventListenerObject | null, opts?: boolean | AddEventListenerOptions) => {
+        if (fn) live.add(`${key(target, type, fn, opts)}#${id(fn)}`);
+        add(type, fn, opts);
+      };
+      target.removeEventListener = (type: string, fn: EventListenerOrEventListenerObject | null, opts?: boolean | EventListenerOptions) => {
+        if (fn) live.delete(`${key(target, type, fn, opts)}#${id(fn)}`);
+        remove(type, fn, opts);
+      };
+    }
+    Object.assign(window, { __liveListeners: live });
+  });
+}
+
+/** The dev handle's stats, the live listener count, and how many frames the app drew per animation frame (1: one loop). */
+export function leakCounts(page: Page): Promise<LeakCounts> {
+  return page.evaluate(async () => {
+    // oxlint-disable-next-line typescript/no-explicit-any
+    const w = window as any;
+    const start = w.__bagarre.stats().frames;
+    let raf = 0;
+    await new Promise<void>((done) => {
+      const tick = () => (++raf >= 20 ? done() : requestAnimationFrame(tick));
+      requestAnimationFrame(tick);
+    });
+    const stats = w.__bagarre.stats();
+    return { ...stats, listeners: w.__liveListeners.size, loopsPerFrame: Math.round((stats.frames - start) / raf) };
+  });
+}
+
 /** Asks the e2e server for a kill (server.ts): the killer's shot kills the victim at once. */
 export async function kill(roomId: string, killer: string, victim: string) {
   const res = await fetch(`http://localhost:${SERVER_PORT + 1}/kill`, {
