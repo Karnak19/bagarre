@@ -13,6 +13,8 @@ import { matchMaker } from "@colyseus/core";
 import { Client, type Room } from "@colyseus/sdk";
 import {
   GAMES_ROUTE,
+  GRENADE_FLASH,
+  GRENADE_STUN,
   MAX_HP,
   MSG_INPUT,
   MSG_TEAM,
@@ -254,6 +256,33 @@ async function friendlyFire(url: string): Promise<Lines> {
       cBlasted && P(a).hp === before.a && P(b).hp === before.b,
       `a grenade hurts the enemy (C ${P(c).hp} HP) but not the thrower (A ${P(a).hp}) nor a teammate (B ${P(b).hp})`,
     );
+
+    // A stun, then a flash, from the same spot: they get the enemy only,
+    // never the thrower nor a teammate (the same canDamage rule). The type
+    // is put in A's hand and the cooldown cleared by hand (test setup).
+    let presses = 1;
+    const throwType = (type: number) => {
+      P(a).grenade = type;
+      P(a).grenadeCd = 0;
+      a.send(MSG_INPUT, input({ grenade: ++presses, gx: -6.5, gz: 2.8 }));
+    };
+    throwType(GRENADE_STUN);
+    const cStunned = await waitFor(() => P(c).stunTicks > 0, 3000);
+    ok(
+      cStunned && P(a).stunTicks === 0 && P(b).stunTicks === 0,
+      `a stun gets the enemy (C ${P(c).stunTicks} ticks) but not the thrower (A ${P(a).stunTicks}) nor a teammate (B ${P(b).stunTicks})`,
+    );
+    // Everyone looks at the blast: B is right next to it, C a step away facing it.
+    P(b).aim = Math.PI;
+    P(c).aim = Math.atan2(2.8 - 4.3, -6.5 - -7);
+    const cHp = P(c).hp;
+    throwType(GRENADE_FLASH);
+    const cFlashed = await waitFor(() => P(c).flashEnd > 0, 3000);
+    ok(
+      cFlashed && P(a).flashEnd === 0 && P(b).flashEnd === 0,
+      `a flash gets the enemy (C until tick ${P(c).flashEnd}) but not the thrower nor a teammate (A ${P(a).flashEnd}, B ${P(b).flashEnd})`,
+    );
+    ok(P(c).hp === cHp, `stun and flash deal no damage (C ${P(c).hp} HP)`);
 
     // The damage path itself refuses a teammate, and yourself.
     room.damage(a.sessionId, b.sessionId, P(b), MAX_HP, 0);
