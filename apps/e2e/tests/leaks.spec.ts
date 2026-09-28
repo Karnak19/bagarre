@@ -1,10 +1,19 @@
-import { attractSettled, countListeners, expect, leakCounts, test } from "./fixtures.ts";
+import { attractSettled, countListeners, expect, leakCounts, signUp, test, unique } from "./fixtures.ts";
 
 test("menu and game round trips leave nothing behind", async ({ players }) => {
   const a = await players.open("A");
   await countListeners(a.page);
   await a.goto("/");
   await expect(a.testId("play")).toBeVisible();
+  // Signed in, with a skin of its own: a guest gets a random skin at every
+  // join, and a skin met for the first time stays uploaded for the page's life
+  // (assets.ts' skinModel), so a guest's counts grow by a skin now and then.
+  await signUp(a, unique());
+  const panel = a.testId("panel-account");
+  await panel.locator('[data-testid="skin-option"][data-skin="soldier-male"]').click();
+  await expect(panel.getByTestId("skin-picker")).toHaveAttribute("data-skin", "soldier-male");
+  await a.page.keyboard.press("Escape");
+  await expect(panel).toBeHidden();
 
   const counts = () => leakCounts(a.page);
 
@@ -12,6 +21,15 @@ test("menu and game round trips leave nothing behind", async ({ players }) => {
     await a.testId("private-game").click();
     await expect(a.testId("waiting-card")).toBeVisible();
     await a.expectState("phase", "waiting");
+    // Our character in its skin and our name plate, both drawn: whatever they
+    // upload the first time is then in the first count, not in a later one
+    // (a quick trip could cancel before either shows up).
+    await a.page.waitForFunction(() => {
+      // oxlint-disable-next-line typescript/no-explicit-any
+      const b = (window as any).__bagarre;
+      const you = b.match?.net.sessionId;
+      return !!you && b.skins()[you]?.loaded && b.plates.some((p: { id: string; visible: boolean }) => p.id === you && p.visible);
+    }, null, { timeout: 30_000 });
     await a.testId("waiting-cancel").click();
     await expect(a.testId("menu")).toBeVisible();
     await a.expectState("roomId", "");
