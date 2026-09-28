@@ -5,7 +5,7 @@
 
 import { FFA_MAPS, MAPS, type FfaMapDef } from "@bagarre/shared";
 import type { Page } from "@playwright/test";
-import { expect, test, type Player } from "./fixtures.ts";
+import { countListeners, expect, leakCounts, test, type Player } from "./fixtures.ts";
 
 const DUEL = "runway";
 const FFA = FFA_MAPS[0].id;
@@ -125,61 +125,13 @@ test("an unknown map id goes back to the list", async ({ players }) => {
   expect(pageErrors(a)).toEqual([]);
 });
 
-interface Counts {
-  geometries: number;
-  textures: number;
-  programs: number;
-  objects: number;
-  inRoom: boolean;
-  listeners: number;
-  /** Frames the app drew per animation frame the browser gave it (1: one loop). */
-  loopsPerFrame: number;
-}
-
 test("list and walk round trips leave nothing behind", async ({ players }) => {
   const a = await players.open("A");
-  // Count the window's and the document's live event listeners (as leaks.spec.ts does).
-  await a.page.addInitScript(() => {
-    const live = new Set<string>();
-    const key = (t: EventTarget, type: string, fn: unknown, opts: unknown) =>
-      `${t === window ? "w" : "d"}:${type}:${String((fn as { name?: string })?.name)}:${typeof opts === "object" ? !!(opts as { capture?: boolean })?.capture : !!opts}`;
-    const ids = new WeakMap<object, number>();
-    let n = 0;
-    const id = (fn: unknown) => {
-      if (typeof fn !== "function" && typeof fn !== "object") return 0;
-      if (!ids.has(fn as object)) ids.set(fn as object, ++n);
-      return ids.get(fn as object)!;
-    };
-    for (const target of [window, document] as EventTarget[]) {
-      const add = target.addEventListener.bind(target);
-      const remove = target.removeEventListener.bind(target);
-      target.addEventListener = (type: string, fn: EventListenerOrEventListenerObject | null, opts?: boolean | AddEventListenerOptions) => {
-        if (fn) live.add(`${key(target, type, fn, opts)}#${id(fn)}`);
-        add(type, fn, opts);
-      };
-      target.removeEventListener = (type: string, fn: EventListenerOrEventListenerObject | null, opts?: boolean | EventListenerOptions) => {
-        if (fn) live.delete(`${key(target, type, fn, opts)}#${id(fn)}`);
-        remove(type, fn, opts);
-      };
-    }
-    Object.assign(window, { __liveListeners: live });
-  });
+  await countListeners(a.page);
   await a.goto("/maps");
   await expect(a.testId("maps")).toBeVisible();
 
-  const counts = (): Promise<Counts> =>
-    a.page.evaluate(async () => {
-      // oxlint-disable-next-line typescript/no-explicit-any
-      const w = window as any;
-      const start = w.__bagarre.stats().frames;
-      let raf = 0;
-      await new Promise<void>((done) => {
-        const tick = () => (++raf >= 20 ? done() : requestAnimationFrame(tick));
-        requestAnimationFrame(tick);
-      });
-      const stats = w.__bagarre.stats();
-      return { ...stats, listeners: w.__liveListeners.size, loopsPerFrame: Math.round((stats.frames - start) / raf) };
-    });
+  const counts = () => leakCounts(a.page);
 
   // One trip: list → walk (counted there: same map every time) → Back → list (counted too).
   const trip = async () => {

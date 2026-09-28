@@ -6,7 +6,7 @@
 
 import type { MapDef } from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
-import { memo, useMemo } from "react";
+import { memo } from "react";
 import { hex, isFfa, planProjector } from "../../minimap.ts";
 import { TEAM_PAINT } from "../../paint.ts";
 import { PLAYER_CSS_COLORS } from "../../scene.ts";
@@ -86,7 +86,7 @@ function plan(map: MapDef) {
 
 /** The top-down drawing of `map`. Maps are constants, so it draws once per map. */
 export const MapPlan = memo(function MapPlan({ map }: { map: MapDef }) {
-  const p = useMemo(() => plan(map), [map]);
+  const p = plan(map);
   return (
     <svg
       viewBox={`0 0 ${SIZE} ${SIZE}`}
