@@ -146,8 +146,11 @@ export class PlayerMesh {
   private fadedApplied = false;
   /** Each material's own opacity and transparency, to put back when the fade ends. */
   private fadeSaved = new Map<THREE.Material, { opacity: number; transparent: boolean }>();
-  /** When stun sparks last crackled on this player (performance.now()). */
+  /** When stun sparks last crackled on this player, and when `stunned` was last called (performance.now()). */
   private lastSpark = 0;
+  private stunSeen = -1e9;
+  private stunRing: THREE.Mesh;
+  private stunRingMat: THREE.MeshBasicMaterial;
 
   /**
    * `skin`: the SKINS id worn. Until that skin's model has loaded (and for
@@ -193,6 +196,15 @@ export class PlayerMesh {
       ring(PLAYER_RADIUS + 0.02, PLAYER_RADIUS + 0.2, color, 0.95);
     } else ring(PLAYER_RADIUS + 0.02, PLAYER_RADIUS + 0.12, color, 0.75);
     if (isLocal) ring(PLAYER_RADIUS + (team ? 0.22 : 0.14), PLAYER_RADIUS + (team ? 0.28 : 0.2), 0xffffff, 0.55);
+
+    // The stun ring: shown while stunned (see `stunned`), pulsing.
+    this.stunRingMat = new THREE.MeshBasicMaterial({ color: 0x7fd8ff, transparent: true, opacity: 0.8, depthWrite: false });
+    this.stunRing = new THREE.Mesh(new THREE.RingGeometry(PLAYER_RADIUS + 0.3, PLAYER_RADIUS + 0.45, 40), this.stunRingMat);
+    this.stunRing.rotation.x = -Math.PI / 2;
+    this.stunRing.position.y = 0.04;
+    this.stunRing.renderOrder = 3;
+    this.stunRing.visible = false;
+    this.group.add(this.stunRing);
 
     this.shieldMat = shieldMaterial(this.baseColor);
     this.shield = new THREE.Mesh(new THREE.SphereGeometry(1.05, 32, 20), this.shieldMat);
@@ -246,6 +258,8 @@ export class PlayerMesh {
     }
     this.shield.geometry.dispose();
     this.shieldMat.dispose();
+    this.stunRing.geometry.dispose();
+    this.stunRingMat.dispose();
     this.dropPlaceholder();
   }
 
@@ -281,7 +295,7 @@ export class PlayerMesh {
     this.fadedApplied = on;
     this.group.traverse((o) => {
       const mesh = o as THREE.Mesh;
-      if (!mesh.isMesh || mesh === this.shield) return;
+      if (!mesh.isMesh || mesh === this.shield || mesh === this.stunRing) return;
       for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
         let saved = this.fadeSaved.get(m);
         if (!saved) {
@@ -298,8 +312,9 @@ export class PlayerMesh {
     if (!on) this.fadeSaved.clear();
   }
 
-  /** Stunned: sparks crackle round the body a few times a second. */
+  /** Stunned (called every frame while it lasts): a pulsing blue ring at the feet, and sparks crackling round the body. */
   stunned(now: number) {
+    this.stunSeen = now;
     if (!this.alive || this.veil === "hidden" || now - this.lastSpark < STUN_SPARK_MS) return;
     this.lastSpark = now;
     this.scene?.stunSparks(this.group.position.x, this.group.position.z);
@@ -339,6 +354,12 @@ export class PlayerMesh {
       this.dashing = false;
     }
     for (const r of this.rings) r.visible = this.alive;
+    this.stunRing.visible = this.alive && now - this.stunSeen < 150;
+    if (this.stunRing.visible) {
+      const pulse = 0.5 + 0.5 * Math.sin(now / 60);
+      this.stunRingMat.opacity = (0.45 + 0.45 * pulse) * (this.fadedApplied ? FADED_OPACITY : 1);
+      this.stunRing.scale.setScalar(1 + 0.12 * pulse);
+    }
     if (this.shield.visible) this.shieldMat.uniforms.time.value = now / 1000;
   }
 }

@@ -114,7 +114,7 @@ const styles = stylex.create({
   hint: { opacity: 0.75, marginInlineStart: "4px" },
   stunned: {
     position: "absolute",
-    bottom: "134px",
+    bottom: "172px",
     left: "50%",
     transform: "translateX(-50%)",
     minWidth: "170px",
