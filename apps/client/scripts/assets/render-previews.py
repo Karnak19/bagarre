@@ -4,6 +4,7 @@
 #   Blender -b -P apps/client/scripts/assets/render-previews.py -- chars <glTF dir> <out.png> [Name ...]
 #   Blender -b -P apps/client/scripts/assets/render-previews.py -- guns <glb dir> <guns.json> <out.png> Name ...
 #   Blender -b -P apps/client/scripts/assets/render-previews.py -- hold <glTF dir> <glb dir> <guns.json> <out.png> Character Gun ...
+#   Blender -b -P apps/client/scripts/assets/render-previews.py -- ingame <glTF dir> <raw guns dir> <out.png> [Character gun ...]
 #
 # chars: every character in its Idle pose, seen like the game camera sees it
 #   (orthographic, 45 degrees of yaw, 35.26 of pitch), all at the same scale on
@@ -12,7 +13,17 @@
 #   guns.json (written by convert-guns.py).
 # hold: one character in a few candidate upper-body poses with each gun on its
 #   right hand (Fist.R), to judge the gun hold.
-import bpy, sys, os, json, math
+# ingame: a few skins holding their guns the way the game does (character.ts):
+#   scaled so the Idle-pose Head bone sits at HEAD_Y, legs in Idle, the rest in
+#   Shoot_OneHanded at AIM_T, each gun at its GUN_SCALE with its grip from
+#   GUN_MODELS (skins.ts) GRIP_ALONG up the fist, barrel straight ahead. Those
+#   numbers are read from the sources. Game camera, a 1 m ring under each for
+#   scale. Pairs are a pack character name and a game gun name (rifle, smg...);
+#   with none it draws six. Blender can't read the meshopt game guns, so
+#   <raw guns dir> is convert-guns.py's output (pack names, AssaultRifle_2.glb
+#   ...). FACE=<degrees> turns the characters (default 15). For example:
+#     ... -- ingame .packs/chars/glTF <convert-guns out> .previews/skins/in-game.png
+import bpy, sys, os, json, math, re
 import numpy as np
 from mathutils import Vector, Matrix
 
@@ -23,6 +34,11 @@ CELL_W, CELL_H = 260, 330
 # yard.ts floor by default; FLOOR=46505c (dockside) etc. to try another map.
 _f = int(os.environ.get("FLOOR", "5f6570"), 16)
 FLOOR = ((_f >> 16) / 255, (_f >> 8 & 255) / 255, (_f & 255) / 255)
+# Pack gun name -> the game's file name (build-models.ts' GUNS_MAP).
+GUNS_PACK_NAMES = {"AssaultRifle_2": "rifle", "Shotgun_ShortStock": "shotgun", "SniperRifle_1": "sniper",
+                   "SubmachineGun_1": "smg", "Revolver_1": "revolver", "Pistol_6": "burst-pistol", "AssaultRifle2_1": "dmr"}
+# character.ts' LOWER_BONES: the legs keep the Idle pose, the rest aims.
+LOWER_BONES = {"Bone", "Body", "FootL", "FootR", "UpperLegL", "UpperLegR", "LowerLegL", "LowerLegR", "PoleTargetL", "PoleTargetR"}
 PITCH = math.atan(1 / math.sqrt(2))
 YAW = math.pi / 4
 
@@ -259,3 +275,74 @@ elif MODE == "hold":
             cells.append(render_cell(sc, tmp))
     os.remove(tmp)
     sheet(cells, out, len(poses))
+
+elif MODE == "ingame":
+    src, gdir, out = argv[1], argv[2], argv[3]
+    pairs = argv[4:] or ["Soldier_Male", "rifle", "Cowboy_Female", "revolver", "Ninja_Sand", "smg",
+                         "Knight_Golden_Male", "shotgun", "Chef_Female", "burst-pistol", "Zombie_Male", "sniper"]
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../.."))
+    # The game's numbers, read from its sources so this follows them.
+    ch = open(os.path.join(root, "apps/client/src/character.ts")).read()
+    num = lambda name: float(re.search(rf"const {name} = (-?[\d.]+)", ch).group(1))
+    HEAD_Y, GRIP_ALONG, GRIP_UP, AIM_T = (num(n) for n in ("HEAD_Y", "GRIP_ALONG", "GRIP_UP", "AIM_T"))
+    GUN_SCALE = [float(x) for x in re.search(r"const GUN_SCALE = \[([^\]]+)\]", ch).group(1).split(",")]
+    sk = open(os.path.join(root, "packages/shared/src/skins.ts")).read()
+    models = re.findall(r'file: "guns/([\w-]+)\.glb", grip: \[([^\]]+)\]', sk)
+    GUN_FILES = {v: k for k, v in GUNS_PACK_NAMES.items()}
+    cells = []
+    tmp = os.path.join(os.path.dirname(os.path.abspath(out)), "_cell.png")
+    CELL_W, CELL_H = 360, 400
+    for char, gname in zip(pairs[::2], pairs[1::2]):
+        w = next(i for i, (f, _) in enumerate(models) if f == gname)
+        grip = Vector(float(x) for x in models[w][1].split(","))
+        sc = reset()
+        bpy.ops.import_scene.gltf(filepath=os.path.join(src, char + ".gltf"), bone_heuristic="BLENDER")
+        arm = next(o for o in sc.objects if o.type == "ARMATURE")
+        # Scale: the Head bone at HEAD_Y in the Idle pose.
+        set_action(arm, "Idle", 0)
+        head = (arm.matrix_world @ arm.pose.bones["Head"].matrix).translation.z
+        scale = HEAD_Y / head
+        # The game's pose: legs in Idle, the rest in Shoot_OneHanded at AIM_T (frame 0).
+        lower = {b.name for b in arm.pose.bones if b.name.replace(".", "") in LOWER_BONES}
+        pose = {}
+        for action, keep in (("Shoot_OneHanded", lambda n: n not in lower), ("Idle", lambda n: n in lower)):
+            set_action(arm, action, AIM_T if action != "Idle" else 0)
+            for b in arm.pose.bones:
+                if keep(b.name):
+                    pose[b.name] = b.matrix_basis.copy()
+        arm.animation_data.action = None
+        for b in arm.pose.bones:
+            b.matrix_basis = pose[b.name]
+        bpy.context.view_layer.update()
+        # The grip point: GRIP_ALONG along the fist bone from its head, GRIP_UP
+        # up (unscaled model units); the barrel straight ahead (-Y), top up.
+        fist = arm.matrix_world @ arm.pose.bones["Fist.R"].matrix
+        along = fist.to_3x3() @ Vector((0, 1, 0))
+        at = fist.translation + along.normalized() * GRIP_ALONG + Vector((0, 0, GRIP_UP))
+        before = set(sc.objects)
+        bpy.ops.import_scene.gltf(filepath=os.path.join(gdir, GUN_FILES[gname] + ".glb"))
+        gun = next(o for o in sc.objects if o not in before and o.type == "MESH")
+        gun.parent = None
+        gun.data.transform(Matrix.Translation(-Vector((grip.x, -grip.z, grip.y))))
+        s = GUN_SCALE[w] * scale
+        gun.matrix_world = Matrix.Translation(at * scale) @ Matrix.Rotation(-math.pi / 2, 4, "Z") @ Matrix.Scale(s, 4)
+        arm.scale = (scale,) * 3
+        # Face three-quarters to the right of the camera, as when aiming across the screen.
+        pivot = bpy.data.objects.new("pivot", None)
+        sc.collection.objects.link(pivot)
+        for o in (arm, gun):
+            o.parent = pivot
+        pivot.rotation_euler = (0, 0, math.radians(float(os.environ.get("FACE", "15"))))
+        floor(sc)
+        # A 1 m ring on the floor, for scale.
+        bpy.ops.mesh.primitive_torus_add(major_radius=0.5, minor_radius=0.012, location=(0, 0, 0.005))
+        rm = bpy.data.materials.new("ring")
+        rm.use_nodes = True
+        rm.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (1, 0.85, 0.1, 1)
+        bpy.context.active_object.data.materials.append(rm)
+        cam = iso_camera(sc, Vector((0, 0, 0.8)), 2.8)
+        label(sc, cam, f"{char.replace('_', ' ')} + {gname}", -0.44)
+        cells.append(render_cell(sc, tmp))
+        print("cell", char, gname, "scale", round(scale, 4), "gun", s)
+    os.remove(tmp)
+    sheet(cells, out, 3)
