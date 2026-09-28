@@ -323,6 +323,22 @@ export class Character {
     // The grip: a little along the bone (toward the fingers) and up from the wrist, in the fist's frame.
     hand.position.set(0, GRIP_ALONG, 0).add(new THREE.Vector3(0, GRIP_UP, 0).applyQuaternion(_qi.copy(fistQ).invert())).divideScalar(fistScale);
     fist.add(hand);
+    // Material copies here too, like the body's: they flash with it, and are
+    // freed with the character, so no gun keeps its shaders once nobody holds it.
+    const copies = new Map<THREE.Material, THREE.MeshStandardMaterial>();
+    const own = (o: THREE.Object3D) => {
+      o.castShadow = true;
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const src = mesh.material as THREE.MeshStandardMaterial;
+      let mat = copies.get(src);
+      if (!mat) {
+        mat = src.clone();
+        copies.set(src, mat);
+        this.materials.push(mat);
+      }
+      mesh.material = mat;
+    };
     this.guns = templates.map((t, w) => {
       const def = GUN_MODELS[w];
       if (!t || !def) return null;
@@ -331,7 +347,7 @@ export class Character {
       gun.scale.setScalar(s);
       gun.position.set(-def.grip[0] * s, -def.grip[1] * s, -def.grip[2] * s);
       gun.visible = false;
-      gun.traverse((o) => (o.castShadow = true));
+      gun.traverse(own);
       hand.add(gun);
       return gun;
     });
