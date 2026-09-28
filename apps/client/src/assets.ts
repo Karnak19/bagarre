@@ -139,28 +139,3 @@ export function skinModel(id: string): Promise<THREE.Object3D | null> {
 export function skinModelNow(id: string): THREE.Object3D | null | undefined {
   return skinsSettled.get(id);
 }
-
-/**
- * How many characters wear each skin template. When the last one goes, the
- * template's geometry leaves the GPU (it stays in memory, and is uploaded
- * again the next time it is drawn), so a long session that met all 16 skins
- * doesn't keep them all uploaded.
- */
-const skinUsers = new Map<THREE.Object3D, number>();
-
-export function useSkin(template: THREE.Object3D) {
-  skinUsers.set(template, (skinUsers.get(template) ?? 0) + 1);
-}
-
-export function releaseSkin(template: THREE.Object3D) {
-  const n = (skinUsers.get(template) ?? 1) - 1;
-  if (n > 0) {
-    skinUsers.set(template, n);
-    return;
-  }
-  skinUsers.delete(template);
-  template.traverse((o) => {
-    const mesh = o as THREE.Mesh;
-    if (mesh.isMesh) mesh.geometry.dispose();
-  });
-}

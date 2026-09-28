@@ -1,7 +1,6 @@
 import * as THREE from "three";
 import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
 import { GUN_MODELS, PLAYER_SPEED } from "@bagarre/shared";
-import { releaseSkin, useSkin } from "./assets.ts";
 
 /**
  * World height of the `Head` bone (the base of the head) in the Idle pose, in
@@ -201,11 +200,10 @@ export class Character {
 
   /** `skin`: the loaded skin's scene (assets.ts' skinModel), cloned here, never changed. */
   constructor(
-    private readonly skin: THREE.Object3D,
+    skin: THREE.Object3D,
     kit: CharacterKit,
   ) {
     this.model = cloneSkinned(skin);
-    useSkin(skin);
 
     // Materials are shared by every clone: copy them per instance before
     // flashing, or every player wearing that skin flashes together. The
@@ -392,8 +390,7 @@ export class Character {
   /**
    * Frees what this instance owns: its material copies, its skeleton's bone
    * texture and the mixer's cached actions. The geometry is shared with the
-   * loaded skin and the gun templates and stays (the skin's leaves the GPU
-   * once no character wears it, see assets.ts' releaseSkin).
+   * loaded skin and the gun templates and stays.
    */
   dispose() {
     this.mixer.stopAllAction();
@@ -407,7 +404,6 @@ export class Character {
         sk.dispose();
       }
     });
-    releaseSkin(this.skin);
   }
 
   update(now: number, dt: number, s: CharacterState) {
