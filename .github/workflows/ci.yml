@@ -44,7 +44,7 @@ jobs:
         run: bun scripts/validate.ts && bun scripts/ffa/validate.ts
 
       - name: Shared self-checks
-        # Match tiebreaks, and the skin and gun tables.
+        # Match tiebreaks, the skin and gun tables, and the grenade rules.
         working-directory: packages/shared
         run: bun run check
 

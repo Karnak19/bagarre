@@ -66,7 +66,8 @@ The first run may need the browser: `bunx playwright install chromium` in
   at 2 kills, the FFA and team countdowns are 2 s) and a test-only control API on 2611:
   `POST /kill` kills a player through the room's own damage path, so a test
   reaches a match end without aiming. It is the real damage path, so it does
-  nothing between teammates (the team spec checks that).
+  nothing between teammates (the team spec checks that). `POST /place` puts
+  a player on a given spot at once (the grenade spec sets its throws up with it).
 - `tests/fixtures.ts` holds the fixtures. `players.open()` is a new player
   (its own browser context); `players.duel()`, `players.teams(n)` and `players.host()` /
   `players.join()` open a private game by its link, so tests running in
@@ -292,7 +293,10 @@ TypeScript: React never runs per frame and there is no React Three Fiber.
   `reset-password-done`, `reset-password-sign-in`, `reset-password-back`, the
   leaderboard's `open-leaderboard`, `panel-leaderboard`, `leaderboard` (with
   `data-state`) and `leaderboard-row` (with `data-username`, `data-you`),
-  `settings-volume`, `settings-mute`, `settings-names`, and the HUD's `hud-*`. The free for
+  `settings-volume`, `settings-mute`, `settings-names`, the grenade picker's
+  `grenade-picker` and `grenade-pick-{frag,smoke,stun,flash}`, and the HUD's `hud-*`
+  (`hud-grenade` with `data-type`, `hud-stunned`, `hud-flash` with
+  `data-active`, `hud-picker-grenade`). The free for
   all adds `play-ffa`, `private-ffa`, `ffa-countdown`, `ffa-players`,
   `placement-row`, `result-winner`, `scoreboard-time`, `hud-ffa`,
   `hud-ffa-rank`, `hud-ffa-top`, `hud-ffa-time`, `hud-killfeed`,
@@ -581,6 +585,7 @@ match menu ("Stop watching"), M mutes. The overlay is
 | **Q**              | Grenade: lobbed at the cursor, max 10 m, flies over cover     |
 | **E**              | Shield: a bubble that soaks damage before your HP             |
 | **1**-**7**        | Pick a weapon, while dead or between matches (see below)      |
+| **G**              | Next grenade type (frag, smoke, stun, flash), same rules      |
 | **Tab** (hold)     | Scoreboard                                                    |
 | **M**              | Mute / unmute sound (remembered between visits)               |
 | **Esc**            | Match menu: resume, settings, leave (the match keeps running) |
@@ -589,9 +594,53 @@ Keys are read by physical position, so on AZERTY it's ZQSD to move and the
 key labelled **A** throws a grenade. In a duel, first to 5 kills wins; the
 match restarts a few seconds later (free for all: see above).
 
-A grenade lands, then explodes 0.6 s later: the red circle on the ground is
-its blast radius, so get out of it. It hurts its thrower too, at half rate.
-The dash has no invulnerability, you dodge by getting out of the bullet's path.
+A grenade lands, then goes off 0.6 s later: the circle on the ground shows
+where (red for a frag, grey smoke, blue stun, white flash), so get out of it.
+A frag hurts its thrower too, at half rate. The dash has no invulnerability,
+you dodge by getting out of the bullet's path.
+
+### Grenade types
+
+You carry one grenade, on Q, and pick its type next to your weapon: on the
+waiting and result cards, or with **G** while dead. Like a weapon, the pick
+goes in your hand on your next spawn (a grenade already in the air keeps its
+type), and a reconnect keeps it. Each type has its own cooldown, shown on the
+HUD's grenade slot with its icon. They all share the same throw; only what
+happens when they go off differs.
+
+| Type  | What it does | Cooldown |
+| ----- | ------------ | -------- |
+| Frag  | 3.5 m blast, 60 → 15 damage (half on yourself). The only one that hurts, and the only "Grenade" in the kill feed | 8 s |
+| Smoke | A 4 m cloud for 8 s. Whoever is in it, or behind it, is hidden from their enemies: model, name plate and health bar, minimap dot, muzzle flash, and their bullets until they come out of it. Shots and steps are still heard; the kill feed still names them. You always see yourself and your teammates; a spectator sees them faded | 12 s |
+| Stun  | Everyone within 3.5 m walks at half speed and can't dash for 2 s (a spark effect on them, a badge on their HUD) | 10 s |
+| Flash | A white screen, up to 2 s, for whoever aims toward it (within 90°) with no cover in the way: shorter the farther away and the farther off their aim. Aiming away, or behind cover, is safe. A plain fade, never a strobe | 10 s |
+
+Who a stun or a flash gets follows the friendly-fire rule (`canDamage`): in
+a team deathmatch never a teammate nor the thrower; in a duel or a free for
+all, your own gets you too.
+
+How it works:
+
+- The table is `GRENADES` in `packages/shared/src/constants.ts` (with
+  `SMOKE`, `STUN` and `FLASH`), the rules in `grenades.ts` next to it:
+  `flashTicks` (angle, distance, and `lineOfSight`, the new
+  segment-against-cover test in `physics.ts`), `smokeHides` (in a cloud, or
+  the line to them crosses one: `segmentHitsCircle`) and `smokeVeil` (who
+  sees whom). `bun run check` in `packages/shared` runs their self-checks
+  (`scripts/grenades.check.ts`).
+- The stun is `stunTicks`, part of the synced `PlayerSim`: the shared
+  `stepPlayer` reads it (half speed, no dash) and counts it down once per
+  input, so the stunned player's own prediction slows down exactly like the
+  server and nothing rubber-bands.
+- The flash is resolved by the server when it goes off, from each player's
+  aim at that moment; `flashEnd` / `flashTicks` on `Player` are synced so the
+  white screen matches.
+- Smoke clouds are synced (`state.smokes`), but the hiding is done by each
+  client, and only there: the server sends every position to everyone. That
+  is accepted (a game between friends, no anti-cheat), so smoke is not
+  secure against a modified client.
+- Picks go through `MSG_PICK` (`{ weapon?, grenade? }`): a field that is
+  there must be valid or the whole message is dropped.
 
 Sound starts after your first click or key press (browser autoplay rules):
 any menu button counts. Settings (on the menu, or from Esc in a game) has the
@@ -615,7 +664,9 @@ spectator sees everyone's. **Show names** in Settings turns the names off
 the 3D scene over everything (`plates.ts`); `__bagarre.plates` exposes them
 to the tests, and `__bagarre.skins()` gives each player's skin and whether
 its model has loaded (`{ [sessionId]: { skin, loaded } }`, for the match
-you play or watch).
+you play or watch). `__bagarre.veils()` says how smoke has each player drawn
+for us (`none`, `hidden` or `faded`), and `__bagarre.minimapPings` who has a
+dot on the minimap; `__bagarre.bot.target` is where the bot throws.
 
 ### Scoreboard
 
@@ -657,7 +708,7 @@ each round exactly; every round comes from its own input, so bullet ids
 | Ability | Numbers                                                                 |
 | ------- | ----------------------------------------------------------------------- |
 | Dash    | 5 m in 5 ticks (0.17 s), 3 s cooldown, stops at walls and cover          |
-| Grenade | 10 m max range, 0.6 s fuse after landing, 3.5 m radius, 60 → 15 damage (half on yourself), 8 s cooldown |
+| Grenade | 10 m max range, 0.6 s fuse after landing; frag: 3.5 m radius, 60 → 15 damage (half on yourself), 8 s cooldown; other types: see [Grenade types](#grenade-types) |
 | Shield  | 2.5 s, absorbs up to 40 damage, 10 s cooldown                             |
 
 All of these live in `packages/shared/src/constants.ts`, one table per weapon and
@@ -736,7 +787,8 @@ packages/
   shared/             @bagarre/shared: TypeScript source, no build step
     src/              constants and balance tables, the maps (maps/) and the Arena shape,
                       message types, the pure step functions (physics.ts: movement/bullets,
-                      combat.ts: the player step with dash, weapons, abilities),
+                      combat.ts: the player step with dash, weapons, abilities,
+                      grenades.ts: what each grenade type does),
                       line of sight and the respawn rule (sight.ts)
     scripts/          map validator and preview renderer
 docs/                 design notes (maps.md)
