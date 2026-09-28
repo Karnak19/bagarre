@@ -9,6 +9,7 @@
 //   into one plain object: assertions go through it and data-testids, never
 //   through pixels.
 // - `kill()` asks the e2e server's control API (server.ts) for a kill.
+// - `unique()` / `signUp()` make an account through the account panel.
 
 import { test as base, expect, type Browser, type BrowserContext, type BrowserType, type LaunchOptions, type Page } from "@playwright/test";
 import { GL, SERVER_PORT } from "../playwright.config.ts";
@@ -256,6 +257,31 @@ export async function kill(roomId: string, killer: string, victim: string) {
     body: JSON.stringify({ roomId, killer, victim }),
   });
   expect(res.status, await res.text()).toBe(200);
+}
+
+/** A fresh email and username per call, so parallel tests and reruns never collide. */
+export function unique() {
+  const id = `${Date.now().toString(36)}${Math.floor(Math.random() * 36 ** 4).toString(36)}`.slice(-10);
+  return { email: `e2e-${id}@example.com`, username: `p_${id}`, password: "hunter22" };
+}
+
+/** Signs up through the account panel and saves a username; leaves the panel open. */
+export async function signUp(p: Player, who: { email: string; username: string; password: string }) {
+  await p.testId("account-chip").click();
+  const panel = p.testId("panel-account");
+  await expect(panel).toBeVisible();
+  await panel.getByTestId("auth-to-sign-up").click();
+  await expect(panel.getByTestId("sign-up")).toBeVisible();
+  await panel.getByTestId("auth-email").fill(who.email);
+  await panel.getByTestId("auth-password").fill(who.password);
+  await panel.getByTestId("auth-submit").click();
+  // A new account has no username yet: the form shows by itself.
+  await expect(panel.getByTestId("username-form")).toBeVisible();
+  await expect(panel.getByTestId("account-line")).toContainText("Pick a username");
+  await panel.getByTestId("username-input").fill(who.username);
+  await panel.getByTestId("username-save").click();
+  await expect(panel.getByTestId("account-name")).toHaveText(who.username);
+  await expect(panel.getByTestId("username-form")).toBeHidden();
 }
 
 export class Players {
