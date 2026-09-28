@@ -78,6 +78,7 @@ import {
   grenadeDamage,
   grenadeFlightTicks,
   mapById,
+  isSkinId,
   randomSkin,
   rank,
   readSim,
@@ -583,7 +584,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
    * options.
    */
   private skinFor(identity: Identity): string {
-    if (identity.kind === "account" && identity.skin) return identity.skin;
+    if (identity.kind === "account" && isSkinId(identity.skin)) return identity.skin;
     const worn: string[] = [];
     this.state.players.forEach((p) => worn.push(p.skin));
     return randomSkin(worn);
