@@ -4,7 +4,7 @@
 // @colyseus/auth token from the Colyseus auth header and:
 //   - no token            -> a guest with a generated name;
 //   - a valid token       -> an account: the user id from the token, the
-//                            username read from the database;
+//                            username and saved skin read from the database;
 //   - an invalid token    -> a guest too (bad signature, expired, revoked, or
 //                            the account is gone): playing never needs an
 //                            account, so a stale session never blocks a join.
@@ -14,6 +14,7 @@
 
 import { JWT } from "@colyseus/auth";
 import {
+  isSkinId,
   LEADERBOARD_SIZE,
   MODES,
   usernameError,
@@ -22,6 +23,7 @@ import {
   type ClaimResult,
   type GameMode,
   type LeaderboardEntry,
+  type SkinResult,
   type Stats,
 } from "@bagarre/shared";
 import { and, desc, eq, gt, isNotNull, sql } from "drizzle-orm";
@@ -29,7 +31,14 @@ import { matches, users, type Database, type Placement } from "./db.ts";
 
 export type Identity =
   | { kind: "guest"; name: string }
-  | { kind: "account"; name: string; userId: string; username: string | null };
+  | {
+      kind: "account";
+      name: string;
+      userId: string;
+      username: string | null;
+      /** The saved skin when they joined (a SKINS id), null for a random one. */
+      skin: string | null;
+    };
 
 export interface MatchResult {
   userId: string;
@@ -109,17 +118,23 @@ export async function resolveIdentity(token: string | undefined): Promise<Identi
     console.warn("[accounts] invalid or expired session token, joining as a guest");
     return { kind: "guest", name: guestName() };
   }
-  const username = await usernameOf(userId);
-  return { kind: "account", userId, username, name: username ?? guestName() };
+  const { username, skin } = await profileOf(userId);
+  return { kind: "account", userId, username, skin, name: username ?? guestName() };
 }
 
-async function usernameOf(userId: string): Promise<string | null> {
+/** The username and saved skin; both null when the lookup fails (the join goes on). */
+async function profileOf(userId: string): Promise<{ username: string | null; skin: string | null }> {
   try {
-    const [row] = await db().drizzle.select({ username: users.username }).from(users).where(eq(users.id, userId)).limit(1);
-    return row?.username ?? null;
+    const [row] = await db()
+      .drizzle.select({ username: users.username, skin: users.skin })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    // A skin id no longer in SKINS (never expected: ids are never removed) reads as random.
+    return { username: row?.username ?? null, skin: isSkinId(row?.skin) ? row.skin : null };
   } catch (err) {
-    console.warn("[accounts] username lookup failed:", err instanceof Error ? err.message : err);
-    return null;
+    console.warn("[accounts] profile lookup failed:", err instanceof Error ? err.message : err);
+    return { username: null, skin: null };
   }
 }
 
@@ -131,7 +146,29 @@ const statsOf = (r: UserRow): Stats => ({ kills: r.kills, deaths: r.deaths, wins
 export async function accountById(userId: string): Promise<Account | null> {
   const [row] = await db().drizzle.select().from(users).where(eq(users.id, userId)).limit(1);
   if (!row) return null;
-  return { id: row.id, email: row.email, username: row.username, createdAt: row.createdAt.getTime(), stats: statsOf(row) };
+  return {
+    id: row.id,
+    email: row.email,
+    username: row.username,
+    createdAt: row.createdAt.getTime(),
+    stats: statsOf(row),
+    skin: isSkinId(row.skin) ? row.skin : null,
+  };
+}
+
+/**
+ * Saves the player's skin: a SKINS id, or null to go back to a random one.
+ * Used from their next join on (a room already joined keeps its skin).
+ */
+export async function saveSkin(userId: string, skin: unknown): Promise<SkinResult> {
+  if (skin !== null && !isSkinId(skin)) return { ok: false, message: "Unknown skin." };
+  const updated = await db()
+    .drizzle.update(users)
+    .set({ skin, updatedAt: new Date() })
+    .where(eq(users.id, userId))
+    .returning({ id: users.id });
+  if (updated.length === 0) throw new Error("No such account");
+  return { ok: true, skin };
 }
 
 /**
