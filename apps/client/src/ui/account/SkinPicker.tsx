@@ -112,7 +112,9 @@ export function SkinPicker() {
   return (
     <VStack gap={3} data-testid="skin-picker" data-skin={acc ? (saved ?? RANDOM) : undefined}>
       <Text xstyle={styles.title}>Your skin</Text>
-      {!acc && (
+      {acc ? (
+        <Text color="secondary">Saved on your account. A new choice applies from your next match.</Text>
+      ) : (
         <Text color="secondary" data-testid="skin-sign-in">
           Sign in to choose your skin. Guests get a random one every match.
         </Text>
@@ -128,7 +130,6 @@ export function SkinPicker() {
           <RadioList
             label="Skin"
             isLabelHidden
-            description={acc ? "Saved on your account. It applies from your next match." : undefined}
             value={value}
             onChange={(v) => void choose(v)}
             isDisabled={!acc}
