@@ -273,8 +273,6 @@ export interface SmokeView {
   /** Server ticks it appeared on and clears on. */
   start: number;
   end: number;
-  /** Who threw it (session id). */
-  owner: string;
 }
 
 /** Minimal iteration interface shared by Colyseus MapSchema and Map. */

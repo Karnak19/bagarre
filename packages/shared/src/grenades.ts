@@ -16,7 +16,7 @@
 // you in a duel or a free for all. Everything here is pure and deterministic.
 
 import type { Arena } from "./arena.ts";
-import { DEFAULT_GRENADE, FLASH, GRENADES, NO_TEAM, PLAYER_RADIUS, SMOKE, STUN, TICK_RATE, ticks, type GrenadeDef } from "./constants.ts";
+import { DEFAULT_GRENADE, FLASH, GRENADES, NO_TEAM, PLAYER_RADIUS, SMOKE, TICK_RATE, ticks, type GrenadeDef } from "./constants.ts";
 import { lineOfSight, segmentHitsCircle, type Vec2 } from "./physics.ts";
 
 export function grenadeDef(type: number): GrenadeDef {
@@ -35,11 +35,6 @@ export function grenadeCooldownTicks(type: number): number {
 /** Distance from a blast at (bx, bz) to the edge of a body at (x, z), as the frag and the stun measure it (0 or less: standing on it). */
 export function blastEdge(bx: number, bz: number, x: number, z: number): number {
   return Math.hypot(x - bx, z - bz) - PLAYER_RADIUS;
-}
-
-/** A stun blast reaches a body whose edge is `edge` metres away (blastEdge). */
-export function stunReaches(edge: number): boolean {
-  return edge <= STUN.radius;
 }
 
 /** The smallest angle between two directions, radians, 0..π. */

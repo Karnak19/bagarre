@@ -53,10 +53,10 @@ import {
   GRENADE_SMOKE,
   GRENADE_STUN,
   SMOKE_TICKS,
+  STUN,
   STUN_TICKS,
   blastEdge,
   flashTicks,
-  stunReaches,
   INPUT_BURST,
   KILL_FEED_SIZE,
   KILL_GRENADE,
@@ -1139,7 +1139,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       this.grenadeInternals.delete(id);
     }
     for (const b of blasts) {
-      if (b.kind === GRENADE_SMOKE) this.smoke(b.owner, b.x, b.z);
+      if (b.kind === GRENADE_SMOKE) this.smoke(b.x, b.z);
       else if (b.kind === GRENADE_STUN) this.stun(b.owner, b.x, b.z, b.team);
       else if (b.kind === GRENADE_FLASH) this.flash(b.owner, b.x, b.z, b.team);
       else if (b.kind === GRENADE_FRAG) this.explode(b.owner, b.x, b.z, b.team);
@@ -1147,13 +1147,12 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   }
 
   /** A smoke grenade went off: a cloud for SMOKE_TICKS. Who it hides is up to each client (smokeVeil). */
-  private smoke(owner: string, x: number, z: number) {
+  private smoke(x: number, z: number) {
     const s = new Smoke();
     s.x = x;
     s.z = z;
     s.start = this.state.tick;
     s.end = this.state.tick + SMOKE_TICKS;
-    s.owner = owner;
     this.state.smokes.set(String(this.nextGrenadeId++), s);
   }
 
@@ -1167,7 +1166,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   private stun(owner: string, x: number, z: number, team: number) {
     this.state.players.forEach((p, id) => {
       if (!p.alive || !canDamage(team, p.team, id === owner)) return;
-      if (stunReaches(blastEdge(x, z, p.x, p.z))) p.stunTicks = Math.max(p.stunTicks, STUN_TICKS);
+      if (blastEdge(x, z, p.x, p.z) <= STUN.radius) p.stunTicks = Math.max(p.stunTicks, STUN_TICKS);
     });
   }
 
@@ -1195,7 +1194,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     this.state.players.forEach((p, id) => {
       // Teams: the blast spares the thrower's team and the thrower.
       if (!p.alive || !canDamage(team, p.team, id === owner)) return;
-      const edge = Math.hypot(p.x - x, p.z - z) - PLAYER_RADIUS;
+      const edge = blastEdge(x, z, p.x, p.z);
       const dmg = grenadeDamage(edge, id === owner);
       if (dmg !== null && dmg > 0) hits.push({ id, p, dmg });
     });

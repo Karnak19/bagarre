@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { TICK_RATE } from "@bagarre/shared";
 
 /**
  * Cells of vfx/particles.png, a 4 x 4 greyscale atlas built from the Kenney
@@ -434,7 +435,7 @@ class SmokeLayer {
     const C = this.aCell.array as Float32Array;
     const K = this.aColor.array as Float32Array;
     let n = 0;
-    const t = tick / 30;
+    const t = tick / TICK_RATE;
     for (const c of clouds.slice(0, SMOKE_CLOUDS)) {
       const age = tick - c.start;
       const left = c.end - tick;

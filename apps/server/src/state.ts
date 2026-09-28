@@ -113,7 +113,6 @@ export const Smoke = schema(
     z: t.float32().default(0),
     start: t.uint32().default(0),
     end: t.uint32().default(0),
-    owner: t.string().default(""),
   },
   "Smoke",
 );
