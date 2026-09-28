@@ -16,7 +16,7 @@ import type { GameScene } from "./scene.ts";
 import { SpectatorCamera, sceneRig } from "./spectate/camera.ts";
 import { installSpectatorControls } from "./spectate/controls.ts";
 import type { CameraMode } from "./spectate/model.ts";
-import { Store } from "./store.ts";
+import type { Store } from "./store.ts";
 import { ui } from "./uiState.ts";
 
 /** The camera modes a walk has: no Follow, there is nobody to follow. */
@@ -29,9 +29,6 @@ export interface WalkUi {
   mode: WalkMode;
 }
 
-/** The game's view height (scene.ts VIEW_HEIGHT): a walk starts at the scale you play at. */
-const GAME_VIEW_HEIGHT = 22;
-
 export class Walk {
   private camera: SpectatorCamera | null = null;
   private removeControls: (() => void) | null = null;
@@ -40,7 +37,7 @@ export class Walk {
     private scene: GameScene,
     private canvas: HTMLCanvasElement,
     /** What the top bar reads (the engine's, so it exists before the scene does). */
-    readonly ui: Store<WalkUi> = new Store<WalkUi>({ mapId: null, mode: "free" }),
+    readonly ui: Store<WalkUi>,
   ) {}
 
   get running(): boolean {
@@ -55,7 +52,7 @@ export class Walk {
     scene.setMap(map);
     scene.clearProjectiles();
     if (!this.camera) {
-      const camera = new SpectatorCamera(sceneRig(scene), { followViewHeight: GAME_VIEW_HEIGHT });
+      const camera = new SpectatorCamera(sceneRig(scene));
       this.camera = camera;
       this.removeControls = installSpectatorControls({
         canvas: this.canvas,
@@ -99,9 +96,8 @@ export class Walk {
     this.removeControls = null;
     this.camera = null;
     this.ui.set({ mapId: null, mode: "free" });
-    // The rig wrote the frustum behind GameScene's back: resetView alone
-    // would see nothing to change (like match.ts after spectating).
-    this.scene.resetView();
+    // The rig wrote the frustum behind GameScene's back: resize rebuilds it
+    // from the scene's own view height (like match.ts after spectating).
     this.scene.resize();
   }
 

@@ -7,7 +7,7 @@
 import type { FfaMapDef, MapDef } from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
 import { memo, useMemo } from "react";
-import { planProjector } from "../../minimap.ts";
+import { hex, planProjector } from "../../minimap.ts";
 import { TEAM_PAINT } from "../../paint.ts";
 import { PLAYER_CSS_COLORS } from "../../scene.ts";
 
@@ -18,7 +18,6 @@ const styles = stylex.create({
   svg: { display: "block", width: "100%", height: "auto", aspectRatio: "1" },
 });
 
-const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
 
 const asFfa = (m: MapDef): FfaMapDef | null => ((m as Partial<FfaMapDef>).mode === "ffa" ? (m as FfaMapDef) : null);
 

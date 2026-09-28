@@ -31,7 +31,7 @@ export interface MinimapPing {
 
 const isFfa = (m: MapDef | null): m is FfaMapDef => !!m && (m as Partial<FfaMapDef>).mode === "ffa";
 
-const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
+export const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
 
 /**
  * World (x, z) to plan pixels, for the minimap and the Maps page's drawings
