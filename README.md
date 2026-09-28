@@ -277,7 +277,10 @@ TypeScript: React never runs per frame and there is no React Three Fiber.
   `auth-password`, `auth-submit`, `auth-error`, `auth-sent`,
   `auth-to-sign-up`, `auth-to-sign-in`, `auth-forgot`, `auth-discord`,
   `sign-out`, `account-email`, `account-retry`, `username-form`,
-  `username-input`, `username-save`, `rename`, the reset page's
+  `username-input`, `username-save`, `rename`, the skin picker's
+  `skin-picker` (with `data-skin`, the saved one), `skin-option` (with
+  `data-skin`), `skin-preview`, `skin-preview-name`, `skin-sign-in` and
+  `skin-error`, the reset page's
   `reset-password`, `reset-password-form`, `reset-password-input`,
   `reset-password-confirm`, `reset-password-submit`, `reset-password-error`,
   `reset-password-done`, `reset-password-sign-in`, `reset-password-back`, the
