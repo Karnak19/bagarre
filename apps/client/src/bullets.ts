@@ -17,6 +17,8 @@ import type { Snapshot } from "./net.ts";
 
 interface Predicted {
   seq: number;
+  /** The weapon that fired it (its muzzle flash). */
+  weapon: number;
   sim: BulletSim;
   prev: Vec2;
   ticksLeft: number;
@@ -65,6 +67,7 @@ export class LocalBullets {
     shotPellets(weapon, x, z, aim, seq).forEach((sim, i) => {
       this.bullets.set(bulletId(slot, seq, i), {
         seq,
+        weapon,
         sim,
         prev: { x: sim.x, z: sim.z },
         ticksLeft: life,
@@ -112,13 +115,15 @@ export class LocalBullets {
   }
 
   /** Visible predicted bullets, blended between ticks like the local player. */
-  render(alpha: number, slot: number, out: Map<string, { x: number; z: number; slot: number }>) {
+  render(alpha: number, slot: number, out: Map<string, { x: number; z: number; slot: number; owner?: string; weapon?: number }>, owner?: string) {
     for (const [id, b] of this.bullets) {
       if (b.dead) continue;
       out.set(id, {
         x: b.prev.x + (b.sim.x - b.prev.x) * alpha,
         z: b.prev.z + (b.sim.z - b.prev.z) * alpha,
         slot,
+        owner,
+        weapon: b.weapon,
       });
     }
   }

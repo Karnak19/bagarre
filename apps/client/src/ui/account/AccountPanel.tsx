@@ -1,7 +1,8 @@
 // The account panel: who you play as, and every account screen but the
 // password reset page (routes/reset-password.tsx): sign in, sign up, forgot
-// password, choose a username, your stats and sign out. It reads and drives
-// the account store (auth.ts), which talks to the game server.
+// password, choose a username, your stats, your skin (SkinPicker.tsx) and
+// sign out. It reads and drives the account store (auth.ts), which talks to
+// the game server.
 
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
@@ -18,6 +19,7 @@ import { ui } from "../../uiState.ts";
 import { useSelector, useStore } from "../hooks.ts";
 import { shared } from "../styles.ts";
 import { describeAccount, kd } from "./describe.ts";
+import { SkinPicker } from "./SkinPicker.tsx";
 
 const styles = stylex.create({
   panel: { userSelect: "text" },
@@ -314,6 +316,8 @@ export function AccountPanel() {
       )}
 
       {s.status === "signedOut" && !forced && <AuthForms />}
+
+      {!forced && <SkinPicker />}
 
       {(acc || s.status === "error") && (
         <HStack gap={2} wrap="wrap">

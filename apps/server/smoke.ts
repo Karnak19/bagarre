@@ -6,7 +6,8 @@
 // parallel, one per scenario: each weapon's fire rate / damage / spread, the
 // grenade, and the shield. Part 3 (smoke-accounts.ts, run alongside part 2)
 // covers accounts: sign up and in, usernames, session tokens at join time,
-// match stats, password reset, the leaderboard and Discord's redirect. Part 4
+// match stats, password reset, the leaderboard and Discord's redirect, and
+// skins (the saved one, the pick at join, kept through a reconnect). Part 4
 // covers game pages (private rooms, the open games list, joins by id, room
 // metadata, guest names) and part 5 the scoreboard counters and ping. Part 6
 // covers reconnection (a dropped client keeps its seat for a grace period),
@@ -74,7 +75,7 @@ import {
 } from "@bagarre/shared";
 import { createServer, openGames } from "./src/app.ts";
 import { DuelRoom } from "./src/GameRoom.ts";
-import { SMOKE_PUBLIC_URL, accountChecks, setupTestAccounts } from "./smoke-accounts.ts";
+import { SMOKE_PUBLIC_URL, accountChecks, setupTestAccounts, skinChecks } from "./smoke-accounts.ts";
 import { ffaChecks, registerFfaRooms } from "./smoke-ffa.ts";
 import { registerSpectateRooms, spectatorChecks } from "./smoke-spectate.ts";
 import { registerTeamRooms, teamChecks } from "./smoke-teams.ts";
@@ -1544,8 +1545,10 @@ try {
 
   console.log("\n-- parallel rooms: weapons, grenade, shield, accounts --");
   const accountLines: [boolean, string][] = [];
+  const skinLines: [boolean, string][] = [];
   const results = await Promise.allSettled([
     accountChecks(URL, accounts, (c, l) => accountLines.push([c, `[accounts] ${l}`])).then(() => accountLines),
+    skinChecks(URL, accounts, (c, l) => skinLines.push([c, `[skins] ${l}`])).then(() => skinLines),
     ...WEAPONS.map((_, i) => weaponDuel(i)),
     burstDuel(),
     grenadeDuel(),

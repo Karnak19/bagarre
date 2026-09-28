@@ -177,6 +177,12 @@ export interface PlayerView extends PlayerSim {
    * still be shot. Back to true when they reconnect.
    */
   connected: boolean;
+  /**
+   * The skin worn (a SKINS id), decided by the server at join: the account's
+   * saved one, or a random one for a guest. Never taken from the client.
+   * Empty from an older server: draw the capsule fallback.
+   */
+  skin: string;
 }
 
 export const PLAYER_VIEW_KEYS = [
@@ -202,6 +208,7 @@ export const PLAYER_VIEW_KEYS = [
   "place",
   "ping",
   "connected",
+  "skin",
 ] as const satisfies readonly (keyof PlayerView)[];
 
 /**

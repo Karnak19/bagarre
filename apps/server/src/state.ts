@@ -56,6 +56,14 @@ export const Player = schema(
     ping: t.uint16().default(0),
     /** False while the server holds a dropped player's seat (see GameRoom.onDrop). */
     connected: t.boolean().default(true),
+    /**
+     * The skin worn (a SKINS id), set by the server at join, in the same patch
+     * that adds the player: the account's saved one, else a random one. Never
+     * taken from the client. Last on purpose: fields keep their index, and a
+     * client decodes the fields the server's handshake describes, so an older
+     * client just never reads it.
+     */
+    skin: t.string().default(""),
   },
   "Player",
 );

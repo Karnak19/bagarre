@@ -1,23 +1,43 @@
 import * as THREE from "three";
-import type { GLTF } from "three/addons/loaders/GLTFLoader.js";
 import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
-import { PLAYER_SPEED } from "@bagarre/shared";
+import { GUN_MODELS, PLAYER_SPEED } from "@bagarre/shared";
 
 /**
- * World metres per model unit. The kit's characters are about 2.15 units tall
- * and 1.1 wide with the arms out: at 0.82 the body is about 0.9 m across (the
- * physics circle is 1 m) and the gun sits at 1.05 m, right where bullets fly
- * (BULLET_HEIGHT = 1).
+ * World height of the `Head` bone (the base of the head) in the Idle pose, in
+ * metres. Every skin is scaled so its own head bone lands here, whatever it
+ * wears on top: hats never change the size, and the hitbox is the same
+ * capsule for everyone. The pack's characters are big-headed: the head bone
+ * sits at 2.117 of about 3.05 model units to the top of a bare head, so this
+ * gives about 1.7 m to the top of the head (hats come on top), a body about
+ * 0.7 m across (the physics circle is 1 m), and the gun hand in the aiming
+ * pose at about 1 m, where bullets fly (BULLET_HEIGHT).
  */
-const MODEL_SCALE = 0.82;
+export const HEAD_Y = 1.17;
+/** The head bone's height in model units, in the Idle pose: the same for every skin in the pack (measured if it isn't). */
+const HEAD_BONE_UNITS = 2.117;
 /**
  * Ground speed of the Run clip at timeScale 1, in model units per second,
- * measured from the planted foot in the clip (it slides back ~3.8 u/s).
+ * from the planted feet in the clip (they slide back about 4.5 to 7 u/s).
  */
-const RUN_CLIP_SPEED = 3.8;
-/** Weapon id -> gun node in the character file. */
-const GUN_NODES = ["AK", "Shotgun", "Sniper", "SMG", "Revolver", "Pistol", "Sniper_2"];
-const GUN_SCALE = 0.75;
+const RUN_CLIP_SPEED = 5.2;
+/**
+ * The gun's size next to the character, in model units per gun-file unit
+ * (the pack's guns are about as long as a character is tall). The small
+ * guns are drawn a bit bigger so they still read from above.
+ */
+const GUN_SCALE = [0.35, 0.36, 0.33, 0.42, 0.48, 0.46, 0.35];
+/**
+ * Where the gun's grip sits in the hand: from the FistR bone's origin (the
+ * wrist), along the bone (the fingers' way) and toward the palm, model units.
+ */
+const GRIP_ALONG = 0.14;
+const GRIP_UP = -0.02;
+/** Point in Shoot_OneHanded held as the aiming pose: its first frame, arm straight out, level. */
+const AIM_T = 0;
+/** Playback speed of the recoil (the clip is 0.54 s). */
+const RECOIL_RATE = 1.5;
+/** Share of the Run clip's left-arm swing used while running (the gun arm stays aimed). */
+const RUN_ARM_SWING = 0.6;
 
 const DEG = Math.PI / 180;
 /** Steady-state torso twist limit; beyond it the legs turn instead. */
@@ -35,8 +55,6 @@ const LEG_TURN_SPEED = 800 * DEG;
 const MOVING_SPEED = 0.8;
 /** Above this it's a dash (walking is PLAYER_SPEED). */
 const DASH_SPEED = PLAYER_SPEED * 1.8;
-/** How long a shot keeps the aiming pose when standing, ms. */
-const SHOOT_POSE_MS = 280;
 const HIT_MS = 380;
 /** Share of the torso twist taken by each spine bone, bottom to top. */
 const TWIST_SPLIT: [string, number][] = [
@@ -45,8 +63,15 @@ const TWIST_SPLIT: [string, number][] = [
   ["Torso", 0.25],
 ];
 
-/** Bones driven by the lower-body layer. Everything else is upper body. */
-const LOWER_BONES = new Set(["Root", "FootL", "FootR", "Body_1", "UpperLegL", "UpperLegR", "LowerLegL", "LowerLegR", "PoleTargetL", "PoleTargetR"]);
+/**
+ * Bones driven by the lower-body layer. Everything else is upper body.
+ * `Bone` is the rig's root, `Body` the pelvis above it (it carries the run's
+ * bob, in place: the clips have no root motion), the feet and pole targets
+ * are the leg IK targets, children of the root.
+ */
+const LOWER_BONES = new Set(["Bone", "Body", "FootL", "FootR", "UpperLegL", "UpperLegR", "LowerLegL", "LowerLegR", "PoleTargetL", "PoleTargetR"]);
+/** The arm without the gun, which may swing while running. */
+const LEFT_ARM = new Set(["ShoulderL", "UpperArmL", "LowerArmL", "FistL"]);
 
 function wrap(a: number) {
   while (a > Math.PI) a -= Math.PI * 2;
@@ -57,25 +82,53 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 /** Ground direction angle (atan2(z, x), the sim's convention) -> Object3D.rotation.y. */
 const yawOf = (dirAngle: number) => Math.PI / 2 - dirAngle;
 
-/** Filtered copies of a clip: the lower-body tracks and the upper-body tracks. */
-function split(clip: THREE.AnimationClip): { lower: THREE.AnimationClip; upper: THREE.AnimationClip } {
-  const isLower = (t: THREE.KeyframeTrack) => LOWER_BONES.has(t.name.slice(0, t.name.lastIndexOf(".")));
+const boneOf = (t: THREE.KeyframeTrack) => t.name.slice(0, t.name.lastIndexOf("."));
+
+/** Filtered copies of a clip, by which bones their tracks drive. */
+interface SplitClip {
+  full: THREE.AnimationClip;
+  /** Hips and legs. */
+  lower: THREE.AnimationClip;
+  /** Spine, arms, head. */
+  upper: THREE.AnimationClip;
+  /** The upper body without the left arm. */
+  upperNoArm: THREE.AnimationClip;
+  /** The left arm alone. */
+  armL: THREE.AnimationClip;
+}
+function split(clip: THREE.AnimationClip): SplitClip {
+  const sub = (name: string, keep: (bone: string) => boolean) =>
+    new THREE.AnimationClip(`${clip.name}_${name}`, clip.duration, clip.tracks.filter((t) => keep(boneOf(t))));
   return {
-    lower: new THREE.AnimationClip(`${clip.name}_lower`, clip.duration, clip.tracks.filter(isLower)),
-    upper: new THREE.AnimationClip(`${clip.name}_upper`, clip.duration, clip.tracks.filter((t) => !isLower(t))),
+    full: clip,
+    lower: sub("lower", (b) => LOWER_BONES.has(b)),
+    upper: sub("upper", (b) => !LOWER_BONES.has(b)),
+    upperNoArm: sub("upperNoArm", (b) => !LOWER_BONES.has(b) && !LEFT_ARM.has(b)),
+    armL: sub("armL", (b) => LEFT_ARM.has(b)),
   };
 }
 
-/** Split clips are built once per character file and shared by every instance. */
-const splitCache = new WeakMap<GLTF, Map<string, { lower: THREE.AnimationClip; upper: THREE.AnimationClip; full: THREE.AnimationClip }>>();
-function clipsOf(gltf: GLTF) {
-  let m = splitCache.get(gltf);
+/**
+ * Split clips are built once from the shared clips file and used by every
+ * character: the tracks name bones (`FistR.quaternion`), and every skin has
+ * the same rig, so the mixer on each clone binds them by name.
+ */
+const splitCache = new WeakMap<THREE.AnimationClip[], Map<string, SplitClip>>();
+function clipsOf(clips: THREE.AnimationClip[]) {
+  let m = splitCache.get(clips);
   if (!m) {
     m = new Map();
-    for (const c of gltf.animations) m.set(c.name, { ...split(c), full: c });
-    splitCache.set(gltf, m);
+    for (const c of clips) m.set(c.name, split(c));
+    splitCache.set(clips, m);
   }
   return m;
+}
+
+/** What every character is made from besides its skin: the shared clips and the gun templates (assets.ts). */
+export interface CharacterKit {
+  clips: THREE.AnimationClip[];
+  /** By weapon id; a null one is drawn without a gun. */
+  guns: readonly (THREE.Object3D | null)[];
 }
 
 export interface CharacterState {
@@ -89,16 +142,19 @@ export interface CharacterState {
 }
 
 /**
- * An animated Toon Shooter character.
+ * An animated character: one skin of the Ultimate Animated Character Pack,
+ * played by the shared clips, with the gun of the weapon in hand.
  *
- * Three.js has no bone masks, so every clip is split into two filtered copies,
- * one with the hip/leg tracks and one with the spine/arms/head tracks, and both
- * halves play on the same mixer. The legs play Idle or Run and face the way the
- * character moves (from its drawn velocity, so the local and the remote player
- * go through the same code). The upper half plays an aiming clip, and after the
- * mixer has posed the skeleton the spine is twisted by (aim - legs) so the gun
- * points at the cursor. Past ~105 degrees the legs flip round and the Run clip
- * plays backwards: a backpedal. See `update`.
+ * Three.js has no bone masks, so every clip is split into filtered copies,
+ * one with the hip/leg tracks and one with the spine/arms/head tracks, and
+ * both halves play on the same mixer. The legs play Idle or Run and face the
+ * way the character moves (from its drawn velocity, so the local and the
+ * remote player go through the same code). The upper half holds the first
+ * frame of Shoot_OneHanded (the gun arm straight out) and plays the whole
+ * clip as the recoil. After the mixer has posed the skeleton the spine is
+ * twisted by (aim - legs) so the gun points at the cursor. Past ~105 degrees
+ * the legs flip round and the Run clip plays backwards: a backpedal. See
+ * `update`.
  */
 export class Character {
   readonly root = new THREE.Group();
@@ -107,23 +163,26 @@ export class Character {
   private model: THREE.Object3D;
   private mixer: THREE.AnimationMixer;
   private materials: THREE.MeshStandardMaterial[] = [];
-  private guns: THREE.Object3D[] = [];
-  /** Barrel tip of each gun, in the gun's local space. */
-  private tips: THREE.Vector3[] = [];
+  /** One gun per weapon id (null: no model), all under the right hand, one visible. */
+  private guns: (THREE.Object3D | null)[] = [];
   /** Spine bones and their share of the twist; `pose` = the mixer's value before the twist. */
   private spine: { bone: THREE.Bone; share: number; pose: THREE.Quaternion }[] = [];
+  /** World metres per model unit, set so the head bone is at HEAD_Y. */
+  readonly scale: number;
 
   private lowerIdle: THREE.AnimationAction;
   private lowerRun: THREE.AnimationAction;
-  private upperIdle: THREE.AnimationAction;
-  private upperShoot: THREE.AnimationAction;
-  private upperRun: THREE.AnimationAction;
+  /** The aiming pose, held: the upper body but the left arm, and the left arm. */
+  private aimBody: THREE.AnimationAction;
+  private aimArm: THREE.AnimationAction;
+  /** The left arm's swing from the Run clip. */
+  private runArm: THREE.AnimationAction;
+  private recoil: THREE.AnimationAction;
   private upperHit: THREE.AnimationAction;
   private death: THREE.AnimationAction;
 
   // Blend weights, eased every frame toward their targets.
   private wRun = 0;
-  private wShoot = 0;
 
   private legs = 0;
   private backpedal = false;
@@ -134,53 +193,54 @@ export class Character {
   private vx = 0;
   private vz = 0;
   private leanAmount = 0;
-  private shotAt = -1e9;
   private hitAt = -1e9;
   private flashAt = -1e9;
   /** Hit reaction scheduled for later (remote players are drawn 100 ms late). */
   private pendingHit = Infinity;
 
-  constructor(gltf: GLTF, tint: THREE.Color) {
-    this.model = cloneSkinned(gltf.scene);
-    this.model.scale.setScalar(MODEL_SCALE);
-    this.root.add(this.lean);
-    this.lean.add(this.yawNode);
-    this.yawNode.add(this.model);
+  /** `skin`: the loaded skin's scene (assets.ts' skinModel), cloned here, never changed. */
+  constructor(
+    skin: THREE.Object3D,
+    kit: CharacterKit,
+  ) {
+    this.model = cloneSkinned(skin);
 
     // Materials are shared by every clone: copy them per instance before
-    // tinting or flashing, or both players change colour together.
+    // flashing, or every player wearing that skin flashes together. The
+    // meshes of one skin share one skeleton in the file; SkeletonUtils gives
+    // each clone its own copy, so share one again (one bone texture).
     const copies = new Map<THREE.Material, THREE.MeshStandardMaterial>();
+    const skeletons: THREE.Skeleton[] = [];
     this.model.traverse((o) => {
-      const mesh = o as THREE.Mesh;
+      const mesh = o as THREE.SkinnedMesh;
       if (!mesh.isMesh) return;
       mesh.castShadow = true;
       mesh.frustumCulled = false; // skinned bounds don't follow the animation
+      if (mesh.isSkinnedMesh) {
+        const same = skeletons.find((s) => s.bones.length === mesh.skeleton.bones.length && s.bones.every((b, i) => b === mesh.skeleton.bones[i]));
+        if (same) {
+          mesh.skeleton.dispose();
+          mesh.skeleton = same;
+        } else skeletons.push(mesh.skeleton);
+      }
       const src = mesh.material as THREE.MeshStandardMaterial;
       let mat = copies.get(src);
       if (!mat) {
         mat = src.clone();
-        if (src.name === "Character_Main" || src.name === "Enemy_Red") mat.color.copy(tint);
         copies.set(src, mat);
         this.materials.push(mat);
       }
       mesh.material = mat;
     });
 
-    for (const name of GUN_NODES) {
-      const gun = this.model.getObjectByName(name) ?? new THREE.Object3D();
-      // The kit's guns are huge next to the body; a bit smaller reads better
-      // from above and keeps the muzzle closer to where bullets start.
-      gun.scale.multiplyScalar(GUN_SCALE);
-      this.guns.push(gun);
-    }
     for (const [name, share] of TWIST_SPLIT) {
       const bone = this.model.getObjectByName(name) as THREE.Bone | undefined;
       if (bone) this.spine.push({ bone, share, pose: bone.quaternion.clone() });
     }
 
     this.mixer = new THREE.AnimationMixer(this.model);
-    const clips = clipsOf(gltf);
-    const get = (name: string) => clips.get(name) ?? clips.get("Idle")!;
+    const clips = clipsOf(kit.clips);
+    const get = (name: string) => clips.get(name) ?? clips.get("Idle") ?? [...clips.values()][0];
     const act = (clip: THREE.AnimationClip, loop = true) => {
       const a = this.mixer.clipAction(clip);
       a.setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, Infinity);
@@ -189,70 +249,123 @@ export class Character {
       a.weight = 0;
       return a;
     };
+    const shoot = get("Shoot_OneHanded");
     this.lowerIdle = act(get("Idle").lower);
     this.lowerRun = act(get("Run").lower);
-    // Standing and not shooting: the first frame of Idle_Shoot, held. The
-    // kit's Idle lowers the gun, which reads badly for a twin-stick aim.
-    // (A copy of the clip: the mixer keeps one action per clip object.)
-    this.upperIdle = act(get("Idle_Shoot").upper.clone());
-    this.upperIdle.timeScale = 0;
-    this.upperShoot = act(get("Idle_Shoot").upper);
-    this.upperRun = act(get("Run_Shoot").upper);
-    this.upperHit = act(get("HitReact").upper, false);
+    // The pack's Idle lets the arms hang, which reads badly for a twin-stick
+    // aim: the upper body holds Shoot_OneHanded's first frame instead.
+    // (Copies of the clips: the mixer keeps one action per clip object, and
+    // the recoil plays the same one.)
+    this.aimBody = act(shoot.upperNoArm.clone());
+    this.aimArm = act(shoot.armL.clone());
+    for (const a of [this.aimBody, this.aimArm]) {
+      a.time = AIM_T * shoot.full.duration;
+      a.timeScale = 0;
+    }
+    this.runArm = act(get("Run").armL);
+    this.recoil = act(shoot.upperNoArm, false);
+    this.recoil.timeScale = RECOIL_RATE;
+    this.recoil.stop();
+    this.upperHit = act(get("RecieveHit").upper, false);
     this.death = act(get("Death").full, false);
-    this.lowerIdle.weight = 1;
-    this.upperIdle.weight = 1;
 
-    this.computeTips();
+    // Measure the head in the Idle pose, then scale to HEAD_Y.
+    const idle = this.mixer.clipAction(get("Idle").full);
+    idle.play();
+    idle.weight = 1;
+    this.mixer.update(0);
+    this.model.updateMatrixWorld(true);
+    const head = this.model.getObjectByName("Head");
+    const headY = head ? head.getWorldPosition(_v).y : HEAD_BONE_UNITS;
+    idle.stop();
+    this.mixer.uncacheAction(idle.getClip(), this.model);
+    this.scale = HEAD_Y / (headY > 0.5 && headY < 6 ? headY : HEAD_BONE_UNITS);
+
+    // The aiming pose, where the gun is fitted to the hand.
+    this.lowerIdle.weight = 1;
+    this.aimBody.weight = 1;
+    this.aimArm.weight = 1;
+    this.mixer.update(0);
+    this.model.updateMatrixWorld(true);
+    this.fitGuns(kit.guns);
+
+    this.model.scale.setScalar(this.scale);
+    this.root.add(this.lean);
+    this.lean.add(this.yawNode);
+    this.yawNode.add(this.model);
     this.setWeapon(0);
   }
 
-  /** Finds each gun's barrel tip: the end of its bounding box that points forward in the aiming pose. */
-  private computeTips() {
-    this.mixer.update(0);
-    this.upperShoot.weight = 1;
-    this.upperIdle.weight = 0;
-    this.mixer.update(0.01);
-    this.root.updateMatrixWorld(true);
-    const inv = new THREE.Matrix4();
-    const box = new THREE.Box3();
-    const tmp = new THREE.Box3();
-    const fwd = new THREE.Vector3();
-    for (const gun of this.guns) {
-      inv.copy(gun.matrixWorld).invert();
-      box.makeEmpty();
-      gun.traverse((o) => {
-        const m = o as THREE.Mesh;
-        if (!m.isMesh) return;
-        m.geometry.computeBoundingBox();
-        tmp.copy(m.geometry.boundingBox!).applyMatrix4(m.matrixWorld).applyMatrix4(inv);
-        box.union(tmp);
-      });
-      // Model forward (+Z of the yaw node) expressed in the gun's local frame.
-      fwd.set(0, 0, 1).transformDirection(this.root.matrixWorld).transformDirection(inv);
-      const tip = new THREE.Vector3();
-      if (box.isEmpty()) {
-        this.tips.push(tip);
-        continue;
-      }
-      box.getCenter(tip);
-      const ax = Math.abs(fwd.x) > Math.abs(fwd.y) ? (Math.abs(fwd.x) > Math.abs(fwd.z) ? "x" : "z") : Math.abs(fwd.y) > Math.abs(fwd.z) ? "y" : "z";
-      tip[ax] = fwd[ax] > 0 ? box.max[ax] : box.min[ax];
-      this.tips.push(tip);
+  /**
+   * Puts one clone of each gun in the right hand. In the aiming pose (the
+   * skeleton is posed so when this runs, the model unscaled at the origin)
+   * the barrel (+X in the gun files) points straight ahead, level (+Z of the
+   * model) and the gun's top up, whatever the hand bone's own axes are, and
+   * the grip sits in the fist. The recoil and the spine twist then move the
+   * hand, and the gun with it.
+   */
+  private fitGuns(templates: readonly (THREE.Object3D | null)[]) {
+    const fist = this.model.getObjectByName("FistR");
+    if (!fist) {
+      this.guns = templates.map(() => null);
+      return;
     }
-    this.upperShoot.weight = 0;
-    this.upperIdle.weight = 1;
+    const fistQ = fist.getWorldQuaternion(new THREE.Quaternion());
+    const fistScale = fist.getWorldScale(new THREE.Vector3()).x || 1;
+    // Barrel along the model's forward, top up: +X -> +Z, a quarter turn about Y.
+    const want = new THREE.Quaternion().setFromAxisAngle(_up, -Math.PI / 2);
+    const hand = new THREE.Group();
+    hand.name = "GunHand";
+    hand.quaternion.copy(fistQ).invert().multiply(want);
+    hand.scale.setScalar(1 / fistScale);
+    // The grip: a little along the bone (toward the fingers) and up from the wrist, in the fist's frame.
+    hand.position.set(0, GRIP_ALONG, 0).add(new THREE.Vector3(0, GRIP_UP, 0).applyQuaternion(_qi.copy(fistQ).invert())).divideScalar(fistScale);
+    fist.add(hand);
+    // Material copies here too, like the body's: they flash with it, and are
+    // freed with the character, so no gun keeps its shaders once nobody holds it.
+    const copies = new Map<THREE.Material, THREE.MeshStandardMaterial>();
+    const own = (o: THREE.Object3D) => {
+      o.castShadow = true;
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const src = mesh.material as THREE.MeshStandardMaterial;
+      let mat = copies.get(src);
+      if (!mat) {
+        mat = src.clone();
+        copies.set(src, mat);
+        this.materials.push(mat);
+      }
+      mesh.material = mat;
+    };
+    this.guns = templates.map((t, w) => {
+      const def = GUN_MODELS[w];
+      if (!t || !def) return null;
+      const gun = t.clone();
+      const s = GUN_SCALE[w] ?? GUN_SCALE[0];
+      gun.scale.setScalar(s);
+      gun.position.set(-def.grip[0] * s, -def.grip[1] * s, -def.grip[2] * s);
+      gun.visible = false;
+      gun.traverse(own);
+      hand.add(gun);
+      return gun;
+    });
   }
 
   setWeapon(w: number) {
     if (w === this.weapon) return;
     this.weapon = w;
-    this.guns.forEach((g, i) => (g.visible = i === w));
+    this.guns.forEach((g, i) => g && (g.visible = i === w));
   }
 
-  /** A shot was fired (keeps the aiming pose up while standing). */
-  shot(now: number) {
-    this.shotAt = now;
+  /**
+   * A shot was fired: the recoil. It plays from its start, and a shot while
+   * it's still playing doesn't restart it (the SMG fires every 0.1 s; the
+   * kick lasts about 0.36 s): every kick starts and ends in the aiming pose,
+   * so nothing jumps.
+   */
+  shot(_now: number) {
+    if (this.recoil.isRunning()) return;
+    this.recoil.reset().play();
   }
 
   /** HP went down: flash now or at `at`, and play the hit reaction then. */
@@ -263,9 +376,10 @@ export class Character {
   /** World position of the barrel tip of the gun in hand. */
   muzzle(out: THREE.Vector3): THREE.Vector3 {
     const gun = this.guns[this.weapon];
-    if (!gun) return this.root.getWorldPosition(out).setY(1);
+    const def = GUN_MODELS[this.weapon];
+    if (!gun || !def) return this.root.getWorldPosition(out).setY(1);
     gun.updateWorldMatrix(true, false);
-    return out.copy(this.tips[this.weapon]).applyMatrix4(gun.matrixWorld);
+    return out.set(def.muzzle[0], def.muzzle[1], def.muzzle[2]).applyMatrix4(gun.matrixWorld);
   }
 
   /** Current speed in m/s (smoothed), for the dash streak. */
@@ -274,17 +388,21 @@ export class Character {
   }
 
   /**
-   * Frees what this instance owns: its material copies, its skeletons' bone
-   * textures and the mixer's cached actions. The geometry is shared with the
-   * loaded file and stays.
+   * Frees what this instance owns: its material copies, its skeleton's bone
+   * texture and the mixer's cached actions. The geometry is shared with the
+   * loaded skin and the gun templates and stays.
    */
   dispose() {
     this.mixer.stopAllAction();
     this.mixer.uncacheRoot(this.model);
     for (const m of this.materials) m.dispose();
+    const done = new Set<THREE.Skeleton>();
     this.model.traverse((o) => {
       const sk = (o as THREE.SkinnedMesh).skeleton;
-      if ((o as THREE.SkinnedMesh).isSkinnedMesh && sk) sk.dispose();
+      if ((o as THREE.SkinnedMesh).isSkinnedMesh && sk && !done.has(sk)) {
+        done.add(sk);
+        sk.dispose();
+      }
     });
   }
 
@@ -319,6 +437,7 @@ export class Character {
       if (!s.alive) {
         this.death.reset().play();
         this.death.weight = 1;
+        this.recoil.stop();
       } else {
         this.death.stop();
         this.death.weight = 0;
@@ -365,26 +484,27 @@ export class Character {
     // --- Blend weights. ---
     const ease = (w: number, to: number, rate: number) => w + (to - w) * (1 - Math.exp(-rate * dt));
     this.wRun = ease(this.wRun, moving ? 1 : 0, 12);
-    const shooting = now - this.shotAt < SHOOT_POSE_MS;
-    this.wShoot = ease(this.wShoot, shooting ? 1 : 0, 20);
     const dash = this.alive && speed > DASH_SPEED;
     const alive = this.alive ? 1 : 0;
 
     // The run plays at the rate that keeps the planted foot still, backwards
     // for a backpedal. A dash runs flat out.
-    const rate = clamp(speed / (RUN_CLIP_SPEED * MODEL_SCALE), 0.6, dash ? 3 : 2.2);
+    const rate = clamp(speed / (RUN_CLIP_SPEED * this.scale), 0.6, dash ? 3 : 2.2);
     this.lowerRun.timeScale = this.backpedal ? -rate : rate;
     this.lowerRun.weight = this.wRun * alive;
     this.lowerIdle.weight = (1 - this.wRun) * alive;
-    // The upper run clip rides the same cycle as the legs so the bob matches.
-    this.upperRun.time = this.lowerRun.time;
-    this.upperRun.timeScale = this.lowerRun.timeScale;
+    // The free arm swings with the legs' cycle.
+    this.runArm.time = this.lowerRun.time;
+    this.runArm.timeScale = this.lowerRun.timeScale;
     const hitT = (now - this.hitAt) / HIT_MS;
     const wHit = this.alive && hitT < 1 ? 0.85 * Math.sin(Math.PI * Math.min(1, hitT * 1.6)) ** 0.5 * (1 - hitT) : 0;
     const upper = alive * (1 - wHit);
-    this.upperRun.weight = upper * this.wRun;
-    this.upperShoot.weight = upper * (1 - this.wRun) * this.wShoot;
-    this.upperIdle.weight = upper * (1 - this.wRun) * (1 - this.wShoot);
+    const wRecoil = this.recoil.isRunning() ? 1 : 0;
+    this.aimBody.weight = upper * (1 - wRecoil);
+    this.recoil.weight = upper * wRecoil;
+    const swing = RUN_ARM_SWING * this.wRun;
+    this.aimArm.weight = upper * (1 - swing);
+    this.runArm.weight = upper * swing;
     this.upperHit.weight = wHit;
     this.death.weight = 1 - alive;
 
@@ -439,6 +559,8 @@ export class Character {
   }
 }
 
+const _v = new THREE.Vector3();
+const _up = new THREE.Vector3(0, 1, 0);
 const _axis = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _qi = new THREE.Quaternion();

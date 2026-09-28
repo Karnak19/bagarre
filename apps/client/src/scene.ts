@@ -10,8 +10,9 @@ import {
   type MapDef,
 } from "@bagarre/shared";
 import { buildArena, disposeArena } from "./arenaView.ts";
-import type { Assets } from "./assets.ts";
+import { skinModel, skinModelNow, type Assets } from "./assets.ts";
 import { Character } from "./character.ts";
+import { TEAM_PAINT } from "./paint.ts";
 import { Plates } from "./plates.ts";
 import { Vfx, shieldMaterial } from "./vfx.ts";
 
@@ -61,7 +62,7 @@ export function setAssets(a: Assets) {
   assets = a;
 }
 
-/** The old capsule-and-box body, used when a character model failed to load. */
+/** The old capsule-and-box body, worn while a skin loads, and for good when it fails. */
 class PlaceholderBody {
   readonly group = new THREE.Group();
   private bodyMat: THREE.MeshStandardMaterial;
@@ -86,6 +87,15 @@ class PlaceholderBody {
     this.bodyMat.color.set(color);
   }
 
+  dispose() {
+    this.group.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      m.geometry.dispose();
+      (m.material as THREE.Material).dispose();
+    });
+  }
+
   flash(at: number) {
     this.flashUntil = at + 90;
   }
@@ -108,11 +118,11 @@ export class PlayerMesh {
   private shield: THREE.Mesh;
   private shieldMat: THREE.ShaderMaterial;
   private rings: THREE.Mesh[] = [];
-  private placeholderParts: THREE.Group | null = null;
   private aim = 0;
   private alive = true;
   private weapon = 0;
   private lastT = -1;
+  private disposed = false;
   /** Hooked up by GameScene.addPlayer. */
   scene: GameScene | null = null;
   /** Drawn speed above this means a dash (walking is PLAYER_SPEED). */
@@ -120,45 +130,50 @@ export class PlayerMesh {
   /** Set when the mesh moved at dash speed since the last update. */
   dashing = false;
 
+  /**
+   * `skin`: the SKINS id worn. Until that skin's model has loaded (and for
+   * good if it fails, or for an empty or unknown id: an older server) the
+   * player is the capsule; the character replaces it once loaded. A skin
+   * already loaded is worn at once. `id`: the player's session id, which
+   * tracers use to find their gun.
+   */
   constructor(
     color: number,
     readonly isLocal: boolean,
     slot = Math.max(0, PLAYER_COLORS.indexOf(color)),
+    readonly skin = "",
+    readonly id = "",
   ) {
     this.slot = slot;
     this.baseColor = new THREE.Color(color);
-    const gltf = assets?.characters[slot % 2] ?? null;
-    if (gltf) {
-      try {
-        // The kit's colours are dark and flat: tint the main cloth with a
-        // slightly darkened player colour so the two sides read at a glance.
-        this.character = new Character(gltf, this.baseColor.clone().multiplyScalar(0.8));
-        this.group.add(this.character.root);
-      } catch (err) {
-        console.warn("[scene] character setup failed, using the placeholder", err);
-        this.character = null;
-      }
-    }
-    if (!this.character) {
+    const now = skinModelNow(skin);
+    if (!now || !this.wear(now)) {
       this.placeholder = new PlaceholderBody(color);
       this.group.add(this.placeholder.group);
+      if (now === undefined && skin)
+        void skinModel(skin).then((model) => {
+          if (model && !this.disposed && this.wear(model)) this.dropPlaceholder();
+        });
     }
 
-    // Ground ring in the player's colour (and a white one for "you").
+    // Ground ring in the player's colour (and a white one for "you"). In a
+    // team game (paints 6 and 7) it is the team marker: the skins keep their
+    // own colours, so it is wider, solid, over a tinted disc.
+    const team = slot === TEAM_PAINT[0] || slot === TEAM_PAINT[1];
     const ring = (r0: number, r1: number, c: THREE.ColorRepresentation, opacity: number) => {
-      const m = new THREE.Mesh(
-        new THREE.RingGeometry(r0, r1, 40),
-        new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity, depthWrite: false }),
-      );
+      const geo = r0 > 0 ? new THREE.RingGeometry(r0, r1, 40) : new THREE.CircleGeometry(r1, 40);
+      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity, depthWrite: false }));
       m.rotation.x = -Math.PI / 2;
       m.position.y = 0.02;
       m.renderOrder = 2;
       this.group.add(m);
       this.rings.push(m);
     };
-    ring(PLAYER_RADIUS + 0.02, PLAYER_RADIUS + 0.12, color, 0.75);
-    if (isLocal) ring(PLAYER_RADIUS + 0.14, PLAYER_RADIUS + 0.2, 0xffffff, 0.55);
-    this.placeholderParts = this.placeholder ? this.placeholder.group : null;
+    if (team) {
+      ring(0, PLAYER_RADIUS + 0.02, color, 0.22);
+      ring(PLAYER_RADIUS + 0.02, PLAYER_RADIUS + 0.2, color, 0.95);
+    } else ring(PLAYER_RADIUS + 0.02, PLAYER_RADIUS + 0.12, color, 0.75);
+    if (isLocal) ring(PLAYER_RADIUS + (team ? 0.22 : 0.14), PLAYER_RADIUS + (team ? 0.28 : 0.2), 0xffffff, 0.55);
 
     this.shieldMat = shieldMaterial(this.baseColor);
     this.shield = new THREE.Mesh(new THREE.SphereGeometry(1.05, 32, 20), this.shieldMat);
@@ -168,12 +183,41 @@ export class PlayerMesh {
     this.group.add(this.shield);
   }
 
+  /** Whether the skin's model is on (false: the capsule, loading or failed). */
+  get loaded(): boolean {
+    return !!this.character;
+  }
+
+  /** Builds the character from a loaded skin. False (and the capsule stays) if the clips are missing or it fails. */
+  private wear(model: THREE.Object3D): boolean {
+    const kit = assets?.anims ? { clips: assets.anims, guns: assets.guns } : null;
+    if (!kit) return false;
+    try {
+      this.character = new Character(model, kit);
+      this.group.add(this.character.root);
+      return true;
+    } catch (err) {
+      console.warn("[scene] character setup failed, using the placeholder", err);
+      this.character = null;
+      return false;
+    }
+  }
+
+  private dropPlaceholder() {
+    const p = this.placeholder;
+    if (!p) return;
+    this.placeholder = null;
+    this.group.remove(p.group);
+    p.dispose();
+  }
+
   get color(): THREE.Color {
     return this.baseColor;
   }
 
   /** Frees everything this player owns on the GPU. Call after `GameScene.removePlayer`. */
   dispose() {
+    this.disposed = true;
     this.character?.dispose();
     this.character = null;
     for (const r of this.rings) {
@@ -182,12 +226,7 @@ export class PlayerMesh {
     }
     this.shield.geometry.dispose();
     this.shieldMat.dispose();
-    this.placeholderParts?.traverse((o) => {
-      const m = o as THREE.Mesh;
-      if (!m.isMesh) return;
-      m.geometry.dispose();
-      (m.material as THREE.Material).dispose();
-    });
+    this.dropPlaceholder();
   }
 
   /** `fraction` = shield strength left (0 hides the bubble). */
@@ -220,11 +259,11 @@ export class PlayerMesh {
     if (this.isLocal) this.scene?.shake(0.35);
   }
 
-  /** A shot left this player's gun: muzzle flash and the aiming pose. */
-  shot(now: number) {
+  /** A shot left this player's gun: muzzle flash and the aiming pose. `weapon`: the one that fired, when known. */
+  shot(now: number, weapon = this.weapon) {
     if (!this.alive) return;
     this.character?.shot(now);
-    this.scene?.muzzleFlash(this, this.aim, this.weapon);
+    this.scene?.muzzleFlash(this, this.aim, weapon);
   }
 
   /** Where the muzzle flash goes. */
@@ -242,7 +281,7 @@ export class PlayerMesh {
       this.character.update(now, dt, { x: p.x, z: p.z, aim: this.aim, alive: this.alive, weapon: this.weapon });
       this.dashing = this.alive && this.character.speed > PlayerMesh.DASH_SPEED_VISUAL;
     } else {
-      this.placeholder!.update(now, this.aim, this.alive);
+      this.placeholder?.update(now, this.aim, this.alive);
       this.dashing = false;
     }
     for (const r of this.rings) r.visible = this.alive;
@@ -257,7 +296,16 @@ interface DrawnBullet {
   z: number;
   px: number;
   pz: number;
+  /** Where it was first drawn, and how far off its path the shooter's muzzle was then (see syncBullets). */
+  x0: number;
+  z0: number;
+  off: THREE.Vector3 | null;
 }
+
+/** A bullet drawn from its shooter's muzzle eases onto its true path (at BULLET_HEIGHT, from the body's centre) over this many metres. */
+const TRACER_MERGE = 3;
+/** Farther than this from the muzzle when first seen, the bullet is drawn on its path straight away. */
+const TRACER_MAX_OFFSET = 2.5;
 
 export class GameScene {
   readonly renderer: THREE.WebGLRenderer;
@@ -285,6 +333,7 @@ export class GameScene {
   private trauma = 0;
   private shakeOffset = new THREE.Vector3();
   private tmp = new THREE.Vector3();
+  private tmp2 = new THREE.Vector3();
   /** The current map's floor, walls, cover and decor (rebuilt by `setMap`). */
   private arena = new THREE.Group();
   /** The map on screen, null until the first snapshot says which. */
@@ -507,7 +556,7 @@ export class GameScene {
    * vanishes next to cover or a player hit it: sparks. One that vanishes in
    * the open ran out of range: nothing.
    */
-  syncBullets(bullets: Map<string, { x: number; z: number; slot: number }>) {
+  syncBullets(bullets: Map<string, { x: number; z: number; slot: number; owner?: string; weapon?: number }>) {
     for (const [id, b] of this.bullets) {
       if (!bullets.has(id)) {
         this.impact(b);
@@ -521,10 +570,18 @@ export class GameScene {
       if (!d) {
         const mesh = new THREE.Mesh(this.bulletGeo, this.bulletMats[b.slot] ?? this.bulletMats[0]);
         mesh.castShadow = true;
-        d = { mesh, x: b.x, z: b.z, px: b.x, pz: b.z };
+        d = { mesh, x: b.x, z: b.z, px: b.x, pz: b.z, x0: b.x, z0: b.z, off: null };
         this.bullets.set(id, d);
         this.scene.add(mesh);
-        if (id.endsWith(":0")) for (const p of this.players) if (p.isLocal && p.slot === b.slot) p.shot(now);
+        if (id.endsWith(":0")) for (const p of this.players) if (p.isLocal && p.slot === b.slot) p.shot(now, b.weapon);
+        // The sim's bullets fly at BULLET_HEIGHT from the body's centre line;
+        // the gun is in the right hand. The tracer starts at the muzzle and
+        // eases onto the true path over its first metres.
+        for (const p of this.players) {
+          if (!b.owner || p.id !== b.owner) continue;
+          const m = p.muzzle(this.tmp).sub(this.tmp2.set(b.x, BULLET_HEIGHT, b.z));
+          if (m.length() < TRACER_MAX_OFFSET) d.off = m.clone();
+        }
       }
       if (b.x !== d.x || b.z !== d.z) {
         d.px = d.x;
@@ -533,6 +590,11 @@ export class GameScene {
         d.z = b.z;
       }
       d.mesh.position.set(b.x, BULLET_HEIGHT, b.z);
+      if (d.off) {
+        const k = 1 - Math.hypot(b.x - d.x0, b.z - d.z0) / TRACER_MERGE;
+        if (k > 0) d.mesh.position.addScaledVector(d.off, k);
+        else d.off = null;
+      }
       if (d.x !== d.px || d.z !== d.pz) d.mesh.lookAt(b.x + (d.x - d.px), BULLET_HEIGHT, b.z + (d.z - d.pz));
     }
   }

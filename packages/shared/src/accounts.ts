@@ -37,6 +37,8 @@ export const RESET_PASSWORD_ROUTE = "/auth/reset-password";
 export const ACCOUNT_ROUTE = "/account";
 /** POST `{ username }` with the token: claims or changes the username (`ClaimResult`). */
 export const USERNAME_ROUTE = "/account/username";
+/** POST `{ skin }` with the token: sets the saved skin, `null` for random (`SkinResult`). */
+export const SKIN_ROUTE = "/account/skin";
 /** GET: the top accounts by wins (`{ entries: LeaderboardEntry[] }`). */
 export const LEADERBOARD_ROUTE = "/leaderboard";
 
@@ -62,6 +64,8 @@ export interface Account {
   username: string | null;
   createdAt: number;
   stats: Stats;
+  /** The saved skin id (see SKINS); null means a random one at every match. Absent from older servers. */
+  skin?: string | null;
 }
 
 export interface AuthProviders {
@@ -71,6 +75,8 @@ export interface AuthProviders {
 export type ClaimResult =
   | { ok: true; username: string }
   | { ok: false; reason: "invalid" | "taken"; message: string };
+
+export type SkinResult = { ok: true; skin: string | null } | { ok: false; message: string };
 
 export type ResetPasswordResult = { ok: true } | { ok: false; message: string };
 

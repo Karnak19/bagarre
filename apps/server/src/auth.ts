@@ -1,5 +1,5 @@
 // Accounts over HTTP: @colyseus/auth's routes (sign up and in with email and
-// password, Discord), plus the game's own (password reset, username,
+// password, Discord), plus the game's own (password reset, username, skin,
 // leaderboard). All of them are on the game server's router, so in
 // production they live under /colyseus/auth/* and /colyseus/account/* (the
 // client's Caddy strips /colyseus and proxies the rest here).
@@ -29,12 +29,13 @@ import {
   PASSWORD_MIN,
   RESET_PASSWORD_PAGE,
   RESET_PASSWORD_ROUTE,
+  SKIN_ROUTE,
   USERNAME_ROUTE,
   type AuthProviders,
   type ResetPasswordResult,
 } from "@bagarre/shared";
 import { eq, sql } from "drizzle-orm";
-import { accountById, claimUsername, leaderboard, sessionUser, verifySession, type TokenPayload } from "./accounts.ts";
+import { accountById, claimUsername, leaderboard, saveSkin, sessionUser, verifySession, type TokenPayload } from "./accounts.ts";
 import { bootDatabase, users, type Database } from "./db.ts";
 
 /** Only for dev and tests: production refuses to start without JWT_SECRET. */
@@ -228,6 +229,13 @@ function gameEndpoints(db: Database): Record<string, Endpoint> {
     return claimUsername(userId, String(bodyOf(ctx).username ?? ""));
   });
 
+  // `{ skin }`: a SKINS id, or null for a random one. Missing reads as null.
+  const skin = createEndpoint(SKIN_ROUTE, { method: "POST" }, async (ctx) => {
+    const userId = await verifySession(bearer(ctx.getHeader("authorization")));
+    if (!userId) throw ctx.error(401, { message: "Not signed in" });
+    return saveSkin(userId, bodyOf(ctx).skin ?? null);
+  });
+
   const top = createEndpoint(LEADERBOARD_ROUTE, { method: "GET" }, async () => ({ entries: await leaderboard() }));
 
   return {
@@ -236,6 +244,7 @@ function gameEndpoints(db: Database): Record<string, Endpoint> {
     "auth-providers": providers,
     "account-get": account,
     "account-username": username,
+    "account-skin": skin,
     leaderboard: top,
   };
 }

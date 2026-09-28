@@ -20,12 +20,14 @@ import {
   LEADERBOARD_ROUTE,
   PASSWORD_MIN,
   RESET_PASSWORD_ROUTE,
+  SKIN_ROUTE,
   USERNAME_ROUTE,
   type Account,
   type AuthProviders,
   type ClaimResult,
   type LeaderboardEntry,
   type ResetPasswordResult,
+  type SkinResult,
 } from "@bagarre/shared";
 import { resolveServerUrl } from "./config.ts";
 import { Store, type Readable } from "./store.ts";
@@ -274,6 +276,29 @@ class AccountStore implements Readable<AccountState> {
     } catch (err) {
       if (statusOf(err) === 401) void this.refresh();
       return { ok: false, reason: "error", message: statusOf(err) === undefined ? UNREACHABLE : authErrorMessage(err) };
+    }
+  }
+
+  /**
+   * Saves the skin to wear from the next match on: a SKINS id, or null for a
+   * random one at every match. Resolves with an error message, or null once saved.
+   */
+  async setSkin(skin: string | null): Promise<string | null> {
+    if (!this.token) return "Sign in to choose your skin.";
+    try {
+      const res = await this.client.http.post(SKIN_ROUTE, { body: { skin } });
+      const result = res.data as SkinResult;
+      if (!result.ok) return result.message;
+      const current = this.state.account;
+      if (current) {
+        // Same as claimUsername: a refresh() in flight would bring back the old skin.
+        this.generation++;
+        this.store.patch({ account: { ...current, skin: result.skin } });
+      }
+      return null;
+    } catch (err) {
+      if (statusOf(err) === 401) void this.refresh();
+      return statusOf(err) === undefined ? UNREACHABLE : authErrorMessage(err);
     }
   }
 

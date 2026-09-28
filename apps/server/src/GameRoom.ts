@@ -78,6 +78,8 @@ import {
   grenadeDamage,
   grenadeFlightTicks,
   mapById,
+  isSkinId,
+  randomSkin,
   rank,
   readSim,
   respawnPoint,
@@ -551,6 +553,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     player.slot = slot;
     player.name = name;
     player.account = hasUsername;
+    player.skin = this.skinFor(identity);
     if (this.rules.mode === "duel") {
       const spawn = duelSpawn(this.map, slot);
       writeSim(player, spawnSim(spawn.x, spawn.z, player.weapon));
@@ -571,6 +574,20 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     const reachedAt = this.state.startTick;
     this.internals.set(client.sessionId, { queue: [], tokens: INPUT_BURST, identity, deaths: 0, reachedAt, ping: null, baselined: false });
     this.joinOrder.push(client.sessionId);
+  }
+
+  /**
+   * The skin a new seat wears: a signed-in player's saved one (read from the
+   * database by onAuth, even without a username), else a random one, among
+   * those nobody in the room wears when one is left. Rolled once per seat:
+   * a reconnect keeps the Player, so the skin too. Never read from the join
+   * options.
+   */
+  private skinFor(identity: Identity): string {
+    if (identity.kind === "account" && isSkinId(identity.skin)) return identity.skin;
+    const worn: string[] = [];
+    this.state.players.forEach((p) => worn.push(p.skin));
+    return randomSkin(worn);
   }
 
   /**

@@ -12,7 +12,7 @@ bun run dev      # server on ws://localhost:2567, client on http://localhost:517
 ```
 
 http://localhost:5173 opens the menu: the game's own scene slowly circling
-two soldiers, with Play (quick match), Private game, the open games list, your
+two characters in random skins, with Play (quick match), Private game, the open games list, your
 account, How to play and Settings. Nothing connects to the game server until
 you pick a game.
 
@@ -92,7 +92,7 @@ is uploaded when it fails.
 ## Accounts (optional)
 
 You can always play right away as a guest (`Guest-4821`). An account keeps a
-username and stats: sign up with an email and a password, or with Discord
+username, a skin and stats: sign up with an email and a password, or with Discord
 when it's configured. The accounts live in the game server itself:
 [`@colyseus/auth`](https://docs.colyseus.io/auth/module) for sign-up, sign-in
 and session tokens, and [`@colyseus/database`](https://docs.colyseus.io/database)
@@ -124,12 +124,18 @@ and session tokens, and [`@colyseus/database`](https://docs.colyseus.io/database
   server only accepts names in that exact format, and draws another if
   someone in the room has the same one). An account without a username yet
   plays under a guest name too, and its matches aren't counted.
+- **Skins.** Every player wears one of the characters in `SKINS`
+  (`packages/shared/src/skins.ts`). They only change the look: the hitbox
+  and speed are the same for all. A guest, or an account that never picked
+  one, gets a random skin at every match, one nobody else in the room wears
+  if possible. An account picks its skin in the account panel; it is saved
+  in `colyseus_users.skin` and used from the next match on.
 - **Routes** (on the game server, so `/colyseus/...` in production):
   `@colyseus/auth`'s `POST /auth/register`, `POST /auth/login`,
   `GET /auth/userdata` and, with Discord, `GET /auth/provider/discord` (and
   its callback); ours: `GET /auth/providers`, `POST /auth/forgot-password`,
-  `POST /auth/reset-password`, `GET /account`, `POST /account/username`
-  and `GET /leaderboard` (top 10 by wins). The
+  `POST /auth/reset-password`, `GET /account`, `POST /account/username`,
+  `POST /account/skin` and `GET /leaderboard` (top 10 by wins). The
   route names, the username rules and the answers' types are in
   `packages/shared/src/accounts.ts`.
 - **Password reset.** The email links to the client's
@@ -277,7 +283,10 @@ TypeScript: React never runs per frame and there is no React Three Fiber.
   `auth-password`, `auth-submit`, `auth-error`, `auth-sent`,
   `auth-to-sign-up`, `auth-to-sign-in`, `auth-forgot`, `auth-discord`,
   `sign-out`, `account-email`, `account-retry`, `username-form`,
-  `username-input`, `username-save`, `rename`, the reset page's
+  `username-input`, `username-save`, `rename`, the skin picker's
+  `skin-picker` (with `data-skin`, the saved one), `skin-option` (with
+  `data-skin`), `skin-preview`, `skin-preview-name`, `skin-sign-in` and
+  `skin-error`, the reset page's
   `reset-password`, `reset-password-form`, `reset-password-input`,
   `reset-password-confirm`, `reset-password-submit`, `reset-password-error`,
   `reset-password-done`, `reset-password-sign-in`, `reset-password-back`, the
@@ -440,8 +449,8 @@ into a red side and a blue side. The rules are `TEAM_RULES` in
 
 In a game, the team colours (theme `--bagarre-p6` red and `--bagarre-p7`
 blue, paint 6 and 7 in `apps/client/src/paint.ts`) replace the seat colours
-everywhere: the characters (red wears the soldier, blue the other model),
-the HP bar, the kill feed, the scoreboard, the minimap. Names tell teammates
+everywhere: the wide ring under each character (the skins keep their own
+colours), the HP bar, the kill feed, the scoreboard, the minimap. Names tell teammates
 apart. The HUD shows the team score ("RED 12 – 9 BLUE", your team outlined,
 "You're on Red"), the time left and the kill feed; the minimap always shows
 your teammates, and enemies only when they fire, as in FFA. The waiting card
@@ -595,7 +604,9 @@ while its player is dead and dims with a "…" while they reconnect; a
 spectator sees everyone's. **Show names** in Settings turns the names off
 (the bars stay), remembered like the sound settings. The plates are drawn in
 the 3D scene over everything (`plates.ts`); `__bagarre.plates` exposes them
-to the tests.
+to the tests, and `__bagarre.skins()` gives each player's skin and whether
+its model has loaded (`{ [sessionId]: { skin, loaded } }`, for the match
+you play or watch).
 
 ### Scoreboard
 

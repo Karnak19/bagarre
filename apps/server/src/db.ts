@@ -38,6 +38,8 @@ export const users = pgTable(
     wins: integer("wins").notNull().default(0),
     losses: integer("losses").notNull().default(0),
     matches: integer("matches").notNull().default(0),
+    /** The saved skin (a SKINS id). Null: a random one at every match, like a guest. */
+    skin: text("skin"),
   },
   (t) => [uniqueIndex("colyseus_users_username_key_idx").on(t.usernameKey)],
 );

@@ -247,6 +247,14 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
         get plates() {
           return scene?.plates.debug() ?? [];
         },
+        /** The menu's attract scene: running, and whether both characters wear their loaded skins. */
+        get attract() {
+          return attract ? { running: attract.running, loaded: attract.loaded } : null;
+        },
+        /** The current (or watched) match's players: the skin each one's mesh wears, and whether its model has loaded. */
+        skins(): Record<string, { skin: string; loaded: boolean }> {
+          return app.match?.skins() ?? {};
+        },
         get predictor() {
           return app.match?.predictor ?? null;
         },
