@@ -2,23 +2,29 @@
 //
 // The smoke server runs with an in-memory database (PGlite), so everything
 // here goes through the real code: @colyseus/auth's sign up and sign in, our
-// account, username, password reset and leaderboard routes over HTTP, the
+// account, username, skin, password reset and leaderboard routes over HTTP, the
 // token check at join time, and the match records written at the end of a
 // match. Plain fetch rather than the SDK's `client.auth`: in Node the SDK
 // keeps the token in one process-wide store, which every other scenario's
 // `new Client()` would pick up.
 
-import { generateId } from "@colyseus/core";
+import { generateId, matchMaker } from "@colyseus/core";
 import { JWT } from "@colyseus/auth";
 import { Client, type Room } from "@colyseus/sdk";
 import {
   ACCOUNT_ROUTE,
   AUTH_PROVIDERS_ROUTE,
+  FFA_ROOM_NAME,
   FORGOT_PASSWORD_ROUTE,
+  isSkinId,
   LEADERBOARD_ROUTE,
   RESET_PASSWORD_PAGE,
   RESET_PASSWORD_ROUTE,
+  MSG_TAKE_SEAT,
   ROOM_NAME,
+  SKIN_ROUTE,
+  SKINS,
+  TEAM_ROOM_NAME,
   TICK_MS,
   USERNAME_ROUTE,
   usernameKey,
@@ -29,6 +35,7 @@ import {
   type Stats,
   type ResetPasswordResult,
   type RoomStateView,
+  type SkinResult,
 } from "@bagarre/shared";
 import { SignJWT } from "jose";
 import { eq } from "drizzle-orm";
@@ -118,10 +125,10 @@ const login = (url: string, email: string, password: string) =>
   http<AuthAnswer>(url, "/auth/login", { body: { email, password } });
 const errorOf = (a: AuthAnswer) => a.error ?? a.message ?? "";
 
-async function joinWith(url: string, token: string | undefined, roomId?: string) {
+async function joinWith(url: string, token: string | undefined, roomId?: string, options?: Record<string, unknown>, name = ROOM_NAME) {
   const c = new Client(url);
   if (token !== undefined) c.auth.token = token;
-  return roomId ? c.joinById(roomId) : c.create(ROOM_NAME);
+  return roomId ? c.joinById(roomId, options) : c.create(name, options);
 }
 
 /** Joins with `token` and returns the name the server gave us and the `account` flag. */
@@ -396,5 +403,120 @@ async function playMatch(hero: Room, victim: Room) {
   } finally {
     stopHero();
     stopVictim();
+  }
+}
+
+/** A player's synced skin, as a client sees it ("" before the server set one). */
+const skinIn = (room: Room, sessionId = room.sessionId) =>
+  (state(room)?.players?.get(sessionId) as { skin?: string } | undefined)?.skin ?? "";
+
+/** Every seat's skin in the room, as `room`'s client sees them. */
+function skinsIn(room: Room): string[] {
+  const out: string[] = [];
+  state(room).players.forEach((p) => out.push((p as { skin?: string }).skin ?? ""));
+  return out;
+}
+
+/**
+ * Skins: the saved skin route, the skin picked at join (the account's, else a
+ * random one nobody in the room wears), kept through a reconnect, and the
+ * `skin` join option ignored. The "ignored" checks are deterministic: the
+ * option asks for a skin the room already has, which a random pick never
+ * gives while another is free, and a saved skin always wins.
+ */
+export async function skinChecks(url: string, h: AccountsHarness, check: Check) {
+  const [a, b] = SKINS.map((s) => s.id);
+  const setSkin = (token: string | undefined, skin: unknown) =>
+    http<SkinResult>(url, SKIN_ROUTE, { token, body: { skin } });
+
+  // The route.
+  const hero = await h.account("Skin_Hero");
+  const fresh = await http<{ account: Account }>(url, ACCOUNT_ROUTE, { token: hero.token });
+  check(fresh.status === 200 && fresh.data.account?.skin === null, `a new account has no saved skin: GET /account answers skin null (${JSON.stringify(fresh.data.account?.skin)})`);
+  check((await setSkin(undefined, a)).status === 401, "POST /account/skin without a session is 401");
+  const bogus = await setSkin(hero.token, "not-a-skin");
+  const notString = await setSkin(hero.token, 3);
+  check(
+    bogus.status === 200 && !bogus.data.ok && !notString.data.ok,
+    `an unknown skin id is refused (${JSON.stringify(bogus.data)}), so is a number`,
+  );
+  const saved = await setSkin(hero.token, a);
+  const read = await http<{ account: Account }>(url, ACCOUNT_ROUTE, { token: hero.token });
+  check(
+    saved.data.ok === true && saved.data.skin === a && read.data.account?.skin === a,
+    `a SKINS id is saved, and GET /account answers it (${JSON.stringify(saved.data)}, ${read.data.account?.skin})`,
+  );
+
+  // Signed in: the saved skin, whatever the join option says.
+  const g1 = await joinWith(url, undefined);
+  await waitFor(() => isSkinId(skinIn(g1)), 2000);
+  const heroRoom = await joinWith(url, hero.token, g1.roomId, { skin: b });
+  await waitFor(() => !!skinIn(heroRoom) && !!skinIn(g1, heroRoom.sessionId), 2000);
+  check(
+    skinIn(heroRoom) === a && skinIn(g1, heroRoom.sessionId) === a,
+    `a signed-in player wears their saved skin, seen by the other client too, and their skin join option (${b}) is ignored (${skinIn(heroRoom)})`,
+  );
+  await Promise.all([heroRoom.leave(), g1.leave()]);
+
+  // Back to random.
+  const cleared = await setSkin(hero.token, null);
+  const readCleared = await http<{ account: Account }>(url, ACCOUNT_ROUTE, { token: hero.token });
+  check(cleared.data.ok === true && cleared.data.skin === null && readCleared.data.account?.skin === null, "POST { skin: null } goes back to random");
+  const randomRoom = await joinWith(url, hero.token);
+  await waitFor(() => !!skinIn(randomRoom), 2000);
+  check(isSkinId(skinIn(randomRoom)), `...and the account then gets a random skin at join (${skinIn(randomRoom)})`);
+  await randomRoom.leave();
+
+  // An account without a username still has its saved skin.
+  const nameless = await h.account(null);
+  await setSkin(nameless.token, b);
+  const namelessRoom = await joinWith(url, nameless.token);
+  await waitFor(() => !!skinIn(namelessRoom), 2000);
+  check(skinIn(namelessRoom) === b && me(namelessRoom)?.account === false, `an account without a username plays under a guest name, in its saved skin (${skinIn(namelessRoom)})`);
+  await namelessRoom.leave();
+
+  // Guests: a random skin, different from the other's, the option ignored.
+  const first = await joinWith(url, undefined);
+  await waitFor(() => !!skinIn(first), 2000);
+  const firstSkin = skinIn(first);
+  check(isSkinId(firstSkin), `a guest gets a skin from SKINS, set with the player (${firstSkin})`);
+  const second = await joinWith(url, undefined, first.roomId, { skin: firstSkin });
+  await waitFor(() => !!skinIn(second) && !!skinIn(first, second.sessionId), 2000);
+  check(
+    isSkinId(skinIn(second)) && skinIn(second) !== firstSkin && skinIn(first, second.sessionId) === skinIn(second),
+    `two guests in a duel wear different skins, and a guest's skin join option is ignored (asked ${firstSkin}, got ${skinIn(second)})`,
+  );
+
+  // A reconnect keeps the roll.
+  second.reconnection.minUptime = 0;
+  const before = { id: second.sessionId, skin: skinIn(second) };
+  let back = false;
+  second.onReconnect(() => (back = true));
+  const local = matchMaker.getLocalRoomById(first.roomId) as unknown as { clients: { sessionId: string; ref: { terminate(): void } }[] };
+  local.clients.find((c) => c.sessionId === second.sessionId)?.ref.terminate();
+  const reconnected = await waitFor(() => back && me(second)?.connected === true, 8000);
+  check(
+    reconnected && second.sessionId === before.id && skinIn(second) === before.skin && skinIn(first, second.sessionId) === before.skin,
+    `a guest keeps their skin through a reconnect (${before.skin} -> ${skinIn(second)})`,
+  );
+  await Promise.all([first.leave(), second.leave()]);
+
+  // Every mode goes through the same pick, a spectator taking a seat too.
+  for (const name of [FFA_ROOM_NAME, TEAM_ROOM_NAME]) {
+    const host = await joinWith(url, undefined, undefined, undefined, name);
+    const rooms = [host];
+    for (let i = 0; i < 3; i++) rooms.push(await joinWith(url, undefined, host.roomId, { skin: SKINS[0].id }));
+    const spectator = await joinWith(url, undefined, host.roomId, { spectate: true });
+    rooms.push(spectator);
+    await waitFor(() => skinsIn(host).filter(Boolean).length === 4, 2000);
+    const noSkinWatching = skinIn(host, spectator.sessionId) === "" && !state(host).players.get(spectator.sessionId);
+    spectator.send(MSG_TAKE_SEAT, {});
+    await waitFor(() => skinsIn(host).filter(Boolean).length === 5, 2000);
+    const skins = skinsIn(host);
+    check(
+      noSkinWatching && skins.length === 5 && skins.every(isSkinId) && new Set(skins).size === 5,
+      `${name}: five guests (one of them a spectator who took a seat) wear five different skins (${skins.join(", ")})`,
+    );
+    await Promise.all(rooms.map((r) => r.leave()));
   }
 }
