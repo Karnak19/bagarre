@@ -4,10 +4,10 @@
 // `planProjector`), so the top of the drawing is the top of the screen when
 // you play. Pure data to shapes, computed once per map.
 
-import type { FfaMapDef, MapDef } from "@bagarre/shared";
+import type { MapDef } from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
 import { memo, useMemo } from "react";
-import { hex, planProjector } from "../../minimap.ts";
+import { hex, isFfa, planProjector } from "../../minimap.ts";
 import { TEAM_PAINT } from "../../paint.ts";
 import { PLAYER_CSS_COLORS } from "../../scene.ts";
 
@@ -19,7 +19,6 @@ const styles = stylex.create({
 });
 
 
-const asFfa = (m: MapDef): FfaMapDef | null => ((m as Partial<FfaMapDef>).mode === "ffa" ? (m as FfaMapDef) : null);
 
 /** Cover shading: the low kinds light, a 2 m container nearly black. */
 const coverAlpha = (h: number) => Math.min(0.95, 0.5 + h * 0.2);
@@ -42,7 +41,7 @@ function plan(map: MapDef) {
   const quad = (x0: number, z0: number, x1: number, z1: number) =>
     [toPx(x0, z0), toPx(x1, z0), toPx(x1, z1), toPx(x0, z1)].map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
   const floor = quad(-map.halfX, -map.halfZ, map.halfX, map.halfZ);
-  const ffa = asFfa(map);
+  const ffa = isFfa(map) ? map : null;
 
   // Zones: where they overlap the first one wins, so draw them in reverse.
   const zones: Shape[] = [];

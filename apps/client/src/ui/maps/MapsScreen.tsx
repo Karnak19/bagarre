@@ -8,9 +8,10 @@ import { Heading } from "@astryxdesign/core/Heading";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { Text } from "@astryxdesign/core/Text";
 import { Token } from "@astryxdesign/core/Token";
-import { FFA_MAPS, MAPS, type FfaMapDef, type MapDef, type WeaponTag } from "@bagarre/shared";
+import { FFA_MAPS, MAPS, type MapDef, type WeaponTag } from "@bagarre/shared";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import * as stylex from "@stylexjs/stylex";
+import { isFfa } from "../../minimap.ts";
 import { useEngine, useSelector } from "../hooks.ts";
 import { shared } from "../styles.ts";
 import { MapPlan } from "./MapPlan.tsx";
@@ -62,7 +63,6 @@ const styles = stylex.create({
   walk: { alignSelf: "start", marginBlockStart: "var(--spacing-1)" },
 });
 
-const isFfa = (m: MapDef): m is FfaMapDef => (m as Partial<FfaMapDef>).mode === "ffa";
 
 /** The `/maps` route's page, while the flow is on the menu screen. */
 export function MapsScreen() {

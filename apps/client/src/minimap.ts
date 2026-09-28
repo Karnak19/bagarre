@@ -29,7 +29,7 @@ export interface MinimapPing {
   at: number;
 }
 
-const isFfa = (m: MapDef | null): m is FfaMapDef => !!m && (m as Partial<FfaMapDef>).mode === "ffa";
+export const isFfa = (m: MapDef | null): m is FfaMapDef => !!m && (m as Partial<FfaMapDef>).mode === "ffa";
 
 export const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
 
