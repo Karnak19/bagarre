@@ -3,40 +3,12 @@
 // spawn and sightline checks. Every box blocks bullets, so "can see" and "can
 // shoot" are the same thing here.
 
-import type { Arena, Box } from "./arena.ts";
+import type { Arena } from "./arena.ts";
 import { BULLET_RADIUS, PLAYER_RADIUS } from "./constants.ts";
-import type { Vec2 } from "./physics.ts";
+import { segmentHitsBox, type Vec2 } from "./physics.ts";
 
-const EPS = 1e-6;
-
-/** True if segment a-c passes through the open interior of `b` inflated by `r`. */
-export function segHitsBox(a: Vec2, c: Vec2, b: Box, r: number): boolean {
-  const minX = b.x - b.w / 2 - r;
-  const maxX = b.x + b.w / 2 + r;
-  const minZ = b.z - b.d / 2 - r;
-  const maxZ = b.z + b.d / 2 + r;
-  let t0 = 0;
-  let t1 = 1;
-  const dx = c.x - a.x;
-  const dz = c.z - a.z;
-  const axes: [number, number, number, number][] = [
-    [a.x, dx, minX, maxX],
-    [a.z, dz, minZ, maxZ],
-  ];
-  for (const [p, d, lo, hi] of axes) {
-    if (Math.abs(d) < 1e-12) {
-      if (p <= lo + EPS || p >= hi - EPS) return false;
-      continue;
-    }
-    let u0 = (lo - p) / d;
-    let u1 = (hi - p) / d;
-    if (u0 > u1) [u0, u1] = [u1, u0];
-    t0 = Math.max(t0, u0);
-    t1 = Math.min(t1, u1);
-    if (t1 - t0 <= 1e-9) return false;
-  }
-  return t1 - t0 > 1e-9;
-}
+/** True if segment a-c passes through the open interior of `b` inflated by `r` (physics.ts' segmentHitsBox). */
+export const segHitsBox = segmentHitsBox;
 
 /** Bullet line of sight between two centres. */
 export function clearShot(arena: Arena, a: Vec2, b: Vec2): boolean {

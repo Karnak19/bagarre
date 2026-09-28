@@ -164,6 +164,63 @@ export function stepBullet(
   return true;
 }
 
+// --- Segments (line of sight) ------------------------------------------------
+
+const SEG_EPS = 1e-6;
+
+/**
+ * True if the segment a-c passes through the open interior of box `b`
+ * inflated by `r` (a slab test). Grazing an edge or a corner doesn't count.
+ */
+export function segmentHitsBox(a: Vec2, c: Vec2, b: Box, r: number): boolean {
+  const minX = b.x - b.w / 2 - r;
+  const maxX = b.x + b.w / 2 + r;
+  const minZ = b.z - b.d / 2 - r;
+  const maxZ = b.z + b.d / 2 + r;
+  let t0 = 0;
+  let t1 = 1;
+  const dx = c.x - a.x;
+  const dz = c.z - a.z;
+  const axes: [number, number, number, number][] = [
+    [a.x, dx, minX, maxX],
+    [a.z, dz, minZ, maxZ],
+  ];
+  for (const [p, d, lo, hi] of axes) {
+    if (Math.abs(d) < 1e-12) {
+      if (p <= lo + SEG_EPS || p >= hi - SEG_EPS) return false;
+      continue;
+    }
+    let u0 = (lo - p) / d;
+    let u1 = (hi - p) / d;
+    if (u0 > u1) [u0, u1] = [u1, u0];
+    t0 = Math.max(t0, u0);
+    t1 = Math.min(t1, u1);
+    if (t1 - t0 <= 1e-9) return false;
+  }
+  return t1 - t0 > 1e-9;
+}
+
+/**
+ * Line of sight on the ground: no cover box crosses the segment a-b. Every
+ * box counts, low sandbags included (they stop bullets, so they stop a look).
+ * Both points are inside the arena, so the outer walls never matter.
+ */
+export function lineOfSight(arena: Arena, a: Vec2, b: Vec2): boolean {
+  for (const o of arena.obstacles) if (segmentHitsBox(a, b, o, 0)) return false;
+  return true;
+}
+
+/** True if the segment a-b comes closer than `r` to the point `c` (it crosses the circle, or starts or ends in it). */
+export function segmentHitsCircle(a: Vec2, b: Vec2, c: Vec2, r: number): boolean {
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const len2 = dx * dx + dz * dz;
+  const t = len2 > 1e-12 ? clamp(((c.x - a.x) * dx + (c.z - a.z) * dz) / len2, 0, 1) : 0;
+  const px = a.x + dx * t - c.x;
+  const pz = a.z + dz * t - c.z;
+  return px * px + pz * pz < r * r;
+}
+
 /** Where a bullet appears when a player at (x, z) fires at `aim` radians. */
 export function muzzle(x: number, z: number, aim: number): Vec2 {
   const off = PLAYER_RADIUS + BULLET_RADIUS + 0.05;
