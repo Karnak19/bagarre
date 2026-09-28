@@ -19,6 +19,7 @@
 // cover never hides them. Nothing here allocates per frame.
 
 import * as THREE from "three";
+import { HEAD_Y } from "./character.ts";
 
 /** Most plates at once (a 4v4 is 8; this leaves room for players coming and going). */
 const CAPACITY = 16;
@@ -26,8 +27,13 @@ const CAPACITY = 16;
 const QUADS = 6;
 const MAX_INSTANCES = CAPACITY * QUADS;
 
-/** Height of the plate's anchor above the ground, metres (the character is about 1.8 m tall). */
-const ANCHOR_Y = 2.05;
+/**
+ * Height of the plate's anchor above the ground, metres: a fixed height above
+ * the characters' head bone (every skin is scaled to put it at HEAD_Y), which
+ * clears a bare head (about 1.7 m) and all but the tallest hat (the elf's). Never a bounding box: a tall
+ * hat doesn't lift the plate.
+ */
+const ANCHOR_Y = HEAD_Y + 0.95;
 // Layout, in CSS pixels, y up from the anchor's screen point.
 const BAR_W = 54;
 const BAR_H = 5;
