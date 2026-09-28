@@ -248,8 +248,10 @@ export class Match {
 
   /** The player's mesh, in `paint` (paint.ts), wearing `skin`. A new paint (a team switch) or skin remakes it. */
   private meshFor(id: string, paint: number, skin: string | undefined): PlayerMesh {
-    skin ||= ""; // An older server sends none: the capsule.
     let m = this.meshes.get(id);
+    // None sent (an older server, or a snapshot without it): keep the skin
+    // already worn rather than remake the mesh; with no mesh yet, the capsule.
+    skin ||= m?.skin || "";
     if (m && (m.slot !== paint || m.skin !== skin)) {
       this.scene.removePlayer(m);
       m.dispose();
@@ -625,7 +627,7 @@ export class Match {
 
     // Our own bullets are drawn from the prediction; the server's copies of
     // them are skipped (see LocalBullets). Everyone else's are interpolated.
-    const bullets = new Map<string, { x: number; z: number; slot: number; owner?: string }>();
+    const bullets = new Map<string, { x: number; z: number; slot: number; owner?: string; weapon?: number }>();
     for (const [id, b] of buffer.sampleBullets(renderTime)) {
       if (localBullets.owns(id)) continue;
       const owner = latest?.players.get(b.owner);

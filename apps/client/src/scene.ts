@@ -259,11 +259,11 @@ export class PlayerMesh {
     if (this.isLocal) this.scene?.shake(0.35);
   }
 
-  /** A shot left this player's gun: muzzle flash and the aiming pose. */
-  shot(now: number) {
+  /** A shot left this player's gun: muzzle flash and the aiming pose. `weapon`: the one that fired, when known. */
+  shot(now: number, weapon = this.weapon) {
     if (!this.alive) return;
     this.character?.shot(now);
-    this.scene?.muzzleFlash(this, this.aim, this.weapon);
+    this.scene?.muzzleFlash(this, this.aim, weapon);
   }
 
   /** Where the muzzle flash goes. */
@@ -556,7 +556,7 @@ export class GameScene {
    * vanishes next to cover or a player hit it: sparks. One that vanishes in
    * the open ran out of range: nothing.
    */
-  syncBullets(bullets: Map<string, { x: number; z: number; slot: number; owner?: string }>) {
+  syncBullets(bullets: Map<string, { x: number; z: number; slot: number; owner?: string; weapon?: number }>) {
     for (const [id, b] of this.bullets) {
       if (!bullets.has(id)) {
         this.impact(b);
@@ -573,7 +573,7 @@ export class GameScene {
         d = { mesh, x: b.x, z: b.z, px: b.x, pz: b.z, x0: b.x, z0: b.z, off: null };
         this.bullets.set(id, d);
         this.scene.add(mesh);
-        if (id.endsWith(":0")) for (const p of this.players) if (p.isLocal && p.slot === b.slot) p.shot(now);
+        if (id.endsWith(":0")) for (const p of this.players) if (p.isLocal && p.slot === b.slot) p.shot(now, b.weapon);
         // The sim's bullets fly at BULLET_HEIGHT from the body's centre line;
         // the gun is in the right hand. The tracer starts at the muzzle and
         // eases onto the true path over its first metres.
