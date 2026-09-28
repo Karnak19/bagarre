@@ -91,6 +91,8 @@ export interface GameView {
   /** performance.now() when the match ended (the rematch countdown). */
   endedAt: number;
   pick: number;
+  /** The grenade type picked for the next spawn (GRENADES index). */
+  grenadePick: number;
   canPick: boolean;
   /** Watching, not playing: no waiting or result card, the spectator overlay instead of the HUD. */
   spectating: boolean;
@@ -228,7 +230,7 @@ export class App {
     else if (phase === "ended") card = "result";
     if (card !== "none" && this.state.scoreboardHeld) this.set({ scoreboardHeld: false });
     const me = m.me;
-    return { card, phase, snapshot, you: m.net.sessionId, endedAt: m.endedAt, pick: me?.pick ?? 0, canPick: m.canPick, spectating };
+    return { card, phase, snapshot, you: m.net.sessionId, endedAt: m.endedAt, pick: me?.pick ?? 0, grenadePick: me?.grenadePick ?? 0, canPick: m.canPick, spectating };
   }
 
   /**
@@ -339,6 +341,15 @@ export class App {
 
   pick(weapon: number) {
     this.current?.pick(weapon);
+  }
+
+  pickGrenade(type: number) {
+    this.current?.pickGrenade(type);
+  }
+
+  /** G: the next grenade type. */
+  cycleGrenade() {
+    this.current?.cycleGrenade();
   }
 
   holdScoreboard(held: boolean) {

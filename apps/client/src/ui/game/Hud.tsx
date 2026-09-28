@@ -16,12 +16,15 @@ import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { Text } from "@astryxdesign/core/Text";
 import {
   DASH_COOLDOWN_TICKS,
-  GRENADE_COOLDOWN_TICKS,
+  GRENADES,
   KILLS_TO_WIN,
   MAX_HP,
   SHIELD_COOLDOWN_TICKS,
+  STUN_TICKS,
   TICK_RATE,
   WEAPONS,
+  grenadeCooldownTicks,
+  grenadeDef,
   ticks,
   weaponDef,
 } from "@bagarre/shared";
@@ -34,6 +37,7 @@ import { shallowEqual, useEngine, useSelector, useStoreEffect } from "../hooks.t
 import { shared, slotFill } from "../styles.ts";
 import { FfaPanel, KillFeed, MinimapBox } from "./HudFfa.tsx";
 import { TeamPanel } from "./HudTeam.tsx";
+import { GRENADE_ICONS } from "./WeaponPicker.tsx";
 
 const styles = stylex.create({
   root: { position: "fixed", inset: 0, pointerEvents: "none", zIndex: 10 },
@@ -108,6 +112,18 @@ const styles = stylex.create({
   lockedPick: { opacity: 0.35 },
   lockedPicked: { opacity: 0.7 },
   hint: { opacity: 0.75, marginInlineStart: "4px" },
+  stunned: {
+    position: "absolute",
+    bottom: "134px",
+    left: "50%",
+    transform: "translateX(-50%)",
+    minWidth: "170px",
+    color: "#9fe6ff",
+    boxShadow: "inset 0 0 0 1px rgba(159, 230, 255, 0.6)",
+  },
+  stunFill: { height: "100%", width: 0, backgroundColor: "#9fe6ff" },
+  // Over the HUD itself: nothing shows through a full flash.
+  flash: { position: "fixed", inset: 0, backgroundColor: "#ffffff", opacity: 0, pointerEvents: "none", zIndex: 20 },
 });
 
 /** The HUD, mounted only while in a game. */
@@ -147,10 +163,67 @@ export function Hud() {
         <Ability kind="shield" keyLabel="E" label="Shield" />
         <Sound />
       </HStack>
+      <Stunned />
       <Watchers />
       <Debug />
+      <FlashScreen />
     </VStack>
   );
+}
+
+/**
+ * Stunned by a stun grenade: a small badge over the ability bar with the
+ * time left, while the predicted stun runs (the slow and the dash block are
+ * the shared step's). The time and bar are written per frame, off React.
+ */
+function Stunned() {
+  countRender("hud.stunned");
+  const { hud } = useEngine();
+  const on = useSelector(hud, (m) => (m?.sim?.stunTicks ?? 0) > 0);
+  const t = useRef<HTMLElement>(null);
+  const bar = useRef<HTMLElement>(null);
+  useStoreEffect(hud, (m) => {
+    const left = m?.sim?.stunTicks ?? 0;
+    const text = `${(left / TICK_RATE).toFixed(1)}s`;
+    if (t.current && t.current.textContent !== text) t.current.textContent = text;
+    const width = `${Math.min(1, left / STUN_TICKS) * 100}%`;
+    if (bar.current && bar.current.style.width !== width) bar.current.style.width = width;
+  });
+  if (!on) return null;
+  return (
+    <VStack xstyle={[styles.panel, styles.stunned]} data-testid="hud-stunned" role="status" aria-label="Stunned: slowed, no dash">
+      <HStack gap={1.5} align="center" justify="center">
+        <Text xstyle={styles.label}>⚡ Stunned · no dash</Text>
+        <Text ref={t} xstyle={[styles.t, shared.tabular]}>
+          {""}
+        </Text>
+      </HStack>
+      <VStack xstyle={styles.reload}>
+        <VStack ref={bar} xstyle={styles.stunFill} />
+      </VStack>
+    </VStack>
+  );
+}
+
+/**
+ * The flash grenade's white screen over everything, its opacity written per
+ * frame from the synced end tick (match.ts: full white, then one steady fade
+ * out, never a strobe). `data-active` while it shows, for the tests.
+ */
+function FlashScreen() {
+  countRender("hud.flash");
+  const { hud } = useEngine();
+  const el = useRef<HTMLElement>(null);
+  useStoreEffect(hud, (m) => {
+    const node = el.current;
+    if (!node) return;
+    const a = m?.flash ?? 0;
+    const opacity = a > 0 ? a.toFixed(3) : "0";
+    if (node.style.opacity !== opacity) node.style.opacity = opacity;
+    if (a > 0) node.dataset.active = "";
+    else delete node.dataset.active;
+  });
+  return <VStack ref={el} xstyle={styles.flash} data-testid="hud-flash" aria-hidden />;
 }
 
 /** How many are watching, small in the corner: players see they have an audience. Nothing when nobody is. */
@@ -273,10 +346,11 @@ function Weapon() {
   );
 }
 
-const ABILITY: Record<"dash" | "grenade" | "shield", { cd: (m: HudModel) => number; total: number }> = {
-  dash: { cd: (m) => m.sim?.dashCd ?? 0, total: DASH_COOLDOWN_TICKS },
-  grenade: { cd: (m) => m.sim?.grenadeCd ?? 0, total: GRENADE_COOLDOWN_TICKS },
-  shield: { cd: (m) => m.sim?.shieldCd ?? 0, total: SHIELD_COOLDOWN_TICKS },
+const ABILITY: Record<"dash" | "grenade" | "shield", { cd: (m: HudModel) => number; total: (m: HudModel) => number }> = {
+  dash: { cd: (m) => m.sim?.dashCd ?? 0, total: () => DASH_COOLDOWN_TICKS },
+  // Each grenade type has its own cooldown: the sweep is out of the one in hand's.
+  grenade: { cd: (m) => m.sim?.grenadeCd ?? 0, total: (m) => grenadeCooldownTicks(m.me?.grenade ?? 0) },
+  shield: { cd: (m) => m.sim?.shieldCd ?? 0, total: () => SHIELD_COOLDOWN_TICKS },
 };
 
 function Ability({ kind, keyLabel, label }: { kind: keyof typeof ABILITY; keyLabel: string; label: string }) {
@@ -285,15 +359,21 @@ function Ability({ kind, keyLabel, label }: { kind: keyof typeof ABILITY; keyLab
   const a = ABILITY[kind];
   const state = useSelector(
     hud,
-    (m) => ({ ready: !m || a.cd(m) === 0, active: kind === "shield" && (m?.me?.shieldHp ?? 0) > 0 }),
+    (m) => ({
+      ready: !m || a.cd(m) === 0,
+      active: kind === "shield" && (m?.me?.shieldHp ?? 0) > 0,
+      // The grenade slot names the type in hand, with its icon.
+      grenade: kind === "grenade" ? (m?.me?.grenade ?? 0) : -1,
+    }),
     shallowEqual,
   );
+  const shown = state.grenade >= 0 ? `${GRENADE_ICONS[state.grenade] ?? ""} ${grenadeDef(state.grenade).name}` : label;
   // The sweep and the timer move every tick while cooling down: written here.
   const cd = useRef<HTMLElement>(null);
   const t = useRef<HTMLElement>(null);
   useStoreEffect(hud, (m) => {
     const left = m ? a.cd(m) : 0;
-    const height = `${Math.min(1, left / a.total) * 100}%`;
+    const height = `${m ? Math.min(1, left / a.total(m)) * 100 : 0}%`;
     const text = left > 0 ? `${(left / TICK_RATE).toFixed(1)}s` : "ready";
     if (cd.current && cd.current.style.height !== height) cd.current.style.height = height;
     if (t.current && t.current.textContent !== text) t.current.textContent = text;
@@ -303,10 +383,11 @@ function Ability({ kind, keyLabel, label }: { kind: keyof typeof ABILITY; keyLab
       xstyle={[styles.panel, styles.ability, state.ready && styles.ready, state.active && styles.active]}
       data-testid={`hud-${kind}`}
       data-ready={state.ready ? "" : undefined}
+      data-type={state.grenade >= 0 ? GRENADES[state.grenade]?.key : undefined}
     >
       <VStack ref={cd} xstyle={styles.cd} />
       <Text xstyle={[styles.front, styles.key]}>{keyLabel}</Text>
-      <Text xstyle={[styles.front, styles.label]}>{label}</Text>
+      <Text xstyle={[styles.front, styles.label]}>{shown}</Text>
       <Text ref={t} xstyle={[styles.front, styles.t, shared.tabular]}>
         ready
       </Text>
@@ -332,10 +413,17 @@ function Picker() {
   const { hud } = useEngine();
   const p = useSelector(
     hud,
-    (m) => ({ pick: m?.me?.pick ?? 0, weapon: m?.me?.weapon ?? 0, canPick: !!m?.canPick }),
+    (m) => ({
+      pick: m?.me?.pick ?? 0,
+      weapon: m?.me?.weapon ?? 0,
+      grenadePick: m?.me?.grenadePick ?? 0,
+      grenade: m?.me?.grenade ?? 0,
+      canPick: !!m?.canPick,
+    }),
     shallowEqual,
   );
-  const hint = p.canPick ? (p.pick !== p.weapon ? "applies on respawn" : "press 1-7 to pick") : "pick while dead";
+  const changed = p.pick !== p.weapon || p.grenadePick !== p.grenade;
+  const hint = p.canPick ? (changed ? "applies on respawn" : "1-7 weapon, G grenade") : "pick while dead";
   return (
     <HStack gap={1.5} align="center" xstyle={styles.picker} data-testid="hud-picker">
       {WEAPONS.map((w, i) => (
@@ -352,6 +440,9 @@ function Picker() {
           {i + 1} {w.name}
         </Text>
       ))}
+      <Text xstyle={[styles.panel, styles.pick, styles.picked, !p.canPick && styles.lockedPicked]} data-testid="hud-picker-grenade">
+        G {GRENADE_ICONS[p.grenadePick]} {grenadeDef(p.grenadePick).name}
+      </Text>
       <Text xstyle={styles.hint}>{hint}</Text>
     </HStack>
   );

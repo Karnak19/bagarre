@@ -16,7 +16,10 @@
 // sample, so bars are plain scaled quads, never a texture redraw.
 //
 // Plates are drawn after the world (high renderOrder) with no depth test:
-// cover never hides them. Nothing here allocates per frame.
+// cover never hides them. Smoke does: a player hidden from us by smoke (or
+// see-through for a spectator) gets `fade` 0 (or less than 1) from match.ts,
+// and their quads are skipped (or dimmed) in the one instanced mesh.
+// Nothing here allocates per frame.
 
 import * as THREE from "three";
 import { HEAD_Y } from "./character.ts";
@@ -120,6 +123,8 @@ interface Plate {
   alive: boolean;
   connected: boolean;
   showName: boolean;
+  /** Smoke: 1 drawn as usual, 0 hidden (an enemy in smoke), in between see-through (a spectator watching one). */
+  fade: number;
   /** Set on (re)spawn: the bar starts from the current HP, no animation. */
   snap: boolean;
 }
@@ -132,6 +137,9 @@ export interface PlateDebug {
   hp: number;
   shield: number;
   dimmed: boolean;
+  /** Smoke hides it from us (client-side only, see smokeVeil), or fades it (spectators). */
+  hidden: boolean;
+  faded: boolean;
 }
 
 export class Plates {
@@ -229,6 +237,7 @@ export class Plates {
         alive: true,
         connected: true,
         showName: true,
+        fade: 1,
         snap: true,
       };
       this.pool.push(p);
@@ -297,7 +306,7 @@ export class Plates {
    * drawn (predicted for us, interpolated for the others). `hp`, `shield`:
    * fractions 0..1. `showName` false draws the bar alone.
    */
-  set(id: string, x: number, z: number, name: string, paint: number, hp: number, shield: number, alive: boolean, connected: boolean, showName: boolean) {
+  set(id: string, x: number, z: number, name: string, paint: number, hp: number, shield: number, alive: boolean, connected: boolean, showName: boolean, fade = 1) {
     let p = this.byId.get(id);
     if (!p) {
       p = this.free.pop();
@@ -320,6 +329,7 @@ export class Plates {
     p.alive = alive;
     p.connected = connected;
     p.showName = showName;
+    p.fade = Math.min(1, Math.max(0, fade));
   }
 
   /** The player left: their plate goes back to the pool. */
@@ -333,7 +343,7 @@ export class Plates {
   }
 
   private visible(p: Plate) {
-    return p.frame === this.frame && p.alive;
+    return p.frame === this.frame && p.alive && p.fade > 0;
   }
 
   /** Animates the bars and writes every visible plate's quads. Call once per draw, before rendering. */
@@ -368,7 +378,7 @@ export class Plates {
   }
 
   private write(p: Plate) {
-    const a = p.connected ? 1 : DIM;
+    const a = (p.connected ? 1 : DIM) * p.fade;
     const c = (p.paint % (this.paints.length / 3)) * 3;
     const r = this.paints[c];
     const g = this.paints[c + 1];
@@ -396,7 +406,7 @@ export class Plates {
       const x = nameOn ? Math.round(p.nameW / 2) - PAD : BAR_W / 2 + BORDER;
       const y = nameOn ? top : BAR_Y + (BAR_H + BORDER * 2 + shieldH) / 2 - ROW_H / 2;
       this.quad(p, x, y, this.dotsW, ROW_H, this.dotsU0, this.dotsV0, this.dotsU1, this.dotsV1);
-      this.color(1, 1, 1, 1);
+      this.color(1, 1, 1, p.fade);
     }
   }
 
@@ -439,7 +449,7 @@ export class Plates {
     const out: PlateDebug[] = [];
     for (const p of this.pool) {
       if (!p.id) continue;
-      const visible = p.frame >= this.frame - 1 && p.alive;
+      const visible = p.frame >= this.frame - 1 && p.alive && p.fade > 0;
       out.push({
         id: p.id,
         visible,
@@ -447,6 +457,8 @@ export class Plates {
         hp: p.hp,
         shield: p.shield,
         dimmed: !p.connected,
+        hidden: p.fade <= 0,
+        faded: p.fade > 0 && p.fade < 1,
       });
     }
     return out;

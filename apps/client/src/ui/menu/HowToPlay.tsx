@@ -7,7 +7,24 @@ import { Kbd } from "@astryxdesign/core/Kbd";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { List, ListItem } from "@astryxdesign/core/List";
 import { Text } from "@astryxdesign/core/Text";
-import { DASH, GRENADE, KILLS_TO_WIN, SHIELD, TEAM_KILLS_TO_WIN, TEAM_SIZE, TEAM_TIME_LIMIT, WEAPONS } from "@bagarre/shared";
+import {
+  DASH,
+  FLASH,
+  GRENADE,
+  GRENADES,
+  GRENADE_FLASH,
+  GRENADE_FRAG,
+  GRENADE_SMOKE,
+  GRENADE_STUN,
+  KILLS_TO_WIN,
+  SHIELD,
+  SMOKE,
+  STUN,
+  TEAM_KILLS_TO_WIN,
+  TEAM_SIZE,
+  TEAM_TIME_LIMIT,
+  WEAPONS,
+} from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
 import type { ReactNode } from "react";
 import { shared } from "../styles.ts";
@@ -118,7 +135,12 @@ export function HowToPlay() {
         <ListItem
           startContent={k("Q")}
           label="Grenade"
-          description={`Lobbed up to ${GRENADE.range} m, over cover. It blows ${GRENADE.fuse} s after landing: leave the red circle. Hurts you too. ${GRENADE.cooldown} s cooldown.`}
+          description={`Lobbed up to ${GRENADE.range} m, over cover. It goes off ${GRENADE.fuse} s after landing: leave the circle. Pick its type with G, next to your weapon.`}
+        />
+        <ListItem
+          startContent={k("G")}
+          label="Grenade types"
+          description={`Frag: damage, hurts you too (${GRENADES[GRENADE_FRAG].cooldown} s). Smoke: a ${SMOKE.radius} m cloud for ${SMOKE.duration} s that hides whoever is in or behind it from enemies (${GRENADES[GRENADE_SMOKE].cooldown} s). Stun: ${STUN.speedScale * 100}% speed and no dash for ${STUN.duration} s (${GRENADES[GRENADE_STUN].cooldown} s). Flash: a white screen for whoever looks at it, up to ${FLASH.maxDuration} s; look away or hide behind cover (${GRENADES[GRENADE_FLASH].cooldown} s). Only the frag hurts.`}
         />
         <ListItem
           startContent={k("E")}

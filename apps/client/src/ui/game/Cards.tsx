@@ -44,7 +44,7 @@ import { jsonEqual, shallowEqual, useEngine, useSelector } from "../hooks.ts";
 import { UsersIcon } from "../icons.tsx";
 import { shared, slotDot, slotText } from "../styles.ts";
 import { Scoreboard } from "./Scoreboard.tsx";
-import { WeaponPicker } from "./WeaponPicker.tsx";
+import { GrenadePicker, WeaponPicker } from "./WeaponPicker.tsx";
 
 type CardName = "joining" | "reconnecting" | "waiting" | "pause" | "result" | "notice";
 
@@ -393,6 +393,7 @@ function DuelWaitingCard() {
         Your weapon
       </Text>
       <WeaponPicker />
+      <GrenadePicker heading="Your grenade" />
       <HStack xstyle={styles.actions}>
         <Button label="Cancel" variant="secondary" onClick={() => app.leave()} data-testid="waiting-cancel" />
       </HStack>
@@ -454,6 +455,7 @@ function FfaWaitingCard() {
         Your weapon
       </Text>
       <WeaponPicker />
+      <GrenadePicker heading="Your grenade" />
       <HStack xstyle={styles.actions}>
         <Button label="Cancel" variant="secondary" onClick={() => app.leave()} data-testid="waiting-cancel" />
       </HStack>
@@ -559,6 +561,7 @@ function TeamWaitingCard() {
         Your weapon
       </Text>
       <WeaponPicker />
+      <GrenadePicker heading="Your grenade" />
       <HStack xstyle={styles.actions}>
         <Button label="Cancel" variant="secondary" onClick={() => app.leave()} data-testid="waiting-cancel" />
       </HStack>
@@ -710,6 +713,7 @@ function ResultCard() {
             Weapon for the next match
           </Text>
           <WeaponPicker />
+          <GrenadePicker heading="Grenade for the next match" />
         </>
       )}
       <HStack gap={2} wrap="wrap" xstyle={styles.actions}>

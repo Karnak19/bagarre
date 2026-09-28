@@ -347,6 +347,128 @@ class Decals {
   }
 }
 
+/** A smoke cloud to draw: where, and the server ticks it lives between. */
+export interface SmokeCloud {
+  id: string;
+  x: number;
+  z: number;
+  start: number;
+  end: number;
+}
+
+/** Most clouds drawn at once (8 players, a 12 s cooldown for an 8 s cloud: never more than 8). */
+const SMOKE_CLOUDS = 8;
+/** Camera-facing puffs per cloud. */
+const SMOKE_PUFFS = 18;
+/** Ticks a cloud takes to billow out, and to thin away at the end. */
+const SMOKE_IN = 18;
+const SMOKE_OUT = 45;
+
+/** Deterministic 0..1 from a cloud id and a puff index, so a cloud looks the same every frame. */
+function puffRand(seed: number, i: number, k: number): number {
+  let h = Math.imul(seed ^ (i * 0x9e3779b1) ^ (k * 0x85ebca6b), 0x27d4eb2d);
+  h ^= h >>> 15;
+  h = Math.imul(h, 0x2c1b3c6d);
+  h ^= h >>> 12;
+  return (h >>> 0) / 4294967296;
+}
+
+function seedOf(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619);
+  return h | 0;
+}
+
+/**
+ * The smoke clouds: a few large camera-facing puffs per cloud, all clouds in
+ * one instanced mesh (one draw call), rewritten each frame from the synced
+ * cloud list. No particle system: a cloud is a fixed set of puffs that
+ * billow in, drift a little and thin out before it clears.
+ */
+class SmokeLayer {
+  readonly mesh: THREE.Mesh;
+  private geo: THREE.InstancedBufferGeometry;
+  private aPos: THREE.InstancedBufferAttribute;
+  private aSize: THREE.InstancedBufferAttribute;
+  private aCell: THREE.InstancedBufferAttribute;
+  private aColor: THREE.InstancedBufferAttribute;
+
+  constructor(map: THREE.Texture) {
+    const cap = SMOKE_CLOUDS * SMOKE_PUFFS;
+    const quad = new THREE.PlaneGeometry(1, 1);
+    this.geo = new THREE.InstancedBufferGeometry();
+    this.geo.index = quad.index;
+    this.geo.setAttribute("position", quad.getAttribute("position"));
+    this.geo.setAttribute("uv", quad.getAttribute("uv"));
+    const attr = (size: number) => {
+      const a = new THREE.InstancedBufferAttribute(new Float32Array(cap * size), size);
+      a.setUsage(THREE.DynamicDrawUsage);
+      return a;
+    };
+    this.aPos = attr(3);
+    this.aSize = attr(3);
+    this.aCell = attr(1);
+    this.aColor = attr(4);
+    this.geo.setAttribute("aPos", this.aPos);
+    this.geo.setAttribute("aSize", this.aSize);
+    this.geo.setAttribute("aCell", this.aCell);
+    this.geo.setAttribute("aColor", this.aColor);
+    this.geo.instanceCount = 0;
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { map: { value: map } },
+      vertexShader: VERT,
+      fragmentShader: FRAG_ALPHA,
+      transparent: true,
+      depthWrite: false,
+    });
+    this.mesh = new THREE.Mesh(this.geo, mat);
+    this.mesh.frustumCulled = false;
+    // Over the characters and the other smoke, under the name plates (which smoke hides by skipping them).
+    this.mesh.renderOrder = 9;
+  }
+
+  /** Draws `clouds` as they are at server tick `tick` (fractional), `radius` metres wide. */
+  set(clouds: readonly SmokeCloud[], tick: number, radius: number) {
+    const P = this.aPos.array as Float32Array;
+    const S = this.aSize.array as Float32Array;
+    const C = this.aCell.array as Float32Array;
+    const K = this.aColor.array as Float32Array;
+    let n = 0;
+    const t = tick / 30;
+    for (const c of clouds.slice(0, SMOKE_CLOUDS)) {
+      const age = tick - c.start;
+      const left = c.end - tick;
+      if (left <= 0 || age < 0) continue;
+      const grow = Math.min(1, age / SMOKE_IN);
+      const fade = Math.min(1, grow * 1.5, left / SMOKE_OUT);
+      const spread = 0.35 + 0.65 * (1 - (1 - grow) * (1 - grow));
+      const seed = seedOf(c.id);
+      for (let i = 0; i < SMOKE_PUFFS; i++) {
+        const a = puffRand(seed, i, 1) * Math.PI * 2 + t * (0.05 + 0.05 * puffRand(seed, i, 2));
+        const r = radius * 0.78 * Math.sqrt(puffRand(seed, i, 3)) * spread;
+        const y = 0.35 + puffRand(seed, i, 4) * 1.9 + Math.sin(t * 0.7 + i) * 0.08;
+        const size = (2.4 + puffRand(seed, i, 5) * 1.6) * (0.6 + 0.4 * spread);
+        const g = 0.6 + puffRand(seed, i, 6) * 0.14;
+        P[n * 3] = c.x + Math.cos(a) * r;
+        P[n * 3 + 1] = y;
+        P[n * 3 + 2] = c.z + Math.sin(a) * r;
+        S[n * 3] = size;
+        S[n * 3 + 1] = size;
+        S[n * 3 + 2] = puffRand(seed, i, 7) * 6.28 + t * (puffRand(seed, i, 8) - 0.5) * 0.4;
+        C[n] = Cell.Smoke1 + (i % 3);
+        K[n * 4] = g;
+        K[n * 4 + 1] = g * 0.98;
+        K[n * 4 + 2] = g * 0.95;
+        K[n * 4 + 3] = 0.82 * fade;
+        n++;
+      }
+    }
+    this.geo.instanceCount = n;
+    this.mesh.visible = n > 0;
+    if (n > 0) for (const a of [this.aPos, this.aSize, this.aCell, this.aColor]) a.needsUpdate = true;
+  }
+}
+
 /** Per-weapon muzzle flash: atlas cell, width and length in metres. */
 const MUZZLE: { cell: number; w: number; h: number }[] = [
   { cell: Cell.MuzzleRifle, w: 0.45, h: 0.9 }, // rifle
@@ -363,6 +485,7 @@ export class Vfx {
   private add: Pool;
   private alpha: Pool;
   private decals: Decals;
+  private smoke: SmokeLayer;
   private tmp = new THREE.Vector3();
 
   constructor(
@@ -373,8 +496,59 @@ export class Vfx {
     const map = atlas ?? fallbackAtlas();
     this.alpha = new Pool(400, map, true);
     this.add = new Pool(600, map, false);
-    scene.add(this.alpha.mesh, this.add.mesh);
+    this.smoke = new SmokeLayer(map);
+    scene.add(this.alpha.mesh, this.add.mesh, this.smoke.mesh);
     this.decals = new Decals(scene, map, 6, 9000);
+  }
+
+  /** The smoke clouds on the ground this frame (see SmokeLayer). */
+  smokeClouds(clouds: readonly SmokeCloud[], tick: number, radius: number) {
+    this.smoke.set(clouds, tick, radius);
+  }
+
+  /** A smoke grenade pops: a quick grey puff while the cloud billows out. */
+  smokePop(x: number, z: number) {
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      this.alpha.spawn({
+        x, y: 0.3, z, vx: Math.cos(a) * 4, vy: 0.8, vz: Math.sin(a) * 4,
+        life: 0.9, cell: Cell.Smoke1 + (i % 3), size: 0.8, sizeEnd: 2.6,
+        rot: Math.random() * 6, color: 0xb8b8b4, alpha: 0.7, drag: 3,
+      });
+    }
+  }
+
+  /** A stun goes off: a blue-white electric ring and crackling streaks across the radius. */
+  stunBurst(x: number, z: number, radius: number) {
+    this.add.spawn({ x, y: 0.4, z, life: 0.2, cell: Cell.Glow, size: radius * 1.2, sizeEnd: radius * 2.2, color: 0x7fd8ff, alpha: 1 });
+    for (let i = 0; i < 24; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 6 + Math.random() * 6;
+      const vx = Math.cos(a) * sp;
+      const vz = Math.sin(a) * sp;
+      const vy = 1 + Math.random() * 2;
+      this.add.spawn({
+        x, y: 0.5, z, vx, vy, vz, life: 0.3 + Math.random() * 0.2,
+        cell: Cell.Streak, size: 0.08, aspect: 6,
+        rot: this.screenAngle(vx, vy, vz) - Math.PI / 2,
+        color: i % 3 ? 0x9fe6ff : 0xffffff, alpha: 1.5, drag: 4,
+      });
+    }
+  }
+
+  /** Sparks crackling round a stunned player (called a few times a second while it lasts). */
+  stunSparks(x: number, z: number) {
+    const a = Math.random() * Math.PI * 2;
+    const r = 0.35 + Math.random() * 0.25;
+    const y = 0.5 + Math.random() * 1.3;
+    this.add.spawn({ x: x + Math.cos(a) * r, y, z: z + Math.sin(a) * r, life: 0.12, cell: Cell.Star, size: 0.35, sizeEnd: 0.1, rot: Math.random() * 3, color: 0x9fe6ff, alpha: 1.4 });
+    this.add.spawn({ x, y: 1.1, z, life: 0.14, cell: Cell.Glow, size: 1.4, sizeEnd: 1.6, color: 0x3fa8ff, alpha: 0.25 });
+  }
+
+  /** A flash goes off: a blinding white bloom (only the world: the white screen itself is the HUD's). */
+  flashBurst(x: number, z: number) {
+    this.add.spawn({ x, y: 0.8, z, life: 0.22, cell: Cell.Glow, size: 3, sizeEnd: 9, color: 0xffffff, alpha: 1.6 });
+    this.add.spawn({ x, y: 0.8, z, life: 0.12, cell: Cell.Star, size: 2.5, sizeEnd: 4, rot: Math.random() * 3, color: 0xffffff, alpha: 1.6 });
   }
 
   /** Screen-space angle of a ground direction, for sprites that point along it. */

@@ -10,6 +10,7 @@
 // player path on the first snapshot that has us, on the same Match.
 
 import {
+  GRENADES,
   INTERP_DELAY_MS,
   KILL_GRENADE,
   MAX_HP,
@@ -20,12 +21,16 @@ import {
   WEAPONS,
   canDamage,
   findMap,
+  isGrenadeType,
   ordinal,
   sameTeam,
+  smokeHides,
+  smokeVeil,
   weaponDef,
   type InputMessage,
   type Phase,
   type PlayerView,
+  type SmokeVeil,
   type Vec2,
 } from "@bagarre/shared";
 import { getShowNames } from "./display.ts";
@@ -38,7 +43,8 @@ import type { Minimap } from "./minimap.ts";
 import type { Net, Snapshot } from "./net.ts";
 import { Predictor } from "./prediction.ts";
 import { paintFor, paintOf } from "./paint.ts";
-import { GameScene, PLAYER_CSS_COLORS, PlayerMesh, playerColor } from "./scene.ts";
+import { FADED_OPACITY, GameScene, PLAYER_CSS_COLORS, PlayerMesh, playerColor } from "./scene.ts";
+import type { SmokeCloud } from "./vfx.ts";
 import { byPlace, clock, secondsLeft } from "./scoreboard.ts";
 import { sceneRig } from "./spectate/camera.ts";
 import type { SpectatorControlActions } from "./spectate/controls.ts";
@@ -59,6 +65,14 @@ const REMOTE_DELAY = INTERP_DELAY_MS / 1000;
 const MAP_CARD_MS = 3500;
 /** ...fading out over its last this many ms. */
 const MAP_CARD_FADE_MS = 500;
+/** The sound of a grenade going off, by type (GRENADES index). */
+const BLAST_SFX: readonly SfxName[] = ["explosion", "smoke_pop", "stun_zap", "flashbang"];
+/**
+ * The flash's white screen: fully white for the first part of it, then a
+ * steady fade out (opacity = min(1, fraction left x FLASH_HOLD)). A plain
+ * fade, never a strobe.
+ */
+const FLASH_HOLD = 1.6;
 /** How long a kill feed line stays up, fading over its last second. */
 export const KILL_FEED_MS = 6000;
 const KILL_FEED_FADE_MS = 1000;
@@ -70,6 +84,8 @@ export interface Bot {
   mz: number;
   aim: number;
   fire: boolean;
+  /** Where a grenade thrown now goes (null: 6 m ahead along the aim, or the cursor). */
+  target: Vec2 | null;
 }
 
 export interface SfxLogEntry {
@@ -124,7 +140,7 @@ export class Match {
    * time reaches it. (Sampling the interpolated grenades could skip the single
    * snapshot where `exploded` is true on a slow frame.)
    */
-  private blasts: { at: number; x: number; z: number; own: boolean }[] = [];
+  private blasts: { at: number; x: number; z: number; own: boolean; kind: number }[] = [];
   private announcedBlasts = new Set<string>();
   /**
    * The opponent's muzzle flashes, due when render time reaches the shot. Read
@@ -241,9 +257,30 @@ export class Match {
   /** Picks the weapon for the next (re)spawn, if allowed right now. Returns whether it was sent. */
   pick(weapon: number): boolean {
     if (!this.canPick) return false;
-    this.net.sendPick(weapon);
+    this.net.sendPick({ weapon });
     this.sfx("weapon_pick");
     return true;
+  }
+
+  /** Picks the grenade type for the next (re)spawn, same rules as a weapon. Returns whether it was sent. */
+  pickGrenade(type: number): boolean {
+    if (!this.canPick || !isGrenadeType(type)) return false;
+    this.net.sendPick({ grenade: type });
+    this.sfx("weapon_pick");
+    return true;
+  }
+
+  /** The next grenade type after the one picked (G cycles them). */
+  cycleGrenade(): boolean {
+    const me = this.me;
+    return !!me && this.pickGrenade((me.grenadePick + 1) % GRENADES.length);
+  }
+
+  /** How smoke has each player drawn for us this frame (dev handle, tests). */
+  veils(): Record<string, SmokeVeil> {
+    const out: Record<string, SmokeVeil> = {};
+    for (const [id, m] of this.meshes) out[id] = m.veil;
+    return out;
   }
 
   /** The player's mesh, in `paint` (paint.ts), wearing `skin`. A new paint (a team switch) or skin remakes it. */
@@ -403,7 +440,7 @@ export class Match {
       }
       if (!g.exploded || this.announcedBlasts.has(id)) return;
       this.announcedBlasts.add(id);
-      this.blasts.push({ at: s.t + INTERP_DELAY_MS, x: g.tx, z: g.tz, own: g.owner === sessionId });
+      this.blasts.push({ at: s.t + INTERP_DELAY_MS, x: g.tx, z: g.tz, own: g.owner === sessionId, kind: g.kind });
     });
     for (const set of [this.announcedBlasts, this.seenGrenades, this.landedGrenades])
       if (set.size > 64) for (const id of set) if (!s.grenades.has(id)) set.delete(id);
@@ -516,7 +553,7 @@ export class Match {
         const move = bot.on ? { mx: bot.mx, mz: bot.mz } : screenToWorldMove(scene.camera, input.screenAxes());
         const here = predictor.sim ?? meServer;
         const aim = this.aim;
-        const target = this.cursor ?? { x: here.x + Math.cos(aim) * 6, z: here.z + Math.sin(aim) * 6 };
+        const target = (bot.on && bot.target) || this.cursor || { x: here.x + Math.cos(aim) * 6, z: here.z + Math.sin(aim) * 6 };
         const msg: InputMessage = {
           seq: ++this.seq,
           mx: move.mx,
@@ -547,7 +584,9 @@ export class Match {
       if (this.accumulator > TICK_MS) this.accumulator = 0;
     }
 
-    // 2. Local player: predicted position, smoothed between ticks.
+    // 2. Local player: predicted position, smoothed between ticks. Where we
+    //    stand is also where smoke is seen from (`viewer`).
+    let viewer: Vec2 | null = null;
     if (meServer && this.spectatedLastFrame) {
       // A seat was just taken: back to the game's own framing.
       this.spectatedLastFrame = false;
@@ -569,6 +608,8 @@ export class Match {
       }
       const mine = this.meshFor(sessionId, paintOf(meServer), meServer.skin);
       mine.set(pos.x, pos.z, this.aim, meServer.alive, meServer.weapon);
+      if ((predictor.sim?.stunTicks ?? 0) > 0) mine.stunned(now);
+      viewer = pos;
       const shield = meServer.shieldTicks > 0 ? meServer.shieldHp / SHIELD.absorb : 0;
       mine.setShield(shield);
       // Our own plate: the bar alone, at the predicted position like the body.
@@ -584,17 +625,40 @@ export class Match {
     const allies: { x: number; z: number; slot: number }[] = [];
     const myTeam = meServer?.team ?? NO_TEAM;
     const showNames = getShowNames();
+
+    // Smoke clouds, as of the render time (they appear when the grenade's
+    // blast is drawn). Hiding players in them is decided here, on the
+    // client only: the server sends every position to everyone. That is
+    // accepted (a game between friends, no anti-cheat), so this is not
+    // secure, and isn't meant to be. What smoke hides from an enemy, and
+    // only from an enemy (never from themselves, a teammate, or a
+    // spectator, who sees them faded): their model, name plate and health
+    // bar, minimap dot, muzzle flash, and their bullets while in or behind
+    // the cloud (the tracer shows once it comes out). Their shots and steps
+    // are still heard, and the kill feed still names them.
+    const renderTick = buffer.sampleTick(renderTime);
+    const clouds: SmokeCloud[] = [];
+    buffer.sampleSmokes(renderTime)?.forEach((c, id) => {
+      if (c.start <= renderTick && renderTick < c.end) clouds.push({ id, x: c.x, z: c.z, start: c.start, end: c.end });
+    });
+    scene.syncSmokes(clouds, renderTick);
+    const viewerTeam = meServer ? myTeam : null;
+
     latest?.players.forEach((p, id) => {
       if (id === sessionId) return;
       opponent = p;
       const s = buffer.samplePlayer(id, renderTime);
       if (!s) return;
       const m = this.meshFor(id, paintOf(s), s.skin);
-      m.set(s.x, s.z, s.aim, s.alive, s.weapon);
+      // A spectator has no viewpoint: only being inside a cloud counts (and it fades, never hides).
+      const veil = clouds.length > 0 ? smokeVeil(viewerTeam, s.team, false, smokeHides(viewer ?? s, s, clouds)) : "none";
+      m.set(s.x, s.z, s.aim, s.alive, s.weapon, veil);
+      if (s.stunTicks > 0) m.stunned(now);
       const shield = s.shieldTicks > 0 ? s.shieldHp / SHIELD.absorb : 0;
       m.setShield(shield);
       // Their plate follows the interpolated body, and shows what it shows (hits land when drawn).
-      scene.plates.set(id, s.x, s.z, s.name, paintOf(s), s.hp / MAX_HP, shield, s.alive, s.connected, showNames);
+      const fade = veil === "hidden" ? 0 : veil === "faded" ? FADED_OPACITY : 1;
+      scene.plates.set(id, s.x, s.z, s.name, paintOf(s), s.hp / MAX_HP, shield, s.alive, s.connected, showNames, fade);
       if (!s.alive) return;
       // Our predicted bullets stop on whoever they can hurt, and fly through
       // teammates, like the server's (canDamage).
@@ -618,33 +682,37 @@ export class Match {
       const m = this.meshes.get(shots[i].id);
       if (m) {
         m.shot(now);
-        // Minimap: an enemy shows up only when they fire (teammates are always on it).
+        // Minimap: an enemy shows up only when they fire (teammates are always
+        // on it), and not from inside or behind smoke: heard, not placed.
         const shooter = latest?.players.get(shots[i].id);
-        if (!shooter || !sameTeam(shooter.team, myTeam)) this.minimap.ping(m.group.position.x, m.group.position.z, m.slot, now, shots[i].id);
+        if ((!shooter || !sameTeam(shooter.team, myTeam)) && m.veil !== "hidden")
+          this.minimap.ping(m.group.position.x, m.group.position.z, m.slot, now, shots[i].id);
       }
       shots.splice(i, 1);
     }
 
     // Our own bullets are drawn from the prediction; the server's copies of
     // them are skipped (see LocalBullets). Everyone else's are interpolated.
-    const bullets = new Map<string, { x: number; z: number; slot: number; owner?: string; weapon?: number }>();
+    const bullets = new Map<string, { x: number; z: number; slot: number; owner?: string; weapon?: number; hidden?: boolean }>();
     for (const [id, b] of buffer.sampleBullets(renderTime)) {
       if (localBullets.owns(id)) continue;
       const owner = latest?.players.get(b.owner);
-      bullets.set(id, { x: b.x, z: b.z, slot: owner ? paintOf(owner) : 0, owner: b.owner });
+      // An enemy's bullet in or behind smoke isn't drawn (see above); a spectator sees them all.
+      const hidden = !!viewer && clouds.length > 0 && !sameTeam(owner?.team ?? NO_TEAM, myTeam) && smokeHides(viewer, b, clouds);
+      bullets.set(id, { x: b.x, z: b.z, slot: owner ? paintOf(owner) : 0, owner: b.owner, hidden });
     }
     if (meServer) localBullets.render(this.accumulator / TICK_MS, paintOf(meServer), bullets, sessionId);
     scene.syncBullets(bullets);
     scene.syncGrenades(buffer.sampleGrenades(renderTime), now);
     while (this.blasts.length > 0 && this.blasts[0].at <= now) {
       const b = this.blasts.shift()!;
-      scene.blast(b.x, b.z, now, b.own);
-      this.sfx("explosion", { x: b.x, z: b.z });
+      scene.blast(b.x, b.z, now, b.own, b.kind);
+      this.sfx(BLAST_SFX[b.kind] ?? "explosion", { x: b.x, z: b.z });
     }
 
     for (const m of this.meshes.values()) {
       m.update(now);
-      if (m.dashing) scene.addGhost(m.group.position.x, m.group.position.z, m.color, now);
+      if (m.dashing && m.veil !== "hidden") scene.addGhost(m.group.position.x, m.group.position.z, m.color, now);
     }
 
     // 4. HUD. Waiting and the match result have their own cards (Cards.tsx).
@@ -663,7 +731,7 @@ export class Match {
         ? `${away.name || "A player"} lost their connection.`
         : `${away.name || "Your opponent"} lost their connection. Waiting for them to come back…`;
     else if (meServer && !meServer.alive && latest?.phase === "playing")
-      status = `Respawning in ${(meServer.respawnTicks / TICK_RATE).toFixed(1)}s (1-7 to change weapon)`;
+      status = `Respawning in ${(meServer.respawnTicks / TICK_RATE).toFixed(1)}s (1-7: weapon, G: grenade)`;
 
     const map = scene.map;
     let mapCard: HudModel["mapCard"] = null;
@@ -676,7 +744,17 @@ export class Match {
     if (net.lagMs > 0) debugParts.unshift(`lag +${net.lagMs} ms`);
     if (big && meServer) {
       const pos = predictor.sim ?? meServer;
-      this.minimap.draw(now, { x: pos.x, z: pos.z, aim: this.aim, slot: paintOf(meServer), alive: meServer.alive }, allies);
+      this.minimap.draw(now, { x: pos.x, z: pos.z, aim: this.aim, slot: paintOf(meServer), alive: meServer.alive }, allies, clouds);
+    }
+
+    // The flash's white screen, from the synced end tick: how far we are
+    // through it right now (the latest snapshot's tick, plus the time since
+    // it came in).
+    let flash = 0;
+    if (meServer && latest && meServer.flashTicks > 0) {
+      const tickNow = latest.tick + (now - latest.t) / TICK_MS;
+      const left = (meServer.flashEnd - tickNow) / meServer.flashTicks;
+      if (left > 0) flash = Math.min(1, left * FLASH_HOLD);
     }
 
     this.hud.update({
@@ -692,6 +770,7 @@ export class Match {
       debug: debugParts.join("  |  "),
       muted: isMuted(),
       spectators: latest?.spectators ?? 0,
+      flash,
     });
   }
 

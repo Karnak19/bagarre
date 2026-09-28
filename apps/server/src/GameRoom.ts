@@ -47,7 +47,16 @@ import {
   TEAM_BLUE,
   TEAM_RED,
   TEAM_RULES,
+  GRENADE_FLASH,
+  GRENADE_FRAG,
   GRENADE_FUSE_TICKS,
+  GRENADE_SMOKE,
+  GRENADE_STUN,
+  SMOKE_TICKS,
+  STUN_TICKS,
+  blastEdge,
+  flashTicks,
+  stunReaches,
   INPUT_BURST,
   KILL_FEED_SIZE,
   KILL_GRENADE,
@@ -108,7 +117,7 @@ import {
   type Vec2,
 } from "@bagarre/shared";
 import { guestName, recordMatch, resolveIdentity, type Identity, type MatchResult } from "./accounts.ts";
-import { Bullet, GameState, Grenade, KillEvent, Player } from "./state.ts";
+import { Bullet, GameState, Grenade, KillEvent, Player, Smoke } from "./state.ts";
 
 /** Server-only bookkeeping per seat. Never synced. */
 interface PlayerInternal {
@@ -154,6 +163,8 @@ interface GrenadeInternal {
   fuseLeft: number;
   /** The thrower's team when it was thrown: its blast spares that team (and the thrower, with teams). */
   team: number;
+  /** Its type (GRENADES index), fixed at the throw: a pick made meanwhile doesn't change it. */
+  kind: number;
 }
 
 const PING_INTERVAL_MS = 2000;
@@ -211,15 +222,17 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       internal.queue.push(input);
     },
 
-    // Weapon pick: only valid ids, only while dead or between matches. It is
-    // stored as `pick` and only put in hand on the next (re)spawn.
+    // Loadout pick (weapon, grenade type, or both): only valid ids, only
+    // while dead or between matches. Stored as `pick` / `grenadePick` and
+    // only put in hand on the next (re)spawn (spawnAt).
     [MSG_PICK]: (client: Client, raw: unknown) => {
       if (this.spectators.has(client.sessionId)) return;
       const pick = parsePick(raw);
       const player = this.state.players.get(client.sessionId);
       if (!pick || !player) return;
       if (player.alive && this.state.phase === "playing") return;
-      player.pick = pick.weapon;
+      if (pick.weapon !== undefined) player.pick = pick.weapon;
+      if (pick.grenade !== undefined) player.grenadePick = pick.grenade;
     },
 
     // Latency: one probe per client every PING_INTERVAL_MS; the answer's
@@ -854,9 +867,16 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     return Math.atan2(hub.z - s.z, hub.x - s.x);
   }
 
-  /** Puts a player back in the game: picked weapon in hand, fresh HP, ammo and cooldowns. */
+  /**
+   * Puts a player back in the game: picked weapon and grenade type in hand,
+   * fresh HP, ammo and cooldowns (the grenade ready, and its next throw on
+   * the new type's cooldown), no stun, no flash.
+   */
   private spawnAt(p: Player, x: number, z: number) {
     p.weapon = p.pick;
+    p.grenade = p.grenadePick;
+    p.flashEnd = 0;
+    p.flashTicks = 0;
     writeSim(p, spawnSim(x, z, p.weapon, readSim(p)));
     p.hp = MAX_HP;
     p.alive = true;
@@ -870,6 +890,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     this.bulletInternals.clear();
     this.state.grenades.clear();
     this.grenadeInternals.clear();
+    this.state.smokes.clear();
   }
 
   private tick() {
@@ -996,7 +1017,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     const canAct = player.alive && this.state.phase !== "ended";
     // The same function the client predicts with. It enforces the fire
     // interval, magazine, reload and ability cooldowns.
-    const res = stepPlayer(this.map, readSim(player), input, player.weapon, canAct);
+    const res = stepPlayer(this.map, readSim(player), input, player.weapon, canAct, player.grenade);
     writeSim(player, res.sim);
     if (!canAct) return;
     player.aim = input.aim;
@@ -1035,6 +1056,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     g.tx = target.x;
     g.tz = target.z;
     g.owner = owner;
+    g.kind = player.grenade;
     this.state.grenades.set(id, g);
     const dist = Math.hypot(target.x - player.x, target.z - player.z);
     this.grenadeInternals.set(id, {
@@ -1044,6 +1066,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       age: 0,
       fuseLeft: GRENADE_FUSE_TICKS,
       team: player.team,
+      kind: player.grenade,
     });
   }
 
@@ -1083,7 +1106,11 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
 
   private stepGrenades() {
     const dead: string[] = [];
-    const blasts: { owner: string; x: number; z: number; team: number }[] = [];
+    const blasts: { owner: string; x: number; z: number; team: number; kind: number }[] = [];
+    // Smoke clouds that have cleared go first.
+    this.state.smokes.forEach((s, id) => {
+      if (s.end <= this.state.tick) this.state.smokes.delete(id);
+    });
     this.state.grenades.forEach((g, id) => {
       const internal = this.grenadeInternals.get(id);
       // An exploded grenade stays for exactly one snapshot so clients see the blast.
@@ -1104,16 +1131,64 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       internal.fuseLeft--;
       if (internal.fuseLeft <= 0) {
         g.exploded = true;
-        blasts.push({ owner: g.owner, x: g.tx, z: g.tz, team: internal.team });
+        blasts.push({ owner: g.owner, x: g.tx, z: g.tz, team: internal.team, kind: internal.kind });
       }
     });
     for (const id of dead) {
       this.state.grenades.delete(id);
       this.grenadeInternals.delete(id);
     }
-    for (const b of blasts) this.explode(b.owner, b.x, b.z, b.team);
+    for (const b of blasts) {
+      if (b.kind === GRENADE_SMOKE) this.smoke(b.owner, b.x, b.z);
+      else if (b.kind === GRENADE_STUN) this.stun(b.owner, b.x, b.z, b.team);
+      else if (b.kind === GRENADE_FLASH) this.flash(b.owner, b.x, b.z, b.team);
+      else if (b.kind === GRENADE_FRAG) this.explode(b.owner, b.x, b.z, b.team);
+    }
   }
 
+  /** A smoke grenade went off: a cloud for SMOKE_TICKS. Who it hides is up to each client (smokeVeil). */
+  private smoke(owner: string, x: number, z: number) {
+    const s = new Smoke();
+    s.x = x;
+    s.z = z;
+    s.start = this.state.tick;
+    s.end = this.state.tick + SMOKE_TICKS;
+    s.owner = owner;
+    this.state.smokes.set(String(this.nextGrenadeId++), s);
+  }
+
+  /**
+   * A stun went off: everyone alive in the radius it may affect (canDamage:
+   * teammates are spared with teams, and in a duel or FFA it gets its
+   * thrower too) gets STUN_TICKS of stun, or keeps a longer one already
+   * running. `stepPlayer` does the slowing, on the server and in the
+   * victim's own prediction alike. No damage.
+   */
+  private stun(owner: string, x: number, z: number, team: number) {
+    this.state.players.forEach((p, id) => {
+      if (!p.alive || !canDamage(team, p.team, id === owner)) return;
+      if (stunReaches(blastEdge(x, z, p.x, p.z))) p.stunTicks = Math.max(p.stunTicks, STUN_TICKS);
+    });
+  }
+
+  /**
+   * A flash went off: each player it may affect (canDamage, like the stun)
+   * gets the white screen `flashTicks` gives from where they stand and aim
+   * right now, cover included. The end tick is synced, so the victim's
+   * screen matches the server. A longer flash still running is kept. No damage.
+   */
+  private flash(owner: string, x: number, z: number, team: number) {
+    const tick = this.state.tick;
+    this.state.players.forEach((p, id) => {
+      if (!p.alive || !canDamage(team, p.team, id === owner)) return;
+      const n = flashTicks(this.map, p, p.aim, { x, z });
+      if (n <= 0 || tick + n <= p.flashEnd) return;
+      p.flashEnd = tick + n;
+      p.flashTicks = n;
+    });
+  }
+
+  /** A frag went off: damage with falloff, the only grenade that hurts (and the kill feed's "Grenade"). */
   private explode(owner: string, x: number, z: number, team: number) {
     // Collect first: a kill can end the match and clear the state mid-loop.
     const hits: { id: string; p: Player; dmg: number }[] = [];
