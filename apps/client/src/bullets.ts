@@ -112,13 +112,14 @@ export class LocalBullets {
   }
 
   /** Visible predicted bullets, blended between ticks like the local player. */
-  render(alpha: number, slot: number, out: Map<string, { x: number; z: number; slot: number }>) {
+  render(alpha: number, slot: number, out: Map<string, { x: number; z: number; slot: number; owner?: string }>, owner?: string) {
     for (const [id, b] of this.bullets) {
       if (b.dead) continue;
       out.set(id, {
         x: b.prev.x + (b.sim.x - b.prev.x) * alpha,
         z: b.prev.z + (b.sim.z - b.prev.z) * alpha,
         slot,
+        owner,
       });
     }
   }

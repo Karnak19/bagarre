@@ -1,9 +1,10 @@
-// The menu's background: the game's own scene on a random map, two soldiers
-// in a stand-off, and the camera slowly circling them. It uses the same
+// The menu's background: the game's own scene on a random map, two
+// characters in a stand-off (two different random skins, drawn once per page
+// load), and the camera slowly circling them. It uses the same
 // GameScene, arena and PlayerMesh as a match; `stop()` removes and frees the
 // two characters, and a match that follows simply replaces the map.
 
-import { MAPS, PLAYER_RADIUS, circleOverlapsBox, type MapDef, type Vec2 } from "@bagarre/shared";
+import { MAPS, PLAYER_RADIUS, circleOverlapsBox, randomSkin, type MapDef, type Vec2 } from "@bagarre/shared";
 import { setListener } from "./audio.ts";
 import { GameScene, PLAYER_COLORS, PlayerMesh } from "./scene.ts";
 
@@ -56,7 +57,17 @@ export class Attract {
   private lastMapId = "";
   running = false;
 
-  constructor(private scene: GameScene) {}
+  /**
+   * The two skins shown. Kept for the page's life: every visit to the menu
+   * shows the same two (on another map), so going back and forth fetches
+   * nothing new and uploads nothing new.
+   */
+  private readonly skins: [string, string];
+
+  constructor(private scene: GameScene) {
+    const a = randomSkin();
+    this.skins = [a, randomSkin([a])];
+  }
 
   /** Picks a map (never the one shown last time) and puts two soldiers on it. */
   start(now: number) {
@@ -69,7 +80,7 @@ export class Attract {
     this.scene.clearProjectiles();
     this.spot = standoff(map);
     this.meshes = [0, 1].map((slot) => {
-      const m = new PlayerMesh(PLAYER_COLORS[slot], false, slot);
+      const m = new PlayerMesh(PLAYER_COLORS[slot], false, slot, this.skins[slot]);
       this.scene.addPlayer(m);
       return m;
     });

@@ -246,21 +246,29 @@ export class Match {
     return true;
   }
 
-  /** The player's mesh, in `paint` (paint.ts). A new paint (a team switch) remakes it. */
-  private meshFor(id: string, paint: number): PlayerMesh {
+  /** The player's mesh, in `paint` (paint.ts), wearing `skin`. A new paint (a team switch) or skin remakes it. */
+  private meshFor(id: string, paint: number, skin: string | undefined): PlayerMesh {
+    skin ||= ""; // An older server sends none: the capsule.
     let m = this.meshes.get(id);
-    if (m && m.slot !== paint) {
+    if (m && (m.slot !== paint || m.skin !== skin)) {
       this.scene.removePlayer(m);
       m.dispose();
       this.meshes.delete(id);
       m = undefined;
     }
     if (!m) {
-      m = new PlayerMesh(playerColor(paint), id === this.net.sessionId, paint);
+      m = new PlayerMesh(playerColor(paint), id === this.net.sessionId, paint, skin, id);
       this.meshes.set(id, m);
       this.scene.addPlayer(m);
     }
     return m;
+  }
+
+  /** Per player drawn, the skin its mesh wears and whether that model has loaded (the dev handle's `skins()`). */
+  skins(): Record<string, { skin: string; loaded: boolean }> {
+    const out: Record<string, { skin: string; loaded: boolean }> = {};
+    for (const [id, m] of this.meshes) out[id] = { skin: m.skin, loaded: m.loaded };
+    return out;
   }
 
   private dropMesh(id: string) {
@@ -408,7 +416,7 @@ export class Match {
 
       // Hit flash (and its sound) when someone's HP goes down.
       if (p.hp < prev.hp) {
-        this.meshFor(id, paintOf(p)).flash(now + (mine ? 0 : INTERP_DELAY_MS));
+        this.meshFor(id, paintOf(p), p.skin).flash(now + (mine ? 0 : INTERP_DELAY_MS));
         this.sfx(mine ? "hurt" : "hit", at);
       }
       if (p.shieldHp < prev.shieldHp && p.shieldHp > 0) this.sfx("shield_hit", at);
@@ -557,7 +565,7 @@ export class Match {
           if (dx * dx + dz * dz > 0.01) this.aim = Math.atan2(dz, dx);
         }
       }
-      const mine = this.meshFor(sessionId, paintOf(meServer));
+      const mine = this.meshFor(sessionId, paintOf(meServer), meServer.skin);
       mine.set(pos.x, pos.z, this.aim, meServer.alive, meServer.weapon);
       const shield = meServer.shieldTicks > 0 ? meServer.shieldHp / SHIELD.absorb : 0;
       mine.setShield(shield);
@@ -579,7 +587,7 @@ export class Match {
       opponent = p;
       const s = buffer.samplePlayer(id, renderTime);
       if (!s) return;
-      const m = this.meshFor(id, paintOf(s));
+      const m = this.meshFor(id, paintOf(s), s.skin);
       m.set(s.x, s.z, s.aim, s.alive, s.weapon);
       const shield = s.shieldTicks > 0 ? s.shieldHp / SHIELD.absorb : 0;
       m.setShield(shield);
@@ -617,13 +625,13 @@ export class Match {
 
     // Our own bullets are drawn from the prediction; the server's copies of
     // them are skipped (see LocalBullets). Everyone else's are interpolated.
-    const bullets = new Map<string, { x: number; z: number; slot: number }>();
+    const bullets = new Map<string, { x: number; z: number; slot: number; owner?: string }>();
     for (const [id, b] of buffer.sampleBullets(renderTime)) {
       if (localBullets.owns(id)) continue;
       const owner = latest?.players.get(b.owner);
-      bullets.set(id, { x: b.x, z: b.z, slot: owner ? paintOf(owner) : 0 });
+      bullets.set(id, { x: b.x, z: b.z, slot: owner ? paintOf(owner) : 0, owner: b.owner });
     }
-    if (meServer) localBullets.render(this.accumulator / TICK_MS, paintOf(meServer), bullets);
+    if (meServer) localBullets.render(this.accumulator / TICK_MS, paintOf(meServer), bullets, sessionId);
     scene.syncBullets(bullets);
     scene.syncGrenades(buffer.sampleGrenades(renderTime), now);
     while (this.blasts.length > 0 && this.blasts[0].at <= now) {
