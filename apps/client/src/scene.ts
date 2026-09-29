@@ -426,10 +426,15 @@ export class GameScene {
   private shiftX = 0;
   private offset = cameraOffset(GAME_YAW);
 
-  constructor(canvas: HTMLCanvasElement, loaded: Assets | null = assets) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  /**
+   * `lite` (dev `?lite`, the e2e suite): no antialiasing and no shadows. On
+   * CI the GPU is SwiftShader, on the CPU, and those two are most of a drawn
+   * frame's cost there; nothing the suite checks looks at pixels.
+   */
+  constructor(canvas: HTMLCanvasElement, loaded: Assets | null = assets, { lite = false }: { lite?: boolean } = {}) {
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !lite });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.enabled = !lite;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.scene.background = new THREE.Color(0x1a1d24);
 

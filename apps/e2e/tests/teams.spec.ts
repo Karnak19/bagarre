@@ -1,4 +1,4 @@
-import { FFA_MAP, expect, kill, test, type Player } from "./fixtures.ts";
+import { FFA_MAP, expect, kill, setCountdown, test, type Player } from "./fixtures.ts";
 
 const RED = 0;
 const BLUE = 1;
@@ -33,10 +33,13 @@ test("a private team deathmatch: balancing, a switch while waiting, the 2v2 coun
   await expect(a.testId("team-players")).toContainText("1v2");
   await expect(a.testId("team-seats").and(a.page.locator(`[data-team="${BLUE}"]`)).getByTestId("seat")).toHaveCount(2);
 
-  // A 4th joins the smaller team (red): 2v2, the countdown, the match.
-  const countdown = a.testId("team-countdown").waitFor({ state: "visible" });
+  // A 4th joins the smaller team (red): 2v2, the countdown, the match. The
+  // countdown is held open until A has seen it (a starved CI page can miss
+  // the e2e 2 s between two frames), then let go.
+  await setCountdown(code, 60);
   const d = await players.join(invite, "D", FFA_MAP);
-  await countdown;
+  await expect(a.testId("team-countdown")).toBeVisible();
+  await setCountdown(code, 0.5);
   expect(await teamOf(d)).toBe(RED);
   const all = [a, b, c, d];
   await Promise.all(all.map((p) => p.expectState("phase", "playing")));
