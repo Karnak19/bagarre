@@ -15,6 +15,9 @@
 //   POST /hp { roomId, id, hp }            sets a living player's HP (1..MAX_HP), with no
 //                                          kill, feed line or damage stat (the heal spec
 //                                          hurts players with it)
+//   POST /countdown { roomId, seconds }    the same for that room's pre-match countdowns
+//   POST /respawn { roomId, seconds }      the same for that room's respawn delays (every
+//                                          dead player respawns `seconds` from now)
 //
 // Run by playwright.config.ts (webServer), or by hand: `bun server.ts`.
 
@@ -123,6 +126,57 @@ function setWarmup(body: string, reply: (status: number, text: string) => void) 
   reply(200, "ok");
 }
 
+/** A room's rules and the state fields the holds below move (replaced for that room, never changed: see setWarmup). */
+interface HoldRoom {
+  rules: { countdown: number; respawnDelay: number };
+  state: { countdown: number; players: { forEach(fn: (p: { alive: boolean; respawnTicks: number }) => void): void } };
+}
+
+function holdRoom(body: string, reply: (status: number, text: string) => void): { room: HoldRoom; seconds: number } | null {
+  const { roomId, seconds } = JSON.parse(body || "{}") as { roomId?: string; seconds?: number };
+  const room = roomId ? (matchMaker.getLocalRoomById(roomId) as unknown as HoldRoom | undefined) : undefined;
+  if (!room) return reply(404, `no room ${roomId}`), null;
+  // Above 0: a countdown of 0 means "no countdown" to the room.
+  if (typeof seconds !== "number" || seconds <= 0) return reply(400, `bad seconds ${seconds}`), null;
+  if (typeof room.rules?.countdown !== "number" || typeof room.rules?.respawnDelay !== "number") {
+    return reply(500, "GameRoom.rules.countdown / respawnDelay are gone: update apps/e2e/server.ts"), null;
+  }
+  return { room, seconds };
+}
+
+const ticksOf = (seconds: number) => Math.max(1, Math.round(seconds * TICK_RATE));
+
+/**
+ * POST /countdown { roomId, seconds }: that room's pre-match countdowns last
+ * `seconds`, and the one running if any ends `seconds` from now. A spec holds
+ * the countdown open while a slow page gets to see it (CI draws a page a few
+ * times a second), then lets it end.
+ */
+function setCountdown(body: string, reply: (status: number, text: string) => void) {
+  const hold = holdRoom(body, reply);
+  if (!hold) return;
+  const { room, seconds } = hold;
+  room.rules = { ...room.rules, countdown: seconds };
+  if (room.state.countdown > 0) room.state.countdown = ticksOf(seconds);
+  reply(200, "ok");
+}
+
+/**
+ * POST /respawn { roomId, seconds }: that room's respawns come `seconds` after
+ * a death, and every player dead right now respawns `seconds` from now. A
+ * spec holds a death while slow pages get to show it, then lets it end.
+ */
+function setRespawn(body: string, reply: (status: number, text: string) => void) {
+  const hold = holdRoom(body, reply);
+  if (!hold) return;
+  const { room, seconds } = hold;
+  room.rules = { ...room.rules, respawnDelay: seconds };
+  room.state.players.forEach((p) => {
+    if (!p.alive) p.respawnTicks = ticksOf(seconds);
+  });
+  reply(200, "ok");
+}
+
 /**
  * Sets how long every smoke cloud in a room has left (seconds from now), so a
  * test can hold one open while it checks things, however slow the machine,
@@ -154,6 +208,8 @@ createHttpServer((req, res) => {
     if (req.method === "POST" && req.url === "/warmup") return setWarmup(body, reply);
     if (req.method === "POST" && req.url === "/smoke") return setSmoke(body, reply);
     if (req.method === "POST" && req.url === "/hp") return setHp(body, reply);
+    if (req.method === "POST" && req.url === "/countdown") return setCountdown(body, reply);
+    if (req.method === "POST" && req.url === "/respawn") return setRespawn(body, reply);
     if (req.method !== "POST" || req.url !== "/kill") return reply(404, "not found");
     const { roomId, killer, victim } = JSON.parse(body || "{}") as { roomId?: string; killer?: string; victim?: string };
     const room = roomId ? (matchMaker.getLocalRoomById(roomId) as unknown as RoomInternals | undefined) : undefined;

@@ -72,6 +72,10 @@ The first run may need the browser: `bunx playwright install chromium` in
   (the warmup spec plays the real 8 s, then holds it open for its checks).
   `POST /hp` sets a living player's HP outside the damage path (the heal
   tests hurt players with it).
+  `POST /countdown` and `POST /respawn` do the same for the pre-match
+  countdown and the respawn delay. A 0.5 s death or a 2 s countdown can fall
+  between two frames of a starved CI page, so a spec that checks one holds it
+  open, checks, then lets it go (`setCountdown()`, `setRespawn()`).
 - `tests/fixtures.ts` holds the fixtures. `players.open()` is a new player
   (its own browser context); `players.duel()`, `players.teams(n)` and `players.host()` /
   `players.join()` open a private game by its link, so tests running in
@@ -80,8 +84,11 @@ The first run may need the browser: `bunx playwright install chromium` in
   `bot()`, `sfxCount()` / `sfxSince()` drive and watch the game.
 - Assertions go through `data-testid`s and `__bagarre`, never pixels. Wait
   with web-first assertions and `expect.poll` / `expectState()`, never a
-  fixed sleep. Pages open with `?map=` (pinned map) and `?fps=10` (a dev-only
-  cap on frames drawn: many pages drawing at 60 fps starve the machine).
+  fixed sleep. Pages open with `?map=` (pinned map), `?fps=` (a dev-only
+  cap on frames drawn, 10 with a GPU and 5 with SwiftShader: many pages
+  drawing at 60 fps starve the machine; the HUD and minimap update with the
+  drawn frames too) and `?lite` (dev-only: no antialiasing, no shadows, the
+  bulk of a frame's cost on SwiftShader).
 - WebGL: on a Mac the real GPU (Metal, one shared browser per test); on
   Linux (CI) SwiftShader, one browser per player. `E2E_GL=swiftshader` forces
   the software path locally.
@@ -91,8 +98,10 @@ To add a test: a `*.spec.ts` in `apps/e2e/tests/` importing `test` and
 and extend `PlayerState` when a test needs a new piece of state.
 
 CI (`.github/workflows/ci.yml`, on pushes to main and pull requests) runs
-build, typecheck, lint, smoke and e2e with no secrets; the Playwright report
-is uploaded when it fails.
+with no secrets, as parallel jobs: `check` (build, typecheck, lint, map and
+shared checks), `smoke`, and the e2e suite split into 4 shards
+(`playwright test --shard=N/4`). A failing shard uploads its Playwright report
+as `playwright-report-N`.
 
 ## Accounts (optional)
 

@@ -4,7 +4,7 @@
 // put where a throw needs them with the e2e server's /place.
 
 import { FFA_MAPS, FLASH, GRENADES, HEAL, MAX_HP, MSG_PICK, PLAYER_SPEED, SMOKE, STUN, TICK_DT, lineOfSight, segmentHitsBox, ticks, type Arena, type Vec2 } from "@bagarre/shared";
-import { FFA_MAP, expect, kill, place, setHp, setSmoke, test, type Player } from "./fixtures.ts";
+import { FFA_MAP, expect, kill, place, setHp, setRespawn, setSmoke, test, type Player } from "./fixtures.ts";
 
 // oxlint-disable typescript/no-explicit-any
 
@@ -233,10 +233,13 @@ test("stun slows the players in it and blocks their dash, with no rubber-banding
   // No damage from the stun.
   expect(fast.end.hp).toBe(100);
 
-  // Now a frag: pick it while dead (your own shot), respawn with it, and it hurts.
+  // Now a frag: pick it while dead (your own shot), respawn with it, and it
+  // hurts. The death is held while A sees it and picks (see setRespawn).
+  await setRespawn(code, 60);
   await kill(code, ida, ida);
   await expect.poll(async () => a.me(await a.state())?.alive).toBe(false);
   await a.page.evaluate(() => (window as any).__bagarre.app.pickGrenade(0));
+  await setRespawn(code, 0.5);
   await expect.poll(async () => {
     const me = a.me(await a.state());
     return me?.alive ? me.grenade : null;
@@ -295,8 +298,10 @@ test("flash: a player aiming at it gets the white screen; aiming away, or behind
 
   // Each new flash needs the cooldown back: a respawn gives it (your own shot, no score).
   async function rearm() {
+    await setRespawn(code, 60);
     await kill(code, ida, ida);
     await expect.poll(async () => a.me(await a.state())?.alive).toBe(false);
+    await setRespawn(code, 0.5);
     await expect.poll(async () => a.me(await a.state())?.alive).toBe(true);
   }
 

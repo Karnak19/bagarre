@@ -8,7 +8,9 @@
 // - `Player.state()` reads the dev handle `window.__bagarre` (Vite dev only)
 //   into one plain object: assertions go through it and data-testids, never
 //   through pixels.
-// - `kill()` asks the e2e server's control API (server.ts) for a kill.
+// - `kill()` asks the e2e server's control API (server.ts) for a kill;
+//   `setRespawn()` / `setCountdown()` / `setWarmup()` hold its short timers
+//   open while a slow page gets to see them.
 // - `unique()` / `signUp()` make an account through the account panel.
 
 import { test as base, expect, type Browser, type BrowserContext, type BrowserType, type LaunchOptions, type Page } from "@playwright/test";
@@ -20,9 +22,15 @@ export const FFA_MAP = "crossroads";
 /**
  * Frames drawn per second (`?fps=`, dev only): nothing here looks at pixels,
  * and a dozen pages drawing at 60 fps starve the machine (the GPU locally,
- * the CPU with SwiftShader). The game itself still runs every frame.
+ * the CPU with SwiftShader). The game itself still runs every frame; the HUD
+ * and the minimap update with the drawn frames. Every page also draws
+ * `?lite` (no antialiasing, no shadows).
+ *
+ * With SwiftShader (CI) a drawn frame costs a lot of CPU, even lite, and a
+ * starved page gets fewer animation frames, which is where the game runs and
+ * the checks look: 5 a second there.
  */
-const DRAW_FPS = Number(process.env.E2E_FPS ?? 10);
+const DRAW_FPS = Number(process.env.E2E_FPS ?? (GL === "swiftshader" ? 5 : 10));
 
 export interface PlayerState {
   screen: string;
@@ -114,11 +122,12 @@ export class Player {
     });
   }
 
-  /** Opens a path of the app, with the map pinned (`?map=`) and the drawing capped (`?fps=`). */
+  /** Opens a path of the app, with the map pinned (`?map=`) and the drawing capped and lightened (`?fps=`, `?lite`). */
   async goto(path: string, map = DUEL_MAP) {
     const url = new URL(path, "http://x");
     if (!url.searchParams.has("map")) url.searchParams.set("map", map);
     if (!url.searchParams.has("fps")) url.searchParams.set("fps", String(DRAW_FPS));
+    if (!url.searchParams.has("lite")) url.searchParams.set("lite", "1");
     await this.page.goto(url.pathname + url.search);
     await this.page.waitForFunction(() => "__bagarre" in window);
   }
@@ -332,6 +341,34 @@ export async function kill(roomId: string, killer: string, victim: string) {
  */
 export async function setWarmup(roomId: string, seconds: number) {
   const res = await fetch(`http://localhost:${SERVER_PORT + 1}/warmup`, {
+    method: "POST",
+    body: JSON.stringify({ roomId, seconds }),
+  });
+  expect(res.status, await res.text()).toBe(200);
+}
+
+/**
+ * Asks the e2e server to make that room's pre-match countdowns last `seconds`
+ * (server.ts' /countdown): the next ones, and the one running if any (it then
+ * ends `seconds` from now). Hold one open before the last player joins, check
+ * it, then release it with a short one.
+ */
+export async function setCountdown(roomId: string, seconds: number) {
+  const res = await fetch(`http://localhost:${SERVER_PORT + 1}/countdown`, {
+    method: "POST",
+    body: JSON.stringify({ roomId, seconds }),
+  });
+  expect(res.status, await res.text()).toBe(200);
+}
+
+/**
+ * Asks the e2e server to make that room's respawns come `seconds` after a
+ * death (server.ts' /respawn), the players dead right now included (from
+ * now). A death lasts 0.5 s in the e2e rules, less than a starved CI page may
+ * take between two frames: hold it before the kill, check it, then release it.
+ */
+export async function setRespawn(roomId: string, seconds: number) {
+  const res = await fetch(`http://localhost:${SERVER_PORT + 1}/respawn`, {
     method: "POST",
     body: JSON.stringify({ roomId, seconds }),
   });

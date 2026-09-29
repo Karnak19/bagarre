@@ -565,8 +565,12 @@ export class Match {
     );
   }
 
-  /** One frame: send this frame's inputs, draw everyone, update the HUD. */
-  frame(now: number, dtMs: number) {
+  /**
+   * One frame: send this frame's inputs, draw everyone, update the HUD.
+   * `draw` false (dev `?fps=` between two drawn frames): the game runs, but
+   * the HUD and the minimap wait for the next drawn frame, like the scene.
+   */
+  frame(now: number, dtMs: number, draw = true) {
     if (this.disposed) return;
     const dt = dtMs / 1000;
     const { scene, input, bot, net, predictor, localBullets, buffer } = this;
@@ -780,7 +784,7 @@ export class Match {
 
     const debugParts = [`pending inputs ${predictor.pendingCount}`, `correction ${predictor.lastError.toFixed(3)} m`];
     if (net.lagMs > 0) debugParts.unshift(`lag +${net.lagMs} ms`);
-    if (big && meServer) {
+    if (draw && big && meServer) {
       const pos = predictor.sim ?? meServer;
       this.minimap.draw(now, { x: pos.x, z: pos.z, aim: this.aim, slot: paintOf(meServer), alive: meServer.alive }, allies, clouds);
     }
@@ -795,6 +799,7 @@ export class Match {
       if (left > 0) flash = Math.min(1, left * FLASH_HOLD);
     }
 
+    if (!draw) return;
     this.hud.update({
       status,
       me: meServer,
