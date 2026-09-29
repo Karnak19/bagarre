@@ -157,7 +157,6 @@ interface BulletInternal {
   team: number;
 }
 
-/** Server-only bookkeeping per grenade. */
 /** A grenade going off this tick: where, whose, and its type (a GRENADES index). */
 interface Blast {
   owner: string;
@@ -168,6 +167,7 @@ interface Blast {
   kind: number;
 }
 
+/** Server-only bookkeeping per grenade. */
 interface GrenadeInternal {
   ox: number;
   oz: number;

@@ -5,7 +5,7 @@
 // non-zero on a failure.
 
 import type { Arena } from "../src/arena.ts";
-import { spawnSim, stepPlayer } from "../src/combat.ts";
+import { grenadeAffects, spawnSim, stepPlayer } from "../src/combat.ts";
 import {
   DASH_COOLDOWN_TICKS,
   FLASH,
@@ -22,7 +22,7 @@ import {
   TICK_RATE,
   ticks,
 } from "../src/constants.ts";
-import { flashTicks, grenadeAffects, grenadeCooldownTicks, healAmount, isGrenadeType, smokeHides, smokeVeil } from "../src/grenades.ts";
+import { flashTicks, grenadeCooldownTicks, healAmount, isGrenadeType, smokeHides, smokeVeil } from "../src/grenades.ts";
 import { parsePick } from "../src/messages.ts";
 import { lineOfSight, segmentHitsBox, segmentHitsCircle } from "../src/physics.ts";
 import type { InputMessage, PlayerSim } from "../src/protocol.ts";

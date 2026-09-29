@@ -13,7 +13,7 @@
 // - heal: an instant HEAL.amount of health (healAmount below) for the
 //   thrower and their teammates in the radius, with no cover in the way.
 //
-// Who a blast affects is its def's `affects` (grenadeAffects below). For
+// Who a blast affects is its def's `affects` (grenadeAffects, combat.ts). For
 // the frag, smoke, stun and flash that is "enemies", the friendly-fire rule
 // `canDamage`: teammates are spared in a team deathmatch, and your own
 // grenade gets you in a duel or a free for all. For the heal it is "allies":
@@ -21,8 +21,7 @@
 // for all. Everything here is pure and deterministic.
 
 import type { Arena } from "./arena.ts";
-import { canDamage, sameTeam } from "./combat.ts";
-import { DEFAULT_GRENADE, FLASH, GRENADES, HEAL, MAX_HP, NO_TEAM, PLAYER_RADIUS, SMOKE, TICK_RATE, ticks, type GrenadeAffects, type GrenadeDef } from "./constants.ts";
+import { DEFAULT_GRENADE, FLASH, GRENADES, HEAL, MAX_HP, NO_TEAM, PLAYER_RADIUS, SMOKE, TICK_RATE, ticks, type GrenadeDef } from "./constants.ts";
 import { lineOfSight, segmentHitsCircle, type Vec2 } from "./physics.ts";
 
 export function grenadeDef(type: number): GrenadeDef {
@@ -36,23 +35,6 @@ export function isGrenadeType(type: unknown): type is number {
 /** Steps from a throw of this type until the next one is allowed. */
 export function grenadeCooldownTicks(type: number): number {
   return ticks(grenadeDef(type).cooldown);
-}
-
-/**
- * Whether a blast that affects `affects`, thrown by a player on
- * `throwerTeam`, reaches a player on `victimTeam` (`self`: the thrower).
- * "enemies" is exactly `canDamage`. "allies" is the thrower and their
- * teammates, written out on purpose and NOT `!canDamage`: in a duel or a
- * free for all your own frag hurts you (canDamage is true for yourself), yet
- * two NO_TEAM players are never teammates, so there it is the thrower alone.
- */
-export function grenadeAffects(affects: GrenadeAffects, throwerTeam: number, victimTeam: number, self: boolean): boolean {
-  switch (affects) {
-    case "enemies":
-      return canDamage(throwerTeam, victimTeam, self);
-    case "allies":
-      return self || sameTeam(throwerTeam, victimTeam);
-  }
 }
 
 /** Distance from a blast at (bx, bz) to the edge of a body at (x, z), as the frag and the stun measure it (0 or less: standing on it). */

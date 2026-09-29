@@ -21,6 +21,7 @@ import {
   TICK_DT,
   WEAPONS,
   ticks,
+  type GrenadeAffects,
   type WeaponDef,
 } from "./constants.ts";
 import { grenadeCooldownTicks } from "./grenades.ts";
@@ -353,4 +354,21 @@ export function sameTeam(a: number, b: number): boolean {
 export function canDamage(attackerTeam: number, victimTeam: number, self: boolean): boolean {
   if (self) return victimTeam === NO_TEAM;
   return !sameTeam(attackerTeam, victimTeam);
+}
+
+/**
+ * Whether a blast that affects `affects`, thrown by a player on
+ * `throwerTeam`, reaches a player on `victimTeam` (`self`: the thrower).
+ * "enemies" is exactly `canDamage`. "allies" is the thrower and their
+ * teammates, written out on purpose and NOT `!canDamage`: in a duel or a
+ * free for all your own frag hurts you (canDamage is true for yourself), yet
+ * two NO_TEAM players are never teammates, so there it is the thrower alone.
+ */
+export function grenadeAffects(affects: GrenadeAffects, throwerTeam: number, victimTeam: number, self: boolean): boolean {
+  switch (affects) {
+    case "enemies":
+      return canDamage(throwerTeam, victimTeam, self);
+    case "allies":
+      return self || sameTeam(throwerTeam, victimTeam);
+  }
 }

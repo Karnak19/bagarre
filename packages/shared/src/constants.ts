@@ -207,7 +207,7 @@ export const HEAL = {
 export type GrenadeEffect = "damage" | "cloud" | "stun" | "flash" | "heal";
 
 /**
- * Who a blast affects (see `grenadeAffects` in grenades.ts):
+ * Who a blast affects (see `grenadeAffects` in combat.ts):
  * - enemies: the friendly-fire rule, `canDamage`. Teammates are spared in a
  *   team mode; in a duel or a free for all it gets the thrower too.
  * - allies: the thrower and their teammates (`self || sameTeam`). Never an

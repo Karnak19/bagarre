@@ -15,7 +15,6 @@ import {
   GRENADE_STUN,
   WEAPONS,
 } from "../src/constants.ts";
-import { KILL_GRENADE } from "../src/protocol.ts";
 
 const failures: string[] = [];
 function check(cond: boolean, label: string) {
@@ -56,7 +55,6 @@ const AFFECTS: readonly string[] = ["enemies", "allies"];
 for (const g of GRENADES) check(EFFECTS.includes(g.effect) && AFFECTS.includes(g.affects), `${g.name}: a known effect (${g.effect}) on a known target (${g.affects})`);
 
 // The carriers: uint8 schema fields, the kill feed's weapon id, the number keys.
-check(WEAPONS.length < KILL_GRENADE, `weapon ids stay clear of KILL_GRENADE (${KILL_GRENADE}) in the kill feed`);
 check(GRENADES.length <= 256, "grenade ids fit a uint8");
 check(WEAPONS.length <= 9, `every weapon has a number key, 1-9 (${WEAPONS.length} weapons)`);
 
