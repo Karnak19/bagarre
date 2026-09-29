@@ -89,8 +89,10 @@ To add a test: a `*.spec.ts` in `apps/e2e/tests/` importing `test` and
 and extend `PlayerState` when a test needs a new piece of state.
 
 CI (`.github/workflows/ci.yml`, on pushes to main and pull requests) runs
-build, typecheck, lint, smoke and e2e with no secrets; the Playwright report
-is uploaded when it fails.
+with no secrets, as parallel jobs: `check` (build, typecheck, lint, map and
+shared checks), `smoke`, and the e2e suite split into 4 shards
+(`playwright test --shard=N/4`). A failing shard uploads its Playwright report
+as `playwright-report-N`.
 
 ## Accounts (optional)
 
