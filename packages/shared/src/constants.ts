@@ -185,7 +185,7 @@ export const FLASH = {
 
 /**
  * What a grenade does when it goes off. Each effect has one handler on the
- * server (GameRoom's BLAST_EFFECTS) and reads its own tuning block above:
+ * server (GameRoom's blastEffects) and reads its own tuning block above:
  * - damage: GRENADE (falloff damage, the kill feed's "Grenade");
  * - cloud: SMOKE (a cloud that hides, drawn by the clients);
  * - stun: STUN (slower walking, no dash);
@@ -194,7 +194,7 @@ export const FLASH = {
 export type GrenadeEffect = "damage" | "cloud" | "stun" | "flash";
 
 /**
- * Who a blast affects (see `grenadeAffects` in grenades.ts):
+ * Who a blast affects (see `grenadeAffects` in combat.ts):
  * - enemies: the friendly-fire rule, `canDamage`. Teammates are spared in a
  *   team mode; in a duel or a free for all it gets the thrower too.
  * (A heal would add "allies" here.)
@@ -230,7 +230,7 @@ export const GRENADE_FLASH = 3;
  * Adding a grenade:
  * 1. Append its line here, with a new `key`, its `effect` and who it `affects`.
  *    A new effect also needs its tuning block above, a GrenadeEffect member
- *    and its handler in BLAST_EFFECTS (apps/server/src/GameRoom.ts).
+ *    and its handler in blastEffects (apps/server/src/GameRoom.ts).
  * 2. Add its `key` to GRENADE_VIEW (apps/client/src/items.ts): icon,
  *    telegraph colour, blast sound, blast drawing, How to play blurb. It
  *    won't compile without it.

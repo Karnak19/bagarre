@@ -6,7 +6,7 @@
 
 import { FLASH, GRENADE, SMOKE, STUN, WEAPONS, grenadeDef, weaponDef, type GrenadeKey, type WeaponKey } from "@bagarre/shared";
 import type { SfxName } from "./audio.ts";
-import { Cell, type Vfx } from "./vfx.ts";
+import { Cell, type MuzzleFlash, type Vfx } from "./vfx.ts";
 
 // --- Guns ----------------------------------------------------------------------
 
@@ -32,7 +32,7 @@ export interface GunViewDef {
    */
   scale: number;
   /** Muzzle flash: atlas cell, width and length in metres. */
-  flash: { cell: number; w: number; h: number };
+  flash: MuzzleFlash;
   /** The shot sound. */
   sfx: SfxName;
   /** Its line in How to play. */
