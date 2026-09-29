@@ -94,6 +94,8 @@ import {
   respawnPoint,
   shotPellets,
   spawnSim,
+  equipSim,
+  playerCan,
   stepBullet,
   stepPlayer,
   parseInput,
@@ -221,8 +223,9 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     },
 
     // Loadout pick (weapon, grenade type, or both): only valid ids, only
-    // while dead or between matches. Stored as `pick` / `grenadePick` and
-    // only put in hand on the next (re)spawn (spawnAt).
+    // while dead, between matches or during warmup. Stored as `pick` /
+    // `grenadePick` and put in hand on the next (re)spawn (spawnAt); during
+    // warmup, a living player gets it in hand at once (equip).
     [MSG_PICK]: (client: Client, raw: unknown) => {
       if (this.spectators.has(client.sessionId)) return;
       const pick = parsePick(raw);
@@ -231,6 +234,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       if (player.alive && this.state.phase === "playing") return;
       if (pick.weapon !== undefined) player.pick = pick.weapon;
       if (pick.grenade !== undefined) player.grenadePick = pick.grenade;
+      if (player.alive && this.state.phase === "warmup") this.equip(player);
     },
 
     // Latency: one probe per client every PING_INTERVAL_MS; the answer's
@@ -544,7 +548,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     // running (a duel can't be mid-match here: the room holds two). A
     // server-pinned map wins.
     const asked = this.devMap(options);
-    if (asked && !this.pinnedMap && this.state.phase !== "playing") {
+    if (asked && !this.pinnedMap && (this.state.phase === "waiting" || this.state.phase === "ended")) {
       this.fixedMap = true;
       if (asked.id !== this.map.id) this.switchMap(asked);
     }
@@ -706,7 +710,17 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       this.state.bullets.delete(bid);
       this.bulletInternals.delete(bid);
     });
-    if (this.state.phase === "playing") {
+    if (this.state.phase === "warmup") {
+      // Nothing has been played yet: too few left (or, with teams, a team
+      // left empty) goes back to waiting, with no result, like a duel.
+      const emptyTeam = this.rules.teams && this.teamCounts(false).includes(0);
+      if (this.seats < this.rules.minToContinue || emptyTeam) {
+        this.setPhase("waiting");
+        this.state.startTick = 0;
+        this.state.endTick = 0;
+        if (this.rules.teams) this.rebalance();
+      }
+    } else if (this.state.phase === "playing") {
       // Teams: a team with nobody left loses, whatever the score (checked
       // first: the last player standing wins for their team even when the
       // room is then too small to go on).
@@ -741,6 +755,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   private setPhase(phase: Phase) {
     this.state.phase = phase;
     if (phase !== "waiting") this.state.countdown = 0;
+    if (phase !== "warmup") this.state.warmupEnd = 0;
     // The final places and the tiebreak only mean something on the result.
     if (phase !== "ended") {
       this.state.tiebreak = "";
@@ -814,6 +829,12 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     });
   }
 
+  /**
+   * A match starts: the map, everyone on their start spot with their pick in
+   * hand, the scoreboard cleared, then the warmup (`rules.warmup` seconds,
+   * see beginPlay for what starts after it). With no warmup, straight to
+   * playing.
+   */
   private startMatch() {
     this.pickMap();
     this.clearProjectiles();
@@ -848,6 +869,28 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
         p.aim = this.hubAim(spawn);
       });
     }
+    // Not started yet: the clock, the time limit and the tiebreaks begin
+    // with `playing` (beginPlay).
+    this.state.startTick = 0;
+    this.state.endTick = 0;
+    this.internals.forEach((i) => (i.deaths = 0));
+    this.teamDamage = [0, 0];
+    if (this.rules.warmup <= 0) {
+      this.beginPlay();
+      return;
+    }
+    this.setPhase("warmup");
+    // A tick, not a duration: every client counts down to the same one.
+    this.state.warmupEnd = this.state.tick + ticks(this.rules.warmup);
+  }
+
+  /**
+   * The warmup is over (or there was none): the match itself starts now. The
+   * match clock and the time limit count from here (`startTick`), and so does
+   * the "reached that kill score first" tiebreak (`reachedAt`), for everyone,
+   * drop-ins during warmup included.
+   */
+  private beginPlay() {
     this.state.startTick = this.state.tick;
     this.state.endTick = 0;
     this.internals.forEach((i) => {
@@ -857,6 +900,17 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     this.teamDamage = [0, 0];
     this.teamReachedAt = [this.state.startTick, this.state.startTick];
     this.setPhase("playing");
+  }
+
+  /**
+   * A pick during warmup, for a living player: the picked weapon and grenade
+   * type in hand at once, with a full magazine and nothing of the old gun
+   * left over (equipSim), and the grenade ready. Where they stand doesn't change.
+   */
+  private equip(p: Player) {
+    p.weapon = p.pick;
+    p.grenade = p.grenadePick;
+    writeSim(p, equipSim(readSim(p), p.weapon));
   }
 
   /** Aim from a spawn toward the FFA map's hub (the centre on other maps). */
@@ -927,7 +981,9 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
 
     // 4. The match clock: countdown before, time limit during, rematch after.
     if (this.state.phase === "waiting") this.stepCountdown();
-    else if (this.state.phase === "playing") this.stepTimeLimit();
+    else if (this.state.phase === "warmup") {
+      if (this.state.tick >= this.state.warmupEnd) this.beginPlay();
+    } else if (this.state.phase === "playing") this.stepTimeLimit();
     else if (this.state.phase === "ended") {
       // After the result delay: the rematch, or back to waiting if too few
       // are left. In a duel, a player who dropped holds the result card up
@@ -1012,12 +1068,13 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       player.shieldSeen = Math.max(player.shieldSeen, input.shield);
       player.reloadSeen = Math.max(player.reloadSeen, input.reload);
     }
-    const canAct = player.alive && this.state.phase !== "ended";
-    // The same function the client predicts with. It enforces the fire
-    // interval, magazine, reload and ability cooldowns.
-    const res = stepPlayer(this.map, readSim(player), input, player.weapon, canAct, player.grenade);
+    // Moving, and (not in warmup) shooting, throwing and the shield: the
+    // same rule and the same function the client predicts with. It enforces
+    // the fire interval, magazine, reload and ability cooldowns.
+    const can = playerCan(player.alive, this.state.phase);
+    const res = stepPlayer(this.map, readSim(player), input, player.weapon, can, player.grenade);
     writeSim(player, res.sim);
-    if (!canAct) return;
+    if (!can.act) return;
     player.aim = input.aim;
 
     if (res.fired) this.spawnShot(id, player, input);
@@ -1136,6 +1193,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       this.grenadeInternals.delete(id);
     }
     for (const b of blasts) {
+      // Nothing goes off in warmup (nothing can be thrown then either).
+      if (this.state.phase === "warmup") continue;
       if (b.kind === GRENADE_SMOKE) this.smoke(b.x, b.z);
       else if (b.kind === GRENADE_STUN) this.stun(b.owner, b.x, b.z, b.team);
       else if (b.kind === GRENADE_FLASH) this.flash(b.owner, b.x, b.z, b.team);
@@ -1207,7 +1266,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
    * no kill taken away.
    */
   private damage(attackerId: string, targetId: string, target: Player, amount: number, weapon = 0) {
-    if (!target.alive) return;
+    // No damage at all in warmup.
+    if (!target.alive || this.state.phase === "warmup") return;
     // No friendly fire, and no hurting yourself, with teams. (Bullets and
     // blasts already skip them; this also covers any other path.)
     if (!canDamage(this.teamOf(attackerId), target.team, attackerId === targetId)) return;

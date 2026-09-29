@@ -23,6 +23,7 @@ import {
   findMap,
   isGrenadeType,
   ordinal,
+  playerCan,
   sameTeam,
   smokeHides,
   smokeVeil,
@@ -45,7 +46,7 @@ import { Predictor } from "./prediction.ts";
 import { paintFor, paintOf } from "./paint.ts";
 import { FADED_OPACITY, GameScene, PLAYER_CSS_COLORS, PlayerMesh, playerColor } from "./scene.ts";
 import type { SmokeCloud } from "./vfx.ts";
-import { byPlace, clock, secondsLeft } from "./scoreboard.ts";
+import { byPlace, clock, secondsLeft, warmupLeft } from "./scoreboard.ts";
 import { sceneRig } from "./spectate/camera.ts";
 import type { SpectatorControlActions } from "./spectate/controls.ts";
 import type { CameraMode } from "./spectate/model.ts";
@@ -107,11 +108,17 @@ export interface MatchDeps {
   minimap: Minimap;
 }
 
+/** What our player may do this step: the server's own rule (`playerCan`), so warmup predicts no shot. */
 function canMove(p: PlayerView, ph: Phase) {
-  return p.alive && ph !== "ended";
+  return playerCan(p.alive, ph);
 }
 
-/** Mirrors the server rule for MSG_PICK. */
+/**
+ * Mirrors the server rule for MSG_PICK: while dead, or at any time outside
+ * `playing` (waiting, warmup, between matches). In warmup a living player's
+ * pick goes in hand at once; the predictor follows when the server's
+ * snapshot shows the new weapon (reconcile).
+ */
 function canPick(p: PlayerView | null, ph: Phase) {
   return !!p && (!p.alive || ph !== "playing");
 }
@@ -246,6 +253,24 @@ export class Match {
       if (id !== this.net.sessionId) out = p;
     });
     return out;
+  }
+
+  /**
+   * What the input sent now may do. The snapshot's rule (`playerCan`), but
+   * at the end of a warmup the snapshot is behind: an input sent now reaches
+   * the server about a round trip after the snapshot's tick, so once that is
+   * past the warmup's end tick it is predicted armed, like the server will
+   * treat it (the match's first shot is seen and heard at once, not only
+   * when the server's bullet comes back).
+   */
+  private canNow(me: PlayerView, s: Snapshot, now: number) {
+    const can = canMove(me, s.phase);
+    if (!can.act || can.armed || s.phase !== "warmup" || s.warmupEnd <= 0) return can;
+    // The server applies inputs before it ends the warmup in a tick, so it
+    // arms them from the tick after the end one; one more tick of margin, as a
+    // shot predicted too early would be a ghost bullet.
+    const arrives = s.tick + (now - s.t + me.ping) / TICK_MS;
+    return arrives >= s.warmupEnd + 2 ? { act: true, armed: true } : can;
   }
 
   /** Weapon picks are accepted right now (dead, waiting or between matches). */
@@ -418,7 +443,8 @@ export class Match {
     this.spectate(s, now, !me, resynced);
 
     if (s.phase !== this.phase) {
-      if (s.phase === "playing") this.mapCardLeft = MAP_CARD_MS;
+      // The map's name as the match starts: with its warmup, or into play when there is none.
+      if (s.phase === "warmup" || (s.phase === "playing" && this.phase !== "warmup")) this.mapCardLeft = MAP_CARD_MS;
       if (s.phase === "ended") {
         this.endedAt = performance.now();
         // A spectator has no side: no win or lose sting. With teams, our team's result.
@@ -565,7 +591,7 @@ export class Match {
           ...input.presses,
         };
         const before = predictor.sim;
-        const res = predictor.apply(msg, canMove(meServer, latest.phase));
+        const res = predictor.apply(msg, this.canNow(meServer, latest, now));
         // Instant local shots: same pellets, same ids as the server will spawn.
         if (res?.fired) localBullets.spawn(meServer.slot, msg.seq, predictor.weapon, res.sim.x, res.sim.z, msg.aim);
         if (res && before) {
@@ -735,7 +761,7 @@ export class Match {
 
     const map = scene.map;
     let mapCard: HudModel["mapCard"] = null;
-    if (map && latest?.phase === "playing" && this.mapCardLeft > 0) {
+    if (map && (latest?.phase === "warmup" || latest?.phase === "playing") && this.mapCardLeft > 0) {
       mapCard = { title: map.name, sub: map.blurb, opacity: Math.min(1, this.mapCardLeft / MAP_CARD_FADE_MS) };
       this.mapCardLeft -= Math.min(dtMs, 100);
     }
@@ -766,6 +792,7 @@ export class Match {
       feed: latest ? this.feedLines(latest, now) : [],
       sim: predictor.sim,
       canPick: !!latest && canPick(meServer, latest.phase),
+      warmup: latest?.phase === "warmup" ? warmupLeft(latest) : null,
       mapCard,
       debug: debugParts.join("  |  "),
       muted: isMuted(),

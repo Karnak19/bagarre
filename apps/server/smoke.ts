@@ -63,6 +63,7 @@ import {
   spawnSim,
   stepBullet,
   stepPlayer,
+  playerCan,
   ticks,
   type Arena,
   type InputMessage,
@@ -79,7 +80,10 @@ import { SMOKE_PUBLIC_URL, accountChecks, setupTestAccounts, skinChecks } from "
 import { ffaChecks, registerFfaRooms } from "./smoke-ffa.ts";
 import { registerSpectateRooms, spectatorChecks } from "./smoke-spectate.ts";
 import { registerTeamRooms, teamChecks } from "./smoke-teams.ts";
+import { QUICK_WARMUP, registerWarmupRooms, warmupChecks } from "./smoke-warmup.ts";
 
+/** The duel with the smoke's short warmup, for the extra duel room types. */
+const QuickDuel = DuelRoom.withRules({ warmup: QUICK_WARMUP });
 const PORT = Number(process.env.SMOKE_PORT) || 2599; // SMOKE_PORT: run next to another smoke
 const URL = `http://localhost:${PORT}`;
 const failures: string[] = [];
@@ -181,7 +185,7 @@ function driver(room: Room, map: MapDef = YARD) {
         input.fire = true;
         fireOnce = false;
       }
-      sim = stepPlayer(map, sim, input, p.weapon, p.alive && state(room).phase !== "ended").sim;
+      sim = stepPlayer(map, sim, input, p.weapon, playerCan(p.alive, state(room).phase), p.grenade).sim;
       history.set(seq, sim);
       sent.set(seq, input);
       room.send(MSG_INPUT, input);
@@ -1337,7 +1341,7 @@ async function reconnectReload() {
 }
 
 /** A room whose grace period is 2 s, for the expiry check. */
-class ShortGraceRoom extends DuelRoom.pinnedTo("yard") {
+class ShortGraceRoom extends QuickDuel.pinnedTo("yard") {
   protected override reconnectGrace = 2;
 }
 
@@ -1489,7 +1493,8 @@ async function shutdownCheck() {
     if (!up) throw new Error(`${tag} the child server did not start`);
     const r1 = await new Client(url).joinOrCreate(ROOM_NAME);
     const r2 = await new Client(url).joinOrCreate(ROOM_NAME);
-    await waitFor(() => state(r1).phase === "playing", 3000);
+    // A live match: its warmup (the real rules: 8 s of it) is enough.
+    await waitFor(() => state(r1).phase === "warmup" || state(r1).phase === "playing", 3000);
     const codes: number[] = [];
     const dropped: number[] = [];
     for (const r of [r1, r2]) {
@@ -1517,6 +1522,10 @@ const server = createServer({
   gracefullyShutdown: false,
   mapId: "yard",
   watchAnyRoom: true,
+  // Every match's warmup shortened (the warmup checks run the real one in their own room).
+  duelRules: { warmup: QUICK_WARMUP },
+  ffaRules: { warmup: QUICK_WARMUP },
+  teamRules: { warmup: QUICK_WARMUP },
   // A fresh in-memory database; Discord on with fake keys (the account checks
   // follow its redirect, never Discord itself); reset links to the console.
   database: "memory",
@@ -1530,12 +1539,13 @@ const server = createServer({
 const accounts = setupTestAccounts();
 await server.listen(PORT);
 // Extra room types for the map checks: one unpinned (random maps), one pinned per wall case.
-matchMaker.defineRoomType("duel_random", DuelRoom);
-for (const c of WALL_CASES) matchMaker.defineRoomType(`duel_${c.map}`, DuelRoom.pinnedTo(c.map));
+matchMaker.defineRoomType("duel_random", QuickDuel);
+for (const c of WALL_CASES) matchMaker.defineRoomType(`duel_${c.map}`, QuickDuel.pinnedTo(c.map));
 matchMaker.defineRoomType("duel_short_grace", ShortGraceRoom);
 registerFfaRooms();
 registerSpectateRooms();
 registerTeamRooms();
+registerWarmupRooms();
 
 let exitCode = 0;
 try {
@@ -1543,7 +1553,7 @@ try {
   pureMapChecks();
   await mainDuel();
 
-  console.log("\n-- parallel rooms: weapons, grenade, shield, accounts --");
+  console.log("\n-- parallel rooms: weapons, grenade, shield, accounts, warmup --");
   const accountLines: [boolean, string][] = [];
   const skinLines: [boolean, string][] = [];
   const results = await Promise.allSettled([
@@ -1555,6 +1565,8 @@ try {
     shieldDuel(),
     ...WALL_CASES.map((c) => mapDuel(c)),
     randomMaps(),
+    // The warmup (its real 8 s duel included), alongside.
+    warmupChecks(URL).then((groups) => groups.flat()),
   ]);
   for (const r of results) {
     if (r.status === "fulfilled") for (const [c, l] of r.value) check(c, l);

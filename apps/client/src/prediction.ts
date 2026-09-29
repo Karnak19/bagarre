@@ -3,6 +3,7 @@ import {
   mapById,
   readSim,
   stepPlayer,
+  type Can,
   type InputMessage,
   type MapDef,
   type PlayerSim,
@@ -46,7 +47,8 @@ export class Predictor {
    * server's would desync, so this placeholder is replaced before the first prediction.
    */
   map: MapDef = mapById(DEFAULT_MAP_ID);
-  private pending: InputMessage[] = [];
+  /** Inputs sent and not yet acknowledged, each with whether it was predicted `armed` (see apply). */
+  private pending: { input: InputMessage; armed: boolean }[] = [];
   private offset: Vec2 = { x: 0, z: 0 };
   /** Last reconciliation error, for the debug line. */
   lastError = 0;
@@ -79,23 +81,32 @@ export class Predictor {
     this.lastError = 0;
   }
 
-  /** Applies an input we just sent. `canAct` mirrors the server's rules. */
-  apply(input: InputMessage, canAct: boolean): StepResult | null {
+  /**
+   * Applies an input we just sent. `canAct` mirrors the server's rules
+   * (`playerCan`: no shots, grenades or shield during warmup, so no ghost
+   * bullet is ever predicted then).
+   */
+  apply(input: InputMessage, canAct: Can): StepResult | null {
     if (!this.sim) return null;
     this.prev = { x: this.sim.x, z: this.sim.z };
     const res = stepPlayer(this.map, this.sim, input, this.weapon, canAct, this.grenade);
     this.sim = res.sim;
-    this.pending.push(input);
+    this.pending.push({ input, armed: canAct.armed });
     if (this.pending.length > MAX_PENDING) this.pending.shift();
     return res;
   }
 
-  reconcile(server: PlayerView, canAct: boolean) {
+  reconcile(server: PlayerView, canAct: Can) {
     this.weapon = server.weapon;
     this.grenade = server.grenade;
-    this.pending = this.pending.filter((i) => i.seq > server.lastSeq);
+    this.pending = this.pending.filter((p) => p.input.seq > server.lastSeq);
     let s = readSim(server);
-    for (const input of this.pending) s = stepPlayer(this.map, s, input, this.weapon, canAct, this.grenade).sim;
+    // The snapshot's rule, except at the end of a warmup: an input predicted
+    // armed (it reaches the server once the match has started) stays armed.
+    for (const p of this.pending) {
+      const can = { act: canAct.act, armed: canAct.armed || (canAct.act && p.armed) };
+      s = stepPlayer(this.map, s, p.input, this.weapon, can, this.grenade).sim;
+    }
 
     if (!this.sim) {
       this.sim = s;

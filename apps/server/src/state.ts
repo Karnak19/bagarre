@@ -156,7 +156,7 @@ export const GameState = schema(
      * the same tick that puts the players on the new map's spawns.
      */
     mapId: t.string().default(DEFAULT_MAP_ID),
-    /** Tick the current match started on, and ended on (0 while it runs). */
+    /** Tick the current match started on (its warmup's end; 0 during warmup), and ended on (0 while it runs). */
     startTick: t.uint32().default(0),
     endTick: t.uint32().default(0),
     /** From the mode's rules, so clients show the right target and clock. */
@@ -174,6 +174,8 @@ export const GameState = schema(
     spectators: t.uint8().default(0),
     /** Smoke clouds on the ground; each is removed once it clears. */
     smokes: t.map(Smoke),
+    /** Warmup: the tick it ends on, the match starts then (0 outside warmup). Synced as a tick so every client's timer agrees. */
+    warmupEnd: t.uint32().default(0),
   },
   "GameState",
 );

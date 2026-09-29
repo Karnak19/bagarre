@@ -171,10 +171,10 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
 
   // Music: the menu's track everywhere but a match being played (the menu,
   // its attract scene, the Maps page's walk, joining, and a game's waiting
-  // card); a match track while it's on; silence from its end (the win or lose
-  // sting) until the next one starts or we are back on the menu.
+  // card); a match track from its warmup on; silence from its end (the win or
+  // lose sting) until the next one starts or we are back on the menu.
   const musicFor = (v: GameView | null): MusicMood =>
-    v?.phase === "playing" ? "match" : v?.phase === "ended" ? "off" : "menu";
+    v?.phase === "playing" || v?.phase === "warmup" ? "match" : v?.phase === "ended" ? "off" : "menu";
 
   function loop(now: number) {
     frames++;

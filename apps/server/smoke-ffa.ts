@@ -34,6 +34,7 @@ import {
   type RoomStateView,
 } from "@bagarre/shared";
 import { FfaRoom } from "./src/GameRoom.ts";
+import { QUICK_WARMUP } from "./smoke-warmup.ts";
 import type { AccountsHarness } from "./smoke-accounts.ts";
 
 type Lines = [boolean, string][];
@@ -79,7 +80,7 @@ const local = (roomId: string) => matchMaker.getLocalRoomById(roomId) as unknown
 /** Room types used below: name -> class. */
 export function registerFfaRooms() {
   // Short countdown and respawn delay, so a scenario takes seconds.
-  const quick = { countdown: 1, respawnDelay: 0.3 };
+  const quick = { countdown: 1, respawnDelay: 0.3, warmup: QUICK_WARMUP };
   const base = FfaRoom.pinnedTo("crossroads").withRules(quick);
   matchMaker.defineRoomType("ffa_test", base);
   matchMaker.defineRoomType("ffa_seats", base);

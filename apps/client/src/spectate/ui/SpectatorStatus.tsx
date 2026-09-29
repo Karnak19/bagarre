@@ -1,6 +1,6 @@
 // The spectator's phase line, under the top bar: a spectator has no waiting
 // or result card, so this says what the game is doing between matches
-// ("Waiting for players", the countdown, who won). Nothing while a match
+// ("Waiting for players", the countdown, the warmup's timer, who won). Nothing while a match
 // runs, except in a team deathmatch, where it keeps the team score
 // ("Red 12 – 9 Blue"). It reads the game view through a selector: it re-renders when the
 // line's text changes, not per frame.
@@ -9,6 +9,7 @@ import { Text } from "@astryxdesign/core/Text";
 import { NO_TEAM, TEAM_NAMES, TICK_RATE, rulesOf } from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
 import type { GameView } from "../../app.ts";
+import { warmupLeft } from "../../scoreboard.ts";
 import { useEngine, useSelector } from "../../ui/hooks.ts";
 import { shared } from "../../ui/styles.ts";
 
@@ -37,6 +38,8 @@ function statusLine(v: GameView | null): string {
     const need = rulesOf(s.mode).minPlayers - n;
     return need > 0 ? `Waiting for ${need === 1 ? "one more player" : `${need} more players`}` : "Waiting for players";
   }
+  // The players are on the map picking their loadout: the same timer they see.
+  if (s.phase === "warmup") return `Match starts in ${warmupLeft(s)}`;
   const teamScore = `${TEAM_NAMES[0]} ${s.redScore} – ${s.blueScore} ${TEAM_NAMES[1]}`;
   if (s.mode === "tdm") {
     if (s.phase === "playing") return s.suddenDeath ? `${teamScore} · sudden death` : teamScore;

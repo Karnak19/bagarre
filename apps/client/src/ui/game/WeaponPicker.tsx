@@ -1,6 +1,9 @@
 // The loadout: the weapons as toggle buttons (keys 1-7 do the same) and the
-// grenade types (G cycles them), for the waiting and result cards. Only live
-// while picks are accepted (dead, waiting, or between matches).
+// grenade types (G cycles them), for the waiting and result cards and the
+// warmup panel. Only live while picks are accepted (dead, waiting, warmup, or
+// between matches). `live`: the warmup's, over the running game, which hands
+// the keyboard back to the game after a click (Space must dash, not press
+// the button again).
 
 import { Kbd } from "@astryxdesign/core/Kbd";
 import { HStack } from "@astryxdesign/core/Layout";
@@ -20,7 +23,13 @@ const styles = stylex.create({
   group: { display: "flex", flexWrap: "wrap", gap: "6px", width: "100%" },
 });
 
-export function WeaponPicker() {
+/** After a click on a picker over the running game: the keyboard goes back to the game. */
+function releaseFocus() {
+  const el = document.activeElement;
+  if (el instanceof HTMLElement) el.blur();
+}
+
+export function WeaponPicker({ live = false }: { live?: boolean }) {
   countRender("weaponPicker");
   const { app, view, gesture } = useEngine();
   const { pick, canPick } = useSelector(view, (v) => ({ pick: v?.pick ?? 0, canPick: !!v?.canPick }), shallowEqual);
@@ -33,6 +42,7 @@ export function WeaponPicker() {
         if (v === null) return;
         gesture();
         app.pick(Number(v));
+        if (live) releaseFocus();
       }}
       isDisabled={!canPick}
       xstyle={styles.group}
@@ -51,7 +61,7 @@ export function WeaponPicker() {
 }
 
 /** The grenade types, next to the weapons: same rules (G cycles them), put in hand on the next spawn. */
-export function GrenadePicker({ heading }: { heading: string }) {
+export function GrenadePicker({ heading, live = false }: { heading: string; live?: boolean }) {
   countRender("grenadePicker");
   const { app, view, gesture } = useEngine();
   const { pick, canPick } = useSelector(view, (v) => ({ pick: v?.grenadePick ?? 0, canPick: !!v?.canPick }), shallowEqual);
@@ -71,6 +81,7 @@ export function GrenadePicker({ heading }: { heading: string }) {
           if (v === null) return;
           gesture();
           app.pickGrenade(Number(v));
+          if (live) releaseFocus();
         }}
         isDisabled={!canPick}
         xstyle={styles.group}

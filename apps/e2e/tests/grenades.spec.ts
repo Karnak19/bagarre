@@ -4,7 +4,7 @@
 // put where a throw needs them with the e2e server's /place.
 
 import { FFA_MAPS, FLASH, GRENADES, MSG_PICK, PLAYER_SPEED, SMOKE, STUN, TICK_DT, lineOfSight, segmentHitsBox, ticks, type Arena, type Vec2 } from "@bagarre/shared";
-import { FFA_MAP, expect, kill, place, test, type Player } from "./fixtures.ts";
+import { FFA_MAP, expect, kill, place, setSmoke, test, type Player } from "./fixtures.ts";
 
 // oxlint-disable typescript/no-explicit-any
 
@@ -134,6 +134,11 @@ test("smoke hides a player in it from enemies (model, plate, minimap), a spectat
   const heardFrom = await b.sfxCount();
   await throwAt(a, inCloud.x, inCloud.z, Math.PI);
   await heard(b, heardFrom, "smoke_pop");
+  // The cloud lasts SMOKE.duration; hold it open while we check (a slow CI
+  // machine takes longer than that to get through them), then let it clear.
+  const [left] = await setSmoke(code, 60);
+  expect(left).toBeGreaterThan(0);
+  expect(left).toBeLessThanOrEqual(ticks(SMOKE.duration));
   await expect.poll(() => veilOf(b, ida), { message: "B no longer sees A" }).toBe("hidden");
   await expect.poll(() => plateOf(b, ida)).toMatchObject({ visible: false, hidden: true });
   // A sees themselves; the spectator sees A faded.
@@ -160,7 +165,8 @@ test("smoke hides a player in it from enemies (model, plate, minimap), a spectat
   await place(code, ida, inCloud.x, inCloud.z);
   await expect.poll(() => veilOf(b, ida)).toBe("hidden");
   await expect.poll(async () => (await b.state()).players.length).toBe(3);
-  await expect.poll(() => veilOf(b, ida), { timeout: (SMOKE.duration + 4) * 1000, message: "the cloud clears" }).toBe("none");
+  await setSmoke(code, 1);
+  await expect.poll(() => veilOf(b, ida), { message: "the cloud clears" }).toBe("none");
   await expect.poll(() => plateOf(b, ida)).toMatchObject({ visible: true });
   // No damage from the smoke.
   expect((await playerIn(b, ida)).hp).toBe(100);
