@@ -7,6 +7,6 @@ import { Shell } from "../ui/Shell.tsx";
 // navigation (retainSearchParams), except the one-shot `?play`.
 export const Route = createRootRouteWithContext<RouterContext>()({
   validateSearch: validateDevSearch,
-  search: { middlewares: [retainSearchParams(["map", "lag", "server"]), stripSearchParams(["play"])] },
+  search: { middlewares: [retainSearchParams(["map", "lag", "server", "fps", "lite"]), stripSearchParams(["play"])] },
   component: Shell,
 });

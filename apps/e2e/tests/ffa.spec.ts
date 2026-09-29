@@ -1,14 +1,16 @@
-import { FFA_MAP, expect, kill, test } from "./fixtures.ts";
+import { FFA_MAP, expect, kill, setCountdown, test } from "./fixtures.ts";
 
 test("a private free for all: 3 players, countdown, HUD, kill feed, and a 4th player dropping in", async ({ players }) => {
   const { host: a, invite, code } = await players.host("ffa", "A");
   const b = await players.join(invite, "B", FFA_MAP);
   await expect(a.testId("ffa-players")).toContainText("2/6");
-  // The e2e server counts down 2 s once the third player is in: A starts
-  // looking before C joins, so the short countdown can't slip by unseen.
-  const countdown = a.testId("ffa-countdown").waitFor({ state: "visible" });
+  // The countdown starts once the third player is in. The e2e one is 2 s,
+  // which a starved CI page can miss between two frames: it is held open
+  // until A has seen it, then let go.
+  await setCountdown(code, 60);
   const c = await players.join(invite, "C", FFA_MAP);
-  await countdown;
+  await expect(a.testId("ffa-countdown")).toBeVisible();
+  await setCountdown(code, 0.5);
   await Promise.all([a, b, c].map((p) => p.expectState("phase", "playing")));
   for (const p of [a, b, c]) {
     await p.expectState("card", "none");
