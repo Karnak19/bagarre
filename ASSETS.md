@@ -18,7 +18,7 @@ anyway. The one font is under the SIL Open Font License.
 | --- | --- | --- |
 | `apps/client/public/models/anims.glb` | 101 KB | The 5 clips every skin plays, on the shared rig (bones only, no mesh) |
 | `apps/client/public/models/skins/*.glb` | 64–141 KB each, 1.54 MB for all 16 | One character per skin in `SKINS` (`packages/shared/src/skins.ts`): mesh and skeleton, no clips |
-| `apps/client/public/models/guns/*.glb` | 16–27 KB each, 152 KB for all 7 | One gun per weapon in `GUN_MODELS` |
+| `apps/client/public/models/guns/*.glb` | 16–27 KB each, 152 KB for all 7 | One gun per weapon in `GUN_VIEW` (`apps/client/src/items.ts`) |
 | `apps/client/public/models/props.glb` | 128 KB | Arena props, one named node each |
 | `apps/client/public/vfx/particles.png` | 212 KB | 4 x 4 greyscale atlas of Kenney particles |
 | `apps/client/public/fonts/black-ops-one.woff2` | 23 KB | Black Ops One, Latin subset (the Google Fonts woff2) |
@@ -72,7 +72,7 @@ The raw packs are not in the repo. To rebuild the files above:
   the clips we play, strip the rest, prune, dedup, resample, meshopt
   compression). It also runs `convert-guns.py` in headless Blender to turn the
   gun FBX into glTF and measure each gun's grip and muzzle (`guns.json`, the
-  numbers in `GUN_MODELS`). `props.glb` is only rebuilt with `--props` and the
+  numbers in `GUN_VIEW`). `props.glb` is only rebuilt with `--props` and the
   Toon Shooter kit. Instructions at the top of the file. The client decodes
   meshopt with three's `MeshoptDecoder`.
 - Previews: `apps/client/scripts/assets/render-previews.py` (Blender) renders

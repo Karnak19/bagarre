@@ -1,4 +1,4 @@
-// The loadout: the weapons as toggle buttons (keys 1-7 do the same) and the
+// The loadout: the weapons as toggle buttons (the number keys do the same) and the
 // grenade types (G cycles them), for the waiting and result cards and the
 // warmup panel. Only live while picks are accepted (dead, waiting, warmup, or
 // between matches). `live`: the warmup's, over the running game, which hands
@@ -11,12 +11,10 @@ import { ToggleButton, ToggleButtonGroup } from "@astryxdesign/core/ToggleButton
 import { Text } from "@astryxdesign/core/Text";
 import { GRENADES, WEAPONS } from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
+import { GRENADE_VIEW } from "../../items.ts";
 import { countRender } from "../../renders.ts";
 import { shallowEqual, useEngine, useSelector } from "../hooks.ts";
 import { shared } from "../styles.ts";
-
-/** One glyph per grenade type (GRENADES index), in the picker and the HUD. */
-export const GRENADE_ICONS = ["💥", "💨", "⚡", "✴️"];
 
 const styles = stylex.create({
   // Wraps: the seven weapons sit on two rows in the card.
@@ -91,7 +89,7 @@ export function GrenadePicker({ heading, live = false }: { heading: string; live
           <ToggleButton key={g.key} value={String(i)} label={g.name} data-testid={`grenade-pick-${g.key}`}>
             <HStack as="span" gap={1.5} align="center">
               <Text as="span" aria-hidden>
-                {GRENADE_ICONS[i]}
+                {GRENADE_VIEW[g.key].icon}
               </Text>
               {g.name}
             </HStack>

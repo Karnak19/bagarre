@@ -1,4 +1,4 @@
-// The four grenade types (GRENADES in constants.ts): what each one does when
+// The grenade types (GRENADES in constants.ts): what each one does when
 // it goes off. They share the throw (grenadeTarget / grenadeArc /
 // grenadeFlightTicks in combat.ts) and differ only in their blast:
 //
@@ -11,9 +11,10 @@
 // - flash: a white screen for whoever looks toward it with no cover in the
 //   way (flashTicks below), resolved by the server at the blast.
 //
-// Who a stun or a flash affects is the friendly-fire rule, `canDamage`:
-// teammates are spared in a team deathmatch, and your own stun or flash gets
-// you in a duel or a free for all. Everything here is pure and deterministic.
+// Who a blast affects is its def's `affects` (grenadeAffects, combat.ts). For
+// every type today that is "enemies", the friendly-fire rule `canDamage`:
+// teammates are spared in a team deathmatch, and your own grenade gets you in
+// a duel or a free for all. Everything here is pure and deterministic.
 
 import type { Arena } from "./arena.ts";
 import { DEFAULT_GRENADE, FLASH, GRENADES, NO_TEAM, PLAYER_RADIUS, SMOKE, TICK_RATE, ticks, type GrenadeDef } from "./constants.ts";

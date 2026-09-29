@@ -47,7 +47,9 @@ export const ticks = (seconds: number) => Math.max(1, Math.round(seconds * TICK_
 //   revolver 3 hits = 0.93 s, burst pistol 3 bursts = 1.07 s, DMR 3 hits = 1.13 s.
 // =============================================================================
 
-export interface WeaponDef {
+export interface WeaponDef<K extends string = WeaponKey> {
+  /** Stable key: what the client's GUN_VIEW (models, sounds, flashes) is looked up by. Never renamed. */
+  key: K;
   name: string;
   /** Damage per bullet (per pellet for the shotgun). */
   damage: number;
@@ -76,17 +78,33 @@ export interface WeaponDef {
   burstInterval?: number;
 }
 
-/** Index = weapon id (sent over the wire, picked with keys 1-7). */
-export const WEAPONS: readonly WeaponDef[] = [
+/**
+ * Index = weapon id: sent over the wire (MSG_PICK, `Player.weapon`, the kill
+ * feed, which also uses KILL_GRENADE = 255) and picked with the number keys
+ * (1 = index 0). Ids are frozen: never reorder or remove a gun, only append.
+ *
+ * Adding a gun:
+ * 1. Append its line here, with a new `key` (the firing rules are generic:
+ *    no server change needed).
+ * 2. Add its `key` to GUN_VIEW (apps/client/src/items.ts): model, scale,
+ *    muzzle flash, shot sound, How to play blurb. It won't compile without it.
+ * 3. Add its assets: the model under apps/client/public/models/guns/, and
+ *    its shot sound (SfxName and the SFX table in apps/client/src/audio.ts).
+ * 4. Append its key to WEAPON_IDS in packages/shared/scripts/items.check.ts.
+ */
+const WEAPON_LIST = [
   //  name        damage  fireInterval  bulletSpeed  range  spread  pellets  magazine  reloadTime
-  { name: "Rifle",   damage: 20, fireInterval: 0.2, bulletSpeed: 45, range: 18, spread: 0.04, pellets: 1, magazine: 12, reloadTime: 1.5 },
-  { name: "Shotgun", damage: 12, fireInterval: 0.7, bulletSpeed: 36, range: 7, spread: 0.4, pellets: 6, magazine: 5, reloadTime: 2.0 },
-  { name: "Sniper",  damage: 70, fireInterval: 1.2, bulletSpeed: 90, range: 30, spread: 0, pellets: 1, magazine: 4, reloadTime: 2.5 },
-  { name: "SMG",     damage: 11, fireInterval: 0.1, bulletSpeed: 40, range: 12, spread: 0.16, pellets: 1, magazine: 30, reloadTime: 1.8 },
-  { name: "Revolver", damage: 34, fireInterval: 0.45, bulletSpeed: 70, range: 20, spread: 0, pellets: 1, magazine: 6, reloadTime: 2.2 },
-  { name: "Burst pistol", damage: 12, fireInterval: 0.45, bulletSpeed: 42, range: 15, spread: 0.05, pellets: 1, magazine: 15, reloadTime: 1.2, burst: 3, burstInterval: 0.06 },
-  { name: "DMR",     damage: 40, fireInterval: 0.567, bulletSpeed: 80, range: 26, spread: 0.01, pellets: 1, magazine: 8, reloadTime: 2.0 },
-];
+  { key: "rifle", name: "Rifle",   damage: 20, fireInterval: 0.2, bulletSpeed: 45, range: 18, spread: 0.04, pellets: 1, magazine: 12, reloadTime: 1.5 },
+  { key: "shotgun", name: "Shotgun", damage: 12, fireInterval: 0.7, bulletSpeed: 36, range: 7, spread: 0.4, pellets: 6, magazine: 5, reloadTime: 2.0 },
+  { key: "sniper", name: "Sniper",  damage: 70, fireInterval: 1.2, bulletSpeed: 90, range: 30, spread: 0, pellets: 1, magazine: 4, reloadTime: 2.5 },
+  { key: "smg", name: "SMG",     damage: 11, fireInterval: 0.1, bulletSpeed: 40, range: 12, spread: 0.16, pellets: 1, magazine: 30, reloadTime: 1.8 },
+  { key: "revolver", name: "Revolver", damage: 34, fireInterval: 0.45, bulletSpeed: 70, range: 20, spread: 0, pellets: 1, magazine: 6, reloadTime: 2.2 },
+  { key: "burst-pistol", name: "Burst pistol", damage: 12, fireInterval: 0.45, bulletSpeed: 42, range: 15, spread: 0.05, pellets: 1, magazine: 15, reloadTime: 1.2, burst: 3, burstInterval: 0.06 },
+  { key: "dmr", name: "DMR",     damage: 40, fireInterval: 0.567, bulletSpeed: 80, range: 26, spread: 0.01, pellets: 1, magazine: 8, reloadTime: 2.0 },
+] as const satisfies readonly WeaponDef<string>[];
+/** A gun's stable key ("rifle", "shotgun", ...). */
+export type WeaponKey = (typeof WEAPON_LIST)[number]["key"];
+export const WEAPONS: readonly WeaponDef[] = WEAPON_LIST;
 export const DEFAULT_WEAPON = 0;
 
 /** Dash (Space): a burst in the move direction, or the facing direction when standing still. */
@@ -165,10 +183,32 @@ export const FLASH = {
   minDuration: 0.3,
 } as const;
 
-export interface GrenadeDef {
-  /** Stable key (test ids, the HUD). */
-  key: "frag" | "smoke" | "stun" | "flash";
+/**
+ * What a grenade does when it goes off. Each effect has one handler on the
+ * server (GameRoom's blastEffects) and reads its own tuning block above:
+ * - damage: GRENADE (falloff damage, the kill feed's "Grenade");
+ * - cloud: SMOKE (a cloud that hides, drawn by the clients);
+ * - stun: STUN (slower walking, no dash);
+ * - flash: FLASH (a white screen for whoever looks at it).
+ */
+export type GrenadeEffect = "damage" | "cloud" | "stun" | "flash";
+
+/**
+ * Who a blast affects (see `grenadeAffects` in combat.ts):
+ * - enemies: the friendly-fire rule, `canDamage`. Teammates are spared in a
+ *   team mode; in a duel or a free for all it gets the thrower too.
+ * (A heal would add "allies" here.)
+ */
+export type GrenadeAffects = "enemies";
+
+export interface GrenadeDef<K extends string = GrenadeKey> {
+  /** Stable key (test ids, the HUD, the client's GRENADE_VIEW). Never renamed. */
+  key: K;
   name: string;
+  /** What the blast does: picks the server's handler. */
+  effect: GrenadeEffect;
+  /** Who the blast affects. Ignored by "cloud", which is the same for everyone. */
+  affects: GrenadeAffects;
   /** Seconds from a throw until the next one is allowed. */
   cooldown: number;
   /** The landing telegraph's radius, metres. */
@@ -184,14 +224,29 @@ export const GRENADE_FLASH = 3;
 /**
  * Index = grenade type (MSG_PICK, `Player.grenade`, `Grenade.kind`). They all
  * share the throw (GRENADE); only the frag hurts, and only the frag counts as
- * the "Grenade" weapon in the kill feed.
+ * the "Grenade" weapon in the kill feed. Ids are frozen (frag 0, smoke 1,
+ * stun 2, flash 3): never reorder or remove a type, only append.
+ *
+ * Adding a grenade:
+ * 1. Append its line here, with a new `key`, its `effect` and who it `affects`.
+ *    A new effect also needs its tuning block above, a GrenadeEffect member
+ *    and its handler in blastEffects (apps/server/src/GameRoom.ts).
+ * 2. Add its `key` to GRENADE_VIEW (apps/client/src/items.ts): icon,
+ *    telegraph colour, blast sound, blast drawing, How to play blurb. It
+ *    won't compile without it.
+ * 3. Add its assets: the blast sound (SfxName and the SFX table in
+ *    apps/client/src/audio.ts), any new particles in vfx.ts.
+ * 4. Append its key to GRENADE_IDS in packages/shared/scripts/items.check.ts.
  */
-export const GRENADES: readonly GrenadeDef[] = [
-  { key: "frag", name: "Frag", cooldown: 8, radius: GRENADE.radius },
-  { key: "smoke", name: "Smoke", cooldown: 12, radius: SMOKE.radius },
-  { key: "stun", name: "Stun", cooldown: 10, radius: STUN.radius },
-  { key: "flash", name: "Flash", cooldown: 10, radius: 1.2 },
-];
+const GRENADE_LIST = [
+  { key: "frag", name: "Frag", effect: "damage", affects: "enemies", cooldown: 8, radius: GRENADE.radius },
+  { key: "smoke", name: "Smoke", effect: "cloud", affects: "enemies", cooldown: 12, radius: SMOKE.radius },
+  { key: "stun", name: "Stun", effect: "stun", affects: "enemies", cooldown: 10, radius: STUN.radius },
+  { key: "flash", name: "Flash", effect: "flash", affects: "enemies", cooldown: 10, radius: 1.2 },
+] as const satisfies readonly GrenadeDef<string>[];
+/** A grenade type's stable key ("frag", "smoke", ...). */
+export type GrenadeKey = (typeof GRENADE_LIST)[number]["key"];
+export const GRENADES: readonly GrenadeDef[] = GRENADE_LIST;
 export const DEFAULT_GRENADE = GRENADE_FRAG;
 
 /** Shield (E): a bubble that absorbs damage before HP. */

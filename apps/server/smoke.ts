@@ -615,7 +615,7 @@ async function burstDuel() {
   ok(accepted.length === 3, `pick ids 4-6 accepted (${accepted.join(", ")})`);
   for (const id of [WEAPONS.length, WEAPONS.length + 1]) r1.send(MSG_PICK, { weapon: id });
   await sleep(200);
-  ok(me(r1)?.pick === 6, `pick ids ${WEAPONS.length}+ refused (pick stays ${me(r1)?.pick})`);
+  ok(me(r1)?.pick === WEAPONS.length - 1, `pick ids ${WEAPONS.length}+ refused (pick stays ${me(r1)?.pick})`);
   r1.send(MSG_PICK, { weapon: BURST_ID });
   await waitFor(() => me(r1)?.pick === BURST_ID, 1000);
   const r2 = await new Client(URL).joinById(r1.roomId);

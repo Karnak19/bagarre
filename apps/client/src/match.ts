@@ -35,10 +35,11 @@ import {
   type Vec2,
 } from "@bagarre/shared";
 import { getShowNames } from "./display.ts";
-import { WEAPON_SFX, isMuted, play, setListener, type PlayOptions, type SfxName } from "./audio.ts";
+import { isMuted, play, setListener, type PlayOptions, type SfxName } from "./audio.ts";
 import { LocalBullets } from "./bullets.ts";
 import type { FfaHud, Hud, HudModel, KillFeedLine, TeamHud } from "./hud.ts";
 import { screenToWorldMove, type Input } from "./input.ts";
+import { WEAPON_KEYS, grenadeView, gunView } from "./items.ts";
 import { SnapshotBuffer } from "./interpolation.ts";
 import type { Minimap } from "./minimap.ts";
 import type { Net, Snapshot } from "./net.ts";
@@ -66,8 +67,6 @@ const REMOTE_DELAY = INTERP_DELAY_MS / 1000;
 const MAP_CARD_MS = 3500;
 /** ...fading out over its last this many ms. */
 const MAP_CARD_FADE_MS = 500;
-/** The sound of a grenade going off, by type (GRENADES index). */
-const BLAST_SFX: readonly SfxName[] = ["explosion", "smoke_pop", "stun_zap", "flashbang"];
 /**
  * The flash's white screen: fully white for the first part of it, then a
  * steady fade out (opacity = min(1, fraction left x FLASH_HOLD)). A plain
@@ -499,7 +498,7 @@ export class Match {
       const def = weaponDef(p.weapon);
       const gap = def.burst ? (def.burstInterval ?? def.fireInterval) : def.fireInterval;
       for (let i = 0; i < shots; i++) {
-        this.sfx(WEAPON_SFX[p.weapon] ?? "rifle", { ...at, delay: REMOTE_DELAY + i * gap });
+        this.sfx(gunView(p.weapon).sfx, { ...at, delay: REMOTE_DELAY + i * gap });
         this.remoteShots.push({ at: now + INTERP_DELAY_MS + i * gap * 1000, id });
       }
       if (p.dashCd > prev.dashCd) this.sfx("dash", at);
@@ -599,7 +598,7 @@ export class Match {
         // Instant local shots: same pellets, same ids as the server will spawn.
         if (res?.fired) localBullets.spawn(meServer.slot, msg.seq, predictor.weapon, res.sim.x, res.sim.z, msg.aim);
         if (res && before) {
-          if (res.fired) this.sfx(WEAPON_SFX[predictor.weapon] ?? "rifle");
+          if (res.fired) this.sfx(gunView(predictor.weapon).sfx);
           if (res.sim.dashCd > before.dashCd) this.sfx("dash");
           if (res.grenade) this.sfx("grenade_throw");
           if (res.shield) this.sfx("shield_up");
@@ -737,7 +736,7 @@ export class Match {
     while (this.blasts.length > 0 && this.blasts[0].at <= now) {
       const b = this.blasts.shift()!;
       scene.blast(b.x, b.z, now, b.own, b.kind);
-      this.sfx(BLAST_SFX[b.kind] ?? "explosion", { x: b.x, z: b.z });
+      this.sfx(grenadeView(b.kind).sfx, { x: b.x, z: b.z });
     }
 
     for (const m of this.meshes.values()) {
@@ -761,7 +760,7 @@ export class Match {
         ? `${away.name || "A player"} lost their connection.`
         : `${away.name || "Your opponent"} lost their connection. Waiting for them to come back…`;
     else if (meServer && !meServer.alive && latest?.phase === "playing")
-      status = `Respawning in ${(meServer.respawnTicks / TICK_RATE).toFixed(1)}s (1-7: weapon, G: grenade)`;
+      status = `Respawning in ${(meServer.respawnTicks / TICK_RATE).toFixed(1)}s (${WEAPON_KEYS}: weapon, G: grenade)`;
 
     const map = scene.map;
     let mapCard: HudModel["mapCard"] = null;

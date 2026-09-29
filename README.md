@@ -279,7 +279,7 @@ TypeScript: React never runs per frame and there is no React Three Fiber.
   to the DOM from a store subscription (`useStoreEffect`), outside React. An
   idle HUD does not re-render at all; in dev, `window.__bagarre.renders`
   counts renders per widget.
-- `src/keys.ts` holds the app keys (Esc, Tab, M and 1-7 on cards) and the
+- `src/keys.ts` holds the app keys (Esc, Tab, M and the weapon number keys on cards) and the
   input isolation rules; `src/uiState.ts` says which panel is open, so the
   loop keeps the game's input off meanwhile.
 - `src/ui/`: `Shell.tsx` (root layout: theme, cards, Tab scoreboard, panels),
@@ -645,7 +645,9 @@ all, your own gets you too.
 How it works:
 
 - The table is `GRENADES` in `packages/shared/src/constants.ts` (with
-  `SMOKE`, `STUN` and `FLASH`), the rules in `grenades.ts` next to it:
+  `SMOKE`, `STUN` and `FLASH`; each type names its `effect`, which picks the
+  server's handler), the looks are `GRENADE_VIEW` in
+  `apps/client/src/items.ts` (see [Adding a gun or a grenade type](#adding-a-gun-or-a-grenade-type)), the rules in `grenades.ts` next to it:
   `flashTicks` (angle, distance, and `lineOfSight`, the new
   segment-against-cover test in `physics.ts`), `smokeHides` (in a cloud, or
   the line to them crosses one: `segmentHitsCircle`) and `smokeVeil` (who
@@ -736,6 +738,31 @@ each round exactly; every round comes from its own input, so bullet ids
 
 All of these live in `packages/shared/src/constants.ts`, one table per weapon and
 ability, so balancing is a one-file change.
+
+### Adding a gun or a grenade type
+
+Each item is described once, in its shared definition, and once more for its
+looks, in the client. Nothing is matched by position.
+
+- **Gun:** append a line to `WEAPONS` (`packages/shared/src/constants.ts`)
+  with a new `key`. Firing, spread, bursts and reloads are generic, so the
+  server needs nothing. Then give that key an entry in `GUN_VIEW`
+  (`apps/client/src/items.ts`: model, scale, muzzle flash, shot sound, How to
+  play line), add its model under `public/models/guns/` and its sound to
+  `audio.ts`. The number keys, the HUD and How to play follow `WEAPONS`
+  (up to 9 guns, keys 1-9).
+- **Grenade:** append a line to `GRENADES` with a new `key`, its `effect`
+  (`damage`, `cloud`, `stun`, `flash`) and who it `affects`. Then give it an
+  entry in `GRENADE_VIEW` (`items.ts`: icon, telegraph colour, blast sound,
+  blast drawing, How to play line). A new effect also needs its tuning
+  block, a `GrenadeEffect` member and a handler in `blastEffects`
+  (`apps/server/src/GameRoom.ts`).
+- **Ids are append-only.** An item's index is its id on the wire (picks,
+  `Player.weapon` / `Player.grenade`, `Grenade.kind`, the kill feed): never
+  reorder, rename or remove one. Append the new key to `WEAPON_IDS` or
+  `GRENADE_IDS` in `packages/shared/scripts/items.check.ts`; `bun run check`
+  fails if the order changes. A missing view entry or effect handler is a
+  compile error (the tables are `Record`s keyed by item key or effect).
 
 ## Maps
 

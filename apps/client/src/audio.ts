@@ -57,9 +57,6 @@ export interface PlayOptions {
   delay?: number;
 }
 
-/** Weapon id (index in WEAPONS) -> shot sound. */
-export const WEAPON_SFX: readonly SfxName[] = ["rifle", "shotgun", "sniper", "smg", "revolver", "burst", "dmr"];
-
 interface SfxDef {
   /** File basenames in /sfx/, one per variant. Empty for synthesized sounds. */
   files: string[];

@@ -4,7 +4,7 @@
 //                     (bones only, no mesh, no skin)
 //   skins/<id>.glb    one per skin in SKINS (packages/shared/src/skins.ts):
 //                     mesh + skeleton, no clips
-//   guns/<name>.glb   one per weapon in GUN_MODELS, from the Ultimate Guns FBX
+//   guns/<name>.glb   one per weapon in GUN_VIEW, from the Ultimate Guns FBX
 //                     (converted by convert-guns.py in headless Blender)
 //   props.glb         optional, from the Toon Shooter Game Kit (--props)
 //
@@ -21,7 +21,7 @@
 // (Soldier_Male.gltf, ...), <guns FBX dir> the FBX folder of the Ultimate Guns
 // pack. The gun step spawns Blender (BLENDER env var, default the macOS app
 // path) to run convert-guns.py into ./guns-raw of the current directory, which
-// also gets guns.json (grip and muzzle of each gun, the numbers in GUN_MODELS).
+// also gets guns.json (grip and muzzle of each gun, the numbers in GUN_VIEW).
 // Pass "-" as <guns FBX dir> to skip the guns.
 //
 // With --props, <kit glTF dir> holds env/ (Environment/glTF) and guns/
@@ -75,7 +75,7 @@ const KEEP_ANIM = new Set(["Idle", "Run", "Shoot_OneHanded", "RecieveHit", "Deat
 // in every file, so the clip tracks of anims.glb bind by name.
 const MESH_NODE = "CharacterMesh";
 
-// Pack gun name -> file name under guns/ (the files in GUN_MODELS).
+// Pack gun name -> file name under guns/ (the files in GUN_VIEW).
 const GUNS_MAP: Record<string, string> = {
   AssaultRifle_2: "rifle",
   Shotgun_ShortStock: "shotgun",

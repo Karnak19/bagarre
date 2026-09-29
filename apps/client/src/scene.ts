@@ -3,13 +3,9 @@ import {
   BULLET_HEIGHT,
   BULLET_RADIUS,
   GRENADE,
-  GRENADE_FLASH,
-  GRENADE_SMOKE,
-  GRENADE_STUN,
   PLAYER_RADIUS,
   PLAYER_SPEED,
   SMOKE,
-  STUN,
   WALL_THICKNESS,
   grenadeDef,
   type GrenadeView,
@@ -19,6 +15,7 @@ import {
 import { buildArena, disposeArena } from "./arenaView.ts";
 import { skinModel, skinModelNow, type Assets } from "./assets.ts";
 import { Character } from "./character.ts";
+import { grenadeView, gunView } from "./items.ts";
 import { TEAM_PAINT } from "./paint.ts";
 import { Plates } from "./plates.ts";
 import { Vfx, shieldMaterial, type SmokeCloud } from "./vfx.ts";
@@ -377,9 +374,6 @@ interface DrawnBullet {
   off: THREE.Vector3 | null;
 }
 
-/** A grenade's landing telegraph, by type (GRENADES index). */
-const TELEGRAPH_COLOR = [0xff4030, 0xc8c8c0, 0x4ab8ff, 0xffffff];
-
 /** A bullet drawn from its shooter's muzzle eases onto its true path (at BULLET_HEIGHT, from the body's centre) over this many metres. */
 const TRACER_MERGE = 3;
 /** Farther than this from the muzzle when first seen, the bullet is drawn on its path straight away. */
@@ -628,7 +622,7 @@ export class GameScene {
 
   muzzleFlash(p: PlayerMesh, aim: number, weapon: number) {
     const m = p.muzzle(this.tmp);
-    this.vfx.muzzle(m.x, m.y, m.z, aim, weapon);
+    this.vfx.muzzle(m.x, m.y, m.z, aim, gunView(weapon).flash);
   }
 
   /**
@@ -759,8 +753,8 @@ export class GameScene {
           ball = new THREE.Mesh(this.grenadeGeo, this.grenadeMat);
           ball.castShadow = true;
         }
-        // The telegraph in the type's colour and radius: red frag, grey smoke, blue stun, white flash.
-        const ringMat = new THREE.MeshBasicMaterial({ color: TELEGRAPH_COLOR[gv.kind] ?? TELEGRAPH_COLOR[0], transparent: true, opacity: 0.1, depthWrite: false });
+        // The telegraph in the type's colour (GRENADE_VIEW) and radius: red frag, grey smoke, blue stun, white flash.
+        const ringMat = new THREE.MeshBasicMaterial({ color: grenadeView(gv.kind).telegraph, transparent: true, opacity: 0.1, depthWrite: false });
         const ring = new THREE.Mesh(this.telegraphGeo, ringMat);
         ring.rotation.x = -Math.PI / 2;
         ring.scale.setScalar(grenadeDef(gv.kind).radius / GRENADE.radius);
@@ -779,13 +773,7 @@ export class GameScene {
 
   /** A grenade goes off, drawn by its type. `own` = we threw it (a frag shakes the camera a little). */
   blast(x: number, z: number, now: number, own = false, kind = 0) {
-    if (kind === GRENADE_SMOKE) this.vfx.smokePop(x, z);
-    else if (kind === GRENADE_STUN) this.vfx.stunBurst(x, z, STUN.radius);
-    else if (kind === GRENADE_FLASH) this.vfx.flashBurst(x, z);
-    else {
-      this.vfx.explosion(x, z, GRENADE.radius, now);
-      if (own) this.shake(0.55);
-    }
+    grenadeView(kind).draw({ vfx: this.vfx, shake: (amount) => this.shake(amount) }, x, z, now, own);
   }
 
   /** The smoke clouds this frame, at server tick `tick` (fractional). */

@@ -15,8 +15,8 @@
 #   right hand (Fist.R), to judge the gun hold.
 # ingame: a few skins holding their guns the way the game does (character.ts):
 #   scaled so the Idle-pose Head bone sits at HEAD_Y, legs in Idle, the rest in
-#   Shoot_OneHanded at AIM_T, each gun at its GUN_SCALE with its grip from
-#   GUN_MODELS (skins.ts) GRIP_ALONG up the fist, barrel straight ahead. Those
+#   Shoot_OneHanded at AIM_T, each gun at its scale with its grip from
+#   GUN_VIEW (items.ts) GRIP_ALONG up the fist, barrel straight ahead. Those
 #   numbers are read from the sources. Game camera, a 1 m ring under each for
 #   scale. Pairs are a pack character name and a game gun name (rifle, smg...);
 #   with none it draws six. Blender can't read the meshopt game guns, so
@@ -285,9 +285,10 @@ elif MODE == "ingame":
     ch = open(os.path.join(root, "apps/client/src/character.ts")).read()
     num = lambda name: float(re.search(rf"const {name} = (-?[\d.]+)", ch).group(1))
     HEAD_Y, GRIP_ALONG, GRIP_UP, AIM_T = (num(n) for n in ("HEAD_Y", "GRIP_ALONG", "GRIP_UP", "AIM_T"))
-    GUN_SCALE = [float(x) for x in re.search(r"const GUN_SCALE = \[([^\]]+)\]", ch).group(1).split(",")]
-    sk = open(os.path.join(root, "packages/shared/src/skins.ts")).read()
-    models = re.findall(r'file: "guns/([\w-]+)\.glb", grip: \[([^\]]+)\]', sk)
+    # GUN_VIEW (items.ts): one entry per gun, its model then its scale, in weapon order.
+    items = open(os.path.join(root, "apps/client/src/items.ts")).read()
+    GUN_SCALE = [float(x) for x in re.findall(r"^    scale: ([\d.]+),$", items, re.M)]
+    models = re.findall(r'file: "guns/([\w-]+)\.glb", grip: \[([^\]]+)\]', items)
     GUN_FILES = {v: k for k, v in GUNS_PACK_NAMES.items()}
     cells = []
     tmp = os.path.join(os.path.dirname(os.path.abspath(out)), "_cell.png")

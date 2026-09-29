@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { weaponOfKey } from "./items.ts";
 
 /** A text field (even one in a shadow root). */
 function isEditable(e: Event) {
@@ -13,7 +14,7 @@ function isEditable(e: Event) {
  * Off (`enabled = false`) while the menu or any overlay is up: keys, clicks
  * and presses are ignored and nothing is held, so the player stands still and
  * doesn't fire. Keys typed in a text field are always ignored, so typing a
- * username never moves, fires, mutes (M) or picks a weapon (1-7).
+ * username never moves, fires, mutes (M) or picks a weapon (the number keys).
  */
 export class Input {
   private keys = new Set<string>();
@@ -27,7 +28,7 @@ export class Input {
    * key-down only, so auto-repeat while holding the key doesn't count.
    */
   readonly presses = { dash: 0, grenade: 0, shield: 0, reload: 0 };
-  /** Called with 0-6 when a weapon key (1-7) is pressed. */
+  /** Called with the weapon id when its number key is pressed (weaponOfKey: 1 = weapon 0). */
   onPick: (weapon: number) => void = () => {};
   /** Called when G (next grenade type) is pressed. */
   onGrenadeCycle: () => void = () => {};
@@ -51,12 +52,13 @@ export class Input {
       this.keys.add(e.code);
       if (e.code.startsWith("Arrow") || e.code === "Space") e.preventDefault();
       if (e.repeat) return;
+      const weapon = weaponOfKey(e.code);
       if (e.code === "Space") this.presses.dash++;
       else if (e.code === "KeyQ") this.presses.grenade++;
       else if (e.code === "KeyE") this.presses.shield++;
       else if (e.code === "KeyR") this.presses.reload++;
       else if (e.code === "KeyM") this.onMute();
-      else if (/^Digit[1-7]$/.test(e.code)) this.onPick(Number(e.code.slice(5)) - 1);
+      else if (weapon !== null) this.onPick(weapon);
       else if (e.code === "KeyG") this.onGrenadeCycle();
     });
     window.addEventListener("keyup", (e) => this.keys.delete(e.code));

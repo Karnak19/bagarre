@@ -37,7 +37,8 @@ import { shallowEqual, useEngine, useSelector, useStoreEffect } from "../hooks.t
 import { shared, slotFill } from "../styles.ts";
 import { FfaPanel, KillFeed, MinimapBox } from "./HudFfa.tsx";
 import { TeamPanel } from "./HudTeam.tsx";
-import { GRENADE_ICONS, GrenadePicker, WeaponPicker } from "./WeaponPicker.tsx";
+import { WEAPON_KEYS, grenadeView } from "../../items.ts";
+import { GrenadePicker, WeaponPicker } from "./WeaponPicker.tsx";
 
 const styles = stylex.create({
   root: { position: "fixed", inset: 0, pointerEvents: "none", zIndex: 10 },
@@ -381,7 +382,7 @@ function Ability({ kind, keyLabel, label }: { kind: keyof typeof ABILITY; keyLab
     }),
     shallowEqual,
   );
-  const shown = state.grenade >= 0 ? `${GRENADE_ICONS[state.grenade] ?? ""} ${grenadeDef(state.grenade).name}` : label;
+  const shown = state.grenade >= 0 ? `${grenadeView(state.grenade).icon} ${grenadeDef(state.grenade).name}` : label;
   // The sweep and the timer move every tick while cooling down: written here.
   const cd = useRef<HTMLElement>(null);
   const t = useRef<HTMLElement>(null);
@@ -424,7 +425,7 @@ function Sound() {
 
 /**
  * The warmup: the timer to the match start and the loadout picker (the same
- * as the waiting card's, clickable; keys 1-7 and G work too), over the live
+ * as the waiting card's, clickable; the number keys and G work too), over the live
  * game: the player keeps moving meanwhile. A pick applies at once.
  */
 function Warmup() {
@@ -465,7 +466,7 @@ function Picker() {
   // The warmup panel has the full picker.
   if (warmup) return null;
   const changed = p.pick !== p.weapon || p.grenadePick !== p.grenade;
-  const hint = p.canPick ? (changed ? "applies on respawn" : "1-7 weapon, G grenade") : "pick while dead";
+  const hint = p.canPick ? (changed ? "applies on respawn" : `${WEAPON_KEYS} weapon, G grenade`) : "pick while dead";
   return (
     <HStack gap={1.5} align="center" xstyle={styles.picker} data-testid="hud-picker">
       {WEAPONS.map((w, i) => (
@@ -483,7 +484,7 @@ function Picker() {
         </Text>
       ))}
       <Text xstyle={[styles.panel, styles.pick, styles.picked, !p.canPick && styles.lockedPicked]} data-testid="hud-picker-grenade">
-        G {GRENADE_ICONS[p.grenadePick]} {grenadeDef(p.grenadePick).name}
+        G {grenadeView(p.grenadePick).icon} {grenadeDef(p.grenadePick).name}
       </Text>
       <Text xstyle={styles.hint}>{hint}</Text>
     </HStack>
