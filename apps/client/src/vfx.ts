@@ -355,6 +355,9 @@ export interface SmokeCloud {
   z: number;
   start: number;
   end: number;
+  /** Who threw it (session id) and their team: see ownsCloud. */
+  owner: string;
+  team: number;
 }
 
 /** Most clouds drawn at once (8 players, a 12 s cooldown for an 8 s cloud: never more than 8). */

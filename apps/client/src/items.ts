@@ -153,7 +153,7 @@ export const GRENADE_VIEW: Record<GrenadeKey, GrenadeViewDef> = {
     telegraph: 0xc8c8c0,
     sfx: "smoke_pop",
     draw: (fx, x, z) => fx.vfx.smokePop(x, z),
-    blurb: `a ${SMOKE.radius} m cloud for ${SMOKE.duration} s that hides whoever is in or behind it from enemies`,
+    blurb: `a ${SMOKE.radius} m cloud for ${SMOKE.duration} s that hides whoever is in or behind it from enemies, except your own team, who see through it (faded)`,
   },
   stun: {
     icon: "⚡",
@@ -167,7 +167,7 @@ export const GRENADE_VIEW: Record<GrenadeKey, GrenadeViewDef> = {
     telegraph: 0xffffff,
     sfx: "flashbang",
     draw: (fx, x, z) => fx.vfx.flashBurst(x, z),
-    blurb: `a white screen for whoever looks at it, up to ${FLASH.maxDuration} s; look away or hide behind cover`,
+    blurb: `a white screen up to ${FLASH.maxDuration} s, longest for whoever looks at it; turning away only shortens it, hide behind cover`,
   },
   heal: {
     icon: "💚",

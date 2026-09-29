@@ -113,6 +113,9 @@ export const Smoke = schema(
     z: t.float32().default(0),
     start: t.uint32().default(0),
     end: t.uint32().default(0),
+    /** Session id of the thrower, and their team (NO_TEAM outside teams): their side sees through the cloud. */
+    owner: t.string().default(""),
+    team: t.uint8().default(NO_TEAM),
   },
   "Smoke",
 );

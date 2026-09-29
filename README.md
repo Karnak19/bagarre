@@ -636,9 +636,9 @@ happens when they go off differs.
 | Type  | What it does | Cooldown |
 | ----- | ------------ | -------- |
 | Frag  | 3.5 m blast, 60 → 15 damage (half on yourself). The only one that hurts, and the only "Grenade" in the kill feed | 8 s |
-| Smoke | A 4 m cloud for 8 s. Whoever is in it, or behind it, is hidden from their enemies: model, name plate and health bar, minimap dot, muzzle flash, and their bullets until they come out of it. Shots and steps are still heard; the kill feed still names them. You always see yourself and your teammates; a spectator sees them faded | 12 s |
+| Smoke | A 4 m cloud for 8 s. Whoever is in it, or behind it, is hidden from their enemies: model, name plate and health bar, minimap dot, muzzle flash, and their bullets until they come out of it. Shots and steps are still heard; the kill feed still names them. You always see yourself and your teammates. The thrower and their team (only the thrower in a duel or free for all) see through their own cloud: enemies in or behind it are drawn faded, and their shots and bullets show; if any other cloud is in the way, they are hidden as usual. A spectator sees them faded | 12 s |
 | Stun  | Everyone within 3.5 m walks at half speed and can't dash for 2 s (a spark effect on them, a badge on their HUD) | 10 s |
-| Flash | A white screen, up to 2 s, for whoever aims toward it (within 90°) with no cover in the way: shorter the farther away and the farther off their aim. Aiming away, or behind cover, is safe. A plain fade, never a strobe | 10 s |
+| Flash | A white screen, up to 2 s, for anyone with no cover in the way: shorter the farther away, and shorter the farther off their aim (with their back turned they still get 30% of it, so a far, turned-away player may get nothing). Behind cover is safe. A plain fade, never a strobe | 10 s |
 | Heal  | +40 HP at once (never over 100, the shield untouched) for the thrower and their teammates within 3.5 m, with no cover in the way. Never an enemy, never a dead player; in a duel or a free for all it only heals you. A green glow on whoever it heals | 14 s |
 
 Who a stun or a flash gets follows the friendly-fire rule (`canDamage`): in
@@ -654,9 +654,10 @@ How it works:
   `apps/client/src/items.ts` (see [Adding a gun or a grenade type](#adding-a-gun-or-a-grenade-type)), the rules in `grenades.ts` next to it:
   `flashTicks` (angle, distance, and `lineOfSight`, the new
   segment-against-cover test in `physics.ts`), `healAmount` (radius, cover,
-  capped at `MAX_HP`, nobody dead), `smokeHides` (in a cloud, or
-  the line to them crosses one: `segmentHitsCircle`) and `smokeVeil` (who
-  sees whom). `bun run check` in `packages/shared` runs their self-checks
+  capped at `MAX_HP`, nobody dead), `smokeCover` (in a cloud, or
+  the line to them crosses one: `segmentHitsCircle`; "own" when every cloud in the
+  way is the viewer's side's, `ownsCloud`, else "foreign") and `smokeVeil` (who
+  sees whom: none, faded or hidden). `bun run check` in `packages/shared` runs their self-checks
   (`scripts/grenades.check.ts`).
 - The stun is `stunTicks`, part of the synced `PlayerSim`: the shared
   `stepPlayer` reads it (half speed, no dash) and counts it down once per
@@ -665,7 +666,7 @@ How it works:
 - The flash is resolved by the server when it goes off, from each player's
   aim at that moment; `flashEnd` / `flashTicks` on `Player` are synced so the
   white screen matches.
-- Smoke clouds are synced (`state.smokes`), but the hiding is done by each
+- Smoke clouds are synced (`state.smokes`, with the thrower's `owner` and `team`), but the hiding is done by each
   client, and only there: the server sends every position to everyone. That
   is accepted (a game between friends, no anti-cheat), so smoke is not
   secure against a modified client.

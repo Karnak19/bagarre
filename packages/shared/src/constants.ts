@@ -145,7 +145,7 @@ export const GRENADE = {
 
 /**
  * Smoke grenade: leaves a cloud that hides whoever is in it, or behind it,
- * from their enemies. Client-side only (see smokeVeil in grenades.ts). No damage.
+ * from their enemies (the thrower's side sees through it, faded). Client-side only (see smokeVeil in grenades.ts). No damage.
  */
 export const SMOKE = {
   /** Cloud radius, metres. */
@@ -167,15 +167,19 @@ export const STUN = {
 /**
  * Flash grenade: a player who looks toward the blast with no cover in the way
  * gets a white screen, shorter the farther away they are and the farther
- * their aim is from the blast. Aiming away: nothing. No damage.
+ * their aim is from the blast, but never nothing just for looking away:
+ * with their back to it they still get `backFactor` of the full length. No damage.
  */
 export const FLASH = {
   /** Farther than this from the blast: nothing. */
   range: 14,
   /** Up to this distance: the full length (it then shrinks linearly to 0 at `range`). */
   fullRange: 4,
-  /** Largest angle between the aim and the blast that still flashes, radians (90°). */
-  maxAngle: Math.PI / 2,
+  /**
+   * Share of the full length you still get with your back to the blast (aim
+   * 180° off). The angle factor eases from 1 (aiming at it) down to this.
+   */
+  backFactor: 0.3,
   /** Closer than this it goes off in your face: flashed whatever your aim. */
   pointBlank: 1,
   /** Longest white screen, seconds, and the shortest worth showing (below it: nothing). */
