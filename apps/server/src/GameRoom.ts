@@ -1281,7 +1281,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   private heal(b: Blast, def: GrenadeDef) {
     for (const { p } of this.blastTargets(b, def)) {
       const n = healAmount(this.map, p, p.hp, { x: b.x, z: b.z });
-      if (n > 0) p.hp = Math.min(MAX_HP, p.hp + n);
+      if (n > 0) p.hp += n;
     }
   }
 
