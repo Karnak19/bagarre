@@ -595,7 +595,16 @@ The dash has no invulnerability, you dodge by getting out of the bullet's path.
 
 Sound starts after your first click or key press (browser autoplay rules):
 any menu button counts. Settings (on the menu, or from Esc in a game) has the
-master volume and mute; both are remembered.
+master volume, the music volume and mute; all are remembered.
+
+Music: one track on the menu and the Maps page, and a random one of four
+(never the last game's) while a match is on, crossfading between them. It
+fades out when a match ends, so the win or lose sting is heard. The songs
+were made with Suno on its free plan, so unlike the CC0 sound effects they
+are for non-commercial use only: see
+[apps/client/public/music/CREDITS.md](apps/client/public/music/CREDITS.md)
+(rebuilt with `bun run music:build <folder>` in `apps/client`).
+`__bagarre.music` gives the tests the music's mood and track.
 
 Every character carries a plate over its head: the other players' name (in
 their seat or team colour) over a health bar, with the shield's remaining
@@ -716,8 +725,9 @@ apps/
                       walking around a map without a server (walk.ts);
                       stores: app.ts (flow), lobby.ts, auth.ts (account), hud.ts, scoreboard.ts (model);
                       routes/ (TanStack Router pages), ui/ (React + Astryx views, theme/)
-    public/           models (glTF, meshopt-compressed), particle atlas and sounds, see ASSETS.md
-    scripts/          asset rebuild scripts (assets/, sfx/)
+    public/           models (glTF, meshopt-compressed), particle atlas and sounds, see ASSETS.md;
+                      music/ (Suno, non-commercial, see its CREDITS.md)
+    scripts/          asset rebuild scripts (assets/, sfx/, music/)
   server/             @bagarre/server: Colyseus on Bun
     src/              the Colyseus room for every mode (GameRoom: DuelRoom, FfaRoom, TeamRoom), synced state schema,
                       accounts (db.ts, accounts.ts, auth.ts), bootstrap and the GET /games route (app.ts)

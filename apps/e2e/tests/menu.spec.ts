@@ -46,16 +46,23 @@ for (const [open, panel] of [
   });
 }
 
-test("volume and mute are remembered after a reload", async ({ players }) => {
+test("volume, music volume and mute are remembered after a reload", async ({ players }) => {
   const a = await players.open("A");
   await a.goto("/");
   await a.testId("open-settings").click();
   const slider = a.testId("settings-volume").getByRole("slider");
+  const music = a.testId("settings-music").getByRole("slider");
   const mute = a.testId("settings-mute").getByRole("switch");
   const before = Number(await slider.getAttribute("aria-valuenow"));
   await slider.focus();
   await a.page.keyboard.press("ArrowLeft");
   await a.page.keyboard.press("ArrowLeft");
+  await expect(slider).toHaveAttribute("aria-valuenow", String(before - 10));
+  // The music has its own volume, 50 % by default.
+  await expect(music).toHaveAttribute("aria-valuenow", "50");
+  await music.focus();
+  await a.page.keyboard.press("ArrowRight");
+  await expect(music).toHaveAttribute("aria-valuenow", "55");
   await expect(slider).toHaveAttribute("aria-valuenow", String(before - 10));
   await expect(mute).not.toBeChecked();
   await mute.click();
@@ -64,5 +71,6 @@ test("volume and mute are remembered after a reload", async ({ players }) => {
   await a.page.reload();
   await a.testId("open-settings").click();
   await expect(a.testId("settings-volume").getByRole("slider")).toHaveAttribute("aria-valuenow", String(before - 10));
+  await expect(a.testId("settings-music").getByRole("slider")).toHaveAttribute("aria-valuenow", "55");
   await expect(a.testId("settings-mute").getByRole("switch")).toBeChecked();
 });
