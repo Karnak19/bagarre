@@ -1,10 +1,10 @@
-// Smoke, stun and flash grenades (and the frag): each is picked, thrown by
+// Smoke, stun, flash and heal grenades (and the frag): each is picked, thrown by
 // the dev bot (`__bagarre.bot.target` + a Q press), and its effect is read on
 // the other clients through the dev handle, never through pixels. Players are
 // put where a throw needs them with the e2e server's /place.
 
-import { FFA_MAPS, FLASH, GRENADES, MSG_PICK, PLAYER_SPEED, SMOKE, STUN, TICK_DT, lineOfSight, segmentHitsBox, ticks, type Arena, type Vec2 } from "@bagarre/shared";
-import { FFA_MAP, expect, kill, place, setSmoke, test, type Player } from "./fixtures.ts";
+import { FFA_MAPS, FLASH, GRENADES, HEAL, MAX_HP, MSG_PICK, PLAYER_SPEED, SMOKE, STUN, TICK_DT, lineOfSight, segmentHitsBox, ticks, type Arena, type Vec2 } from "@bagarre/shared";
+import { FFA_MAP, expect, kill, place, setHp, setSmoke, test, type Player } from "./fixtures.ts";
 
 // oxlint-disable typescript/no-explicit-any
 
@@ -46,6 +46,11 @@ async function heard(p: Player, from: number, name: string) {
   await expect.poll(() => p.sfxSince(from), { message: `${p.name} hears ${name}` }).toContain(name);
 }
 
+/** The heal cues (green glow) a page has shown: who and how much, oldest first (`__bagarre.heals`). */
+function heals(p: Player): Promise<{ id: string; amount: number }[]> {
+  return p.page.evaluate(() => (window as any).__bagarre.heals.map((h: { id: string; amount: number }) => ({ id: h.id, amount: h.amount })));
+}
+
 const idOf = async (p: Player) => (await p.state()).you;
 const playerIn = async (p: Player, id: string) => (await p.state()).players.find((x) => x.id === id)!;
 
@@ -58,7 +63,7 @@ test("the grenade picker: every type, G cycles, bad picks refused, kept over a r
     await expect(a.testId(`grenade-pick-${g.key}`)).toHaveAttribute("aria-pressed", "true");
     await expect.poll(async () => a.me(await a.state())?.grenadePick).toBe(i);
   }
-  // G cycles: flash, then frag, then smoke.
+  // G cycles: from the last type (heal) back to the frag, then smoke.
   await a.page.keyboard.press("KeyG");
   await expect.poll(async () => a.me(await a.state())?.grenadePick).toBe(0);
   await a.page.keyboard.press("KeyG");
@@ -304,4 +309,109 @@ test("flash: a player aiming at it gets the white screen; aiming away, or behind
   await rearm();
   expect((await flashOnce({ x: -2.75, z: -12 }, { x: -2.75, z: 0.5 }, -Math.PI / 2, { x: -2.75, z: -6.5 })).flashed).toBe(false);
   await expect(b.testId("hud-flash")).not.toHaveAttribute("data-active", "");
+});
+
+/** Each heal test: `p`'s view has every one of `ids` at `hp` (the /hp writes have reached it). */
+async function seesHp(p: Player, ids: string[], hp: number) {
+  await expect.poll(async () => (await p.state()).players.filter((x) => ids.includes(x.id)).map((x) => x.hp)).toEqual(ids.map(() => hp));
+}
+
+test("heal: in a duel it heals only the thrower, capped at full health, with the heal cue and never the hit feedback", async ({ players }) => {
+  const HEAL_ID = GRENADES.findIndex((g) => g.key === "heal");
+  const { host: a, invite, code } = await players.host("duel", "A");
+  await a.testId("grenade-pick-heal").click();
+  await expect.poll(async () => a.me(await a.state())?.grenadePick).toBe(HEAL_ID);
+  const b = await players.join(invite, "B");
+  await Promise.all([a.expectState("phase", "playing"), b.expectState("phase", "playing")]);
+  await expect(a.testId("hud-grenade")).toHaveAttribute("data-type", "heal");
+  const [ida, idb] = [await idOf(a), await idOf(b)];
+
+  // Both hurt, 2 m apart on Yard's clear z = -12 row; A throws between them.
+  await place(code, ida, -8, -12);
+  await place(code, idb, -6, -12);
+  await expect.poll(async () => (await playerIn(a, idb)).x).toBeCloseTo(-6, 1);
+  await setHp(code, ida, 30);
+  await setHp(code, idb, 30);
+  await seesHp(a, [ida, idb], 30);
+  await seesHp(b, [ida, idb], 30);
+  const [fromA, fromB] = [await a.sfxCount(), await b.sfxCount()];
+  const [cuesA, cuesB] = [(await heals(a)).length, (await heals(b)).length];
+
+  await throwAt(a, -7, -12);
+  await expect.poll(async () => (await playerIn(a, ida)).hp, { message: "A heals themselves" }).toBe(30 + HEAL.amount);
+  // Same blast, same snapshot: B, in the radius but not a teammate, is not healed.
+  expect((await playerIn(a, idb)).hp).toBe(30);
+  await heard(a, fromA, "heal_chime");
+  await heard(b, fromB, "heal_chime");
+  // The heal cue on A, on both screens, and nothing on B.
+  await expect.poll(async () => (await heals(a)).slice(cuesA)).toEqual([{ id: ida, amount: HEAL.amount }]);
+  await expect.poll(async () => (await heals(b)).slice(cuesB)).toEqual([{ id: ida, amount: HEAL.amount }]);
+  // Never the hit feedback.
+  for (const [p, from] of [[a, fromA], [b, fromB]] as const) {
+    const heardNow = await p.sfxSince(from);
+    expect(heardNow, `${p.name} hears no hit`).not.toContain("hit");
+    expect(heardNow, `${p.name} hears no hurt`).not.toContain("hurt");
+  }
+  expect((await b.state()).players.find((x) => x.id === ida)?.kills).toBe(0);
+
+  // A respawn (0 to full HP) is no heal: no cue. It also gives the grenade back.
+  await kill(code, ida, ida);
+  await expect.poll(async () => a.me(await a.state())?.alive).toBe(false);
+  await expect.poll(async () => a.me(await a.state())?.alive).toBe(true);
+  expect(a.me(await a.state())?.hp).toBe(MAX_HP);
+  expect((await heals(a)).slice(cuesA)).toHaveLength(1);
+
+  // Nearly full: the heal stops at MAX_HP.
+  await place(code, ida, -8, -12);
+  await expect.poll(async () => (await playerIn(a, ida)).x).toBeCloseTo(-8, 1);
+  await setHp(code, ida, MAX_HP - 10);
+  await seesHp(a, [ida], MAX_HP - 10);
+  await throwAt(a, -7, -12);
+  await expect.poll(async () => (await playerIn(a, ida)).hp, { message: "capped at full health" }).toBe(MAX_HP);
+  await expect.poll(async () => (await heals(a)).slice(cuesA).at(-1)).toEqual({ id: ida, amount: 10 });
+});
+
+test("heal: in a team deathmatch it heals the thrower and teammates in it, never an enemy", async ({ players }) => {
+  test.slow();
+  const HEAL_ID = GRENADES.findIndex((g) => g.key === "heal");
+  const { players: all, code } = await players.teams(4);
+  const a = all[0];
+  await a.testId("grenade-pick-heal").click();
+  await expect.poll(async () => a.me(await a.state())?.grenadePick).toBe(HEAL_ID);
+  await Promise.all(all.map((p) => p.expectState("phase", "playing")));
+  await Promise.all(all.map((p) => p.expectState("card", "none")));
+  expect(a.me(await a.state())?.grenade).toBe(HEAL_ID);
+
+  const s = await a.state();
+  const me = a.me(s)!;
+  const ally = s.players.find((p) => p.id !== me.id && p.team === me.team)!;
+  const [enemy, far] = s.players.filter((p) => p.team !== me.team);
+  expect(ally && enemy && far).toBeTruthy();
+
+  // On an open row: A, the enemy and the ally within the radius of the blast, the other enemy far off.
+  const map = FFA_MAPS.find((m) => m.id === FFA_MAP)!;
+  const row = openRow(map);
+  const blast = { x: row.x + 4, z: row.z };
+  await place(code, me.id, row.x + 1.5, row.z);
+  await place(code, enemy.id, row.x + 4, row.z);
+  await place(code, ally.id, row.x + 6.5, row.z);
+  await place(code, far.id, row.x + 15, row.z);
+  await expect.poll(async () => (await playerIn(a, ally.id)).x).toBeCloseTo(row.x + 6.5, 1);
+  const hurt = [me.id, ally.id, enemy.id];
+  for (const id of hurt) await setHp(code, id, 30);
+  await seesHp(a, hurt, 30);
+  const from = await a.sfxCount();
+  const cues = (await heals(a)).length;
+
+  await throwAt(a, blast.x, blast.z);
+  await expect.poll(async () => (await playerIn(a, ally.id)).hp, { message: "the teammate is healed" }).toBe(30 + HEAL.amount);
+  expect((await playerIn(a, me.id)).hp, "the thrower too").toBe(30 + HEAL.amount);
+  expect((await playerIn(a, enemy.id)).hp, "not the enemy").toBe(30);
+  await heard(a, from, "heal_chime");
+  await expect.poll(async () => new Set((await heals(a)).slice(cues).map((h) => h.id))).toEqual(new Set([me.id, ally.id]));
+  expect(await a.sfxSince(from)).not.toContain("hit");
+  expect(await a.sfxSince(from)).not.toContain("hurt");
+  // No score, no feed line.
+  const after = await a.state();
+  expect([after.redScore, after.blueScore]).toEqual([0, 0]);
 });

@@ -361,6 +361,15 @@ export async function place(roomId: string, id: string, x: number, z: number) {
   expect(res.status, await res.text()).toBe(200);
 }
 
+/** Asks the e2e server to set a living player's HP (server.ts' /hp): no kill, feed line or damage stat. */
+export async function setHp(roomId: string, id: string, hp: number) {
+  const res = await fetch(`http://localhost:${SERVER_PORT + 1}/hp`, {
+    method: "POST",
+    body: JSON.stringify({ roomId, id, hp }),
+  });
+  expect(res.status, await res.text()).toBe(200);
+}
+
 /** A fresh email and username per call, so parallel tests and reruns never collide. */
 export function unique() {
   const id = `${Date.now().toString(36)}${Math.floor(Math.random() * 36 ** 4).toString(36)}`.slice(-10);

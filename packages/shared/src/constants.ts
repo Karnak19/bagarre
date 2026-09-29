@@ -184,22 +184,36 @@ export const FLASH = {
 } as const;
 
 /**
+ * Heal grenade: an instant burst of health for the thrower and their
+ * teammates in the radius, with no cover in the way (see `healAmount` in
+ * grenades.ts). Never enemies; in a duel or a free for all, only the thrower.
+ */
+export const HEAL = {
+  /** Blast radius, measured to the edge of the player's body (like the frag's and the stun's). */
+  radius: 3.5,
+  /** HP given to each player it reaches, the same across the whole radius (capped at MAX_HP). */
+  amount: 40,
+} as const;
+
+/**
  * What a grenade does when it goes off. Each effect has one handler on the
- * server (GameRoom's BLAST_EFFECTS) and reads its own tuning block above:
+ * server (GameRoom's blastEffects) and reads its own tuning block above:
  * - damage: GRENADE (falloff damage, the kill feed's "Grenade");
  * - cloud: SMOKE (a cloud that hides, drawn by the clients);
  * - stun: STUN (slower walking, no dash);
- * - flash: FLASH (a white screen for whoever looks at it).
+ * - flash: FLASH (a white screen for whoever looks at it);
+ * - heal: HEAL (instant health for the thrower and their teammates).
  */
-export type GrenadeEffect = "damage" | "cloud" | "stun" | "flash";
+export type GrenadeEffect = "damage" | "cloud" | "stun" | "flash" | "heal";
 
 /**
  * Who a blast affects (see `grenadeAffects` in grenades.ts):
  * - enemies: the friendly-fire rule, `canDamage`. Teammates are spared in a
  *   team mode; in a duel or a free for all it gets the thrower too.
- * (A heal would add "allies" here.)
+ * - allies: the thrower and their teammates (`self || sameTeam`). Never an
+ *   enemy; in a duel or a free for all, only the thrower.
  */
-export type GrenadeAffects = "enemies";
+export type GrenadeAffects = "enemies" | "allies";
 
 export interface GrenadeDef<K extends string = GrenadeKey> {
   /** Stable key (test ids, the HUD, the client's GRENADE_VIEW). Never renamed. */
@@ -225,24 +239,26 @@ export const GRENADE_FLASH = 3;
  * Index = grenade type (MSG_PICK, `Player.grenade`, `Grenade.kind`). They all
  * share the throw (GRENADE); only the frag hurts, and only the frag counts as
  * the "Grenade" weapon in the kill feed. Ids are frozen (frag 0, smoke 1,
- * stun 2, flash 3): never reorder or remove a type, only append.
+ * stun 2, flash 3, heal 4): never reorder or remove a type, only append.
  *
  * Adding a grenade:
  * 1. Append its line here, with a new `key`, its `effect` and who it `affects`.
  *    A new effect also needs its tuning block above, a GrenadeEffect member
- *    and its handler in BLAST_EFFECTS (apps/server/src/GameRoom.ts).
+ *    and its handler in blastEffects (apps/server/src/GameRoom.ts).
  * 2. Add its `key` to GRENADE_VIEW (apps/client/src/items.ts): icon,
  *    telegraph colour, blast sound, blast drawing, How to play blurb. It
  *    won't compile without it.
  * 3. Add its assets: the blast sound (SfxName and the SFX table in
  *    apps/client/src/audio.ts), any new particles in vfx.ts.
- * 4. Append its key to GRENADE_IDS in packages/shared/scripts/items.check.ts.
+ * 4. Append its key to GRENADE_IDS in packages/shared/scripts/items.check.ts
+ *    (and a new effect or `affects` value to EFFECTS / AFFECTS there).
  */
 const GRENADE_LIST = [
   { key: "frag", name: "Frag", effect: "damage", affects: "enemies", cooldown: 8, radius: GRENADE.radius },
   { key: "smoke", name: "Smoke", effect: "cloud", affects: "enemies", cooldown: 12, radius: SMOKE.radius },
   { key: "stun", name: "Stun", effect: "stun", affects: "enemies", cooldown: 10, radius: STUN.radius },
   { key: "flash", name: "Flash", effect: "flash", affects: "enemies", cooldown: 10, radius: 1.2 },
+  { key: "heal", name: "Heal", effect: "heal", affects: "allies", cooldown: 14, radius: HEAL.radius },
 ] as const satisfies readonly GrenadeDef<string>[];
 /** A grenade type's stable key ("frag", "smoke", ...). */
 export type GrenadeKey = (typeof GRENADE_LIST)[number]["key"];

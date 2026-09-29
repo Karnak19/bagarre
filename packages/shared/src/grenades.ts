@@ -10,15 +10,19 @@
 //   blocks their dash while it runs.
 // - flash: a white screen for whoever looks toward it with no cover in the
 //   way (flashTicks below), resolved by the server at the blast.
+// - heal: an instant HEAL.amount of health (healAmount below) for the
+//   thrower and their teammates in the radius, with no cover in the way.
 //
 // Who a blast affects is its def's `affects` (grenadeAffects below). For
-// every type today that is "enemies", the friendly-fire rule `canDamage`:
-// teammates are spared in a team deathmatch, and your own grenade gets you in
-// a duel or a free for all. Everything here is pure and deterministic.
+// the frag, smoke, stun and flash that is "enemies", the friendly-fire rule
+// `canDamage`: teammates are spared in a team deathmatch, and your own
+// grenade gets you in a duel or a free for all. For the heal it is "allies":
+// the thrower and their teammates, so only the thrower in a duel or a free
+// for all. Everything here is pure and deterministic.
 
 import type { Arena } from "./arena.ts";
-import { canDamage } from "./combat.ts";
-import { DEFAULT_GRENADE, FLASH, GRENADES, NO_TEAM, PLAYER_RADIUS, SMOKE, TICK_RATE, ticks, type GrenadeAffects, type GrenadeDef } from "./constants.ts";
+import { canDamage, sameTeam } from "./combat.ts";
+import { DEFAULT_GRENADE, FLASH, GRENADES, HEAL, MAX_HP, NO_TEAM, PLAYER_RADIUS, SMOKE, TICK_RATE, ticks, type GrenadeAffects, type GrenadeDef } from "./constants.ts";
 import { lineOfSight, segmentHitsCircle, type Vec2 } from "./physics.ts";
 
 export function grenadeDef(type: number): GrenadeDef {
@@ -37,12 +41,17 @@ export function grenadeCooldownTicks(type: number): number {
 /**
  * Whether a blast that affects `affects`, thrown by a player on
  * `throwerTeam`, reaches a player on `victimTeam` (`self`: the thrower).
- * "enemies" is exactly `canDamage`.
+ * "enemies" is exactly `canDamage`. "allies" is the thrower and their
+ * teammates, written out on purpose and NOT `!canDamage`: in a duel or a
+ * free for all your own frag hurts you (canDamage is true for yourself), yet
+ * two NO_TEAM players are never teammates, so there it is the thrower alone.
  */
 export function grenadeAffects(affects: GrenadeAffects, throwerTeam: number, victimTeam: number, self: boolean): boolean {
   switch (affects) {
     case "enemies":
       return canDamage(throwerTeam, victimTeam, self);
+    case "allies":
+      return self || sameTeam(throwerTeam, victimTeam);
   }
 }
 
@@ -86,6 +95,24 @@ export function flashTicks(arena: Arena, eye: Vec2, aim: number, blast: Vec2): n
   const seconds = FLASH.maxDuration * angleFactor * distFactor;
   if (seconds < FLASH.minDuration) return 0;
   return Math.round(seconds * TICK_RATE);
+}
+
+/**
+ * The heal rule: how much HP a player at `pos` with `hp` gets back from a
+ * heal going off at `blast`, for a player the blast may affect (grenadeAffects
+ * "allies"). 0 when:
+ * - they are dead or respawning (hp 0: a heal never brings anyone back);
+ * - the blast is farther than HEAL.radius from the edge of their body
+ *   (blastEdge, as the frag and the stun measure it);
+ * - cover is in the way (lineOfSight: no healing through walls).
+ * Otherwise HEAL.amount, the same across the whole radius, capped so HP never
+ * goes over MAX_HP (`hp` is a uint8 on the wire). The shield is not touched.
+ */
+export function healAmount(arena: Arena, pos: Vec2, hp: number, blast: Vec2): number {
+  if (hp <= 0 || hp >= MAX_HP) return 0;
+  if (blastEdge(blast.x, blast.z, pos.x, pos.z) > HEAL.radius) return 0;
+  if (!lineOfSight(arena, blast, pos)) return 0;
+  return Math.min(HEAL.amount, MAX_HP - hp);
 }
 
 /**

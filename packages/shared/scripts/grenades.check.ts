@@ -1,7 +1,7 @@
 // Self-check of the utility grenades (src/grenades.ts) and what they lean on:
 // the line-of-sight helpers (physics.ts), the stun in `stepPlayer`
 // (combat.ts), the flash rule (angle, distance, cover), the smoke rule and
-// the MSG_PICK parser. Run with `bun run check` (in packages/shared). Exits
+// the heal rule (who, how much, cover) and the MSG_PICK parser. Run with `bun run check` (in packages/shared). Exits
 // non-zero on a failure.
 
 import type { Arena } from "../src/arena.ts";
@@ -10,6 +10,8 @@ import {
   DASH_COOLDOWN_TICKS,
   FLASH,
   GRENADES,
+  HEAL,
+  MAX_HP,
   NO_TEAM,
   PLAYER_SPEED,
   STUN,
@@ -20,7 +22,7 @@ import {
   TICK_RATE,
   ticks,
 } from "../src/constants.ts";
-import { flashTicks, grenadeCooldownTicks, isGrenadeType, smokeHides, smokeVeil } from "../src/grenades.ts";
+import { flashTicks, grenadeAffects, grenadeCooldownTicks, healAmount, isGrenadeType, smokeHides, smokeVeil } from "../src/grenades.ts";
 import { parsePick } from "../src/messages.ts";
 import { lineOfSight, segmentHitsBox, segmentHitsCircle } from "../src/physics.ts";
 import type { InputMessage, PlayerSim } from "../src/protocol.ts";
@@ -135,6 +137,30 @@ check(flashTicks(arena, { x: 0, z: -4 }, north, { x: 0, z: 4 }) === 0, "cover be
 check(flashTicks(arena, { x: -4, z: -4 }, Math.PI / 4, { x: 4, z: 4 }) === 0, "cover across the diagonal: nothing");
 check(flashTicks(open, { x: 0, z: -4 }, north, { x: 0, z: 4 }) > 0, "the same look with no cover: flashed");
 check(flashTicks(arena, { x: 0, z: -5.5 }, -north, blast) === max, "point blank: flashed whatever the aim");
+
+// --- The heal rule ----------------------------------------------------------------
+
+// Who: the thrower and their teammates, written as `self || sameTeam`, never `!canDamage`.
+check(grenadeAffects("allies", TEAM_RED, TEAM_RED, false), "heal, teams: a teammate is healed");
+check(!grenadeAffects("allies", TEAM_RED, TEAM_BLUE, false), "heal, teams: an enemy is not");
+check(grenadeAffects("allies", TEAM_RED, TEAM_RED, true), "heal, teams: the thrower is healed");
+check(grenadeAffects("allies", NO_TEAM, NO_TEAM, true), "heal, duel / FFA: the thrower is healed");
+check(!grenadeAffects("allies", NO_TEAM, NO_TEAM, false), "heal, duel / FFA: anyone else is not");
+check(
+  grenadeAffects("enemies", NO_TEAM, NO_TEAM, true) && grenadeAffects("enemies", NO_TEAM, NO_TEAM, false) && !grenadeAffects("enemies", TEAM_RED, TEAM_RED, false),
+  "the frag's rule is unchanged (canDamage)",
+);
+// How much: HEAL.amount flat across the radius, capped at MAX_HP.
+const hb = { x: 0, z: -5 };
+check(healAmount(open, { x: 0, z: -5 }, 30, hb) === HEAL.amount, `on the blast: +${HEAL.amount} HP`);
+check(healAmount(open, { x: HEAL.radius, z: -5 }, 30, hb) === HEAL.amount, "at the edge of the radius: the same amount (no falloff)");
+check(healAmount(open, { x: HEAL.radius + 1, z: -5 }, 30, hb) === 0, "out of the radius: nothing");
+check(healAmount(open, hb, MAX_HP - 10, hb) === 10, `capped at MAX_HP (${MAX_HP - 10} HP gets +10)`);
+check(healAmount(open, hb, MAX_HP, hb) === 0, "full health: nothing");
+check(healAmount(open, hb, 0, hb) === 0, "dead (0 HP): not brought back");
+// Cover: the box at the origin between the blast and the player.
+check(healAmount(arena, { x: 0, z: 1.8 }, 30, { x: 0, z: -1.8 }) === 0, "cover between the blast and the player: nothing");
+check(healAmount(open, { x: 0, z: 1.8 }, 30, { x: 0, z: -1.8 }) === HEAL.amount, "the same spot with no cover: healed");
 
 // --- Smoke ------------------------------------------------------------------------
 

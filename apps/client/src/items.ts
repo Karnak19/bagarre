@@ -4,7 +4,7 @@
 // position, and typed as Record<key, ...>: an item missing here is a compile
 // error.
 
-import { FLASH, GRENADE, SMOKE, STUN, WEAPONS, grenadeDef, weaponDef, type GrenadeKey, type WeaponKey } from "@bagarre/shared";
+import { FLASH, GRENADE, HEAL, SMOKE, STUN, WEAPONS, grenadeDef, weaponDef, type GrenadeKey, type WeaponKey } from "@bagarre/shared";
 import type { SfxName } from "./audio.ts";
 import { Cell, type Vfx } from "./vfx.ts";
 
@@ -168,6 +168,13 @@ export const GRENADE_VIEW: Record<GrenadeKey, GrenadeViewDef> = {
     sfx: "flashbang",
     draw: (fx, x, z) => fx.vfx.flashBurst(x, z),
     blurb: `a white screen for whoever looks at it, up to ${FLASH.maxDuration} s; look away or hide behind cover`,
+  },
+  heal: {
+    icon: "💚",
+    telegraph: 0x4ee07a,
+    sfx: "heal_chime",
+    draw: (fx, x, z) => fx.vfx.healBurst(x, z, HEAL.radius),
+    blurb: `+${HEAL.amount} HP at once for you and your teammates in it, not through cover`,
   },
 };
 
