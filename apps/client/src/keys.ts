@@ -1,5 +1,5 @@
 // Keys that belong to the app, not the game: Esc (match menu), Tab (hold the
-// scoreboard), and M / 1-7 / G on the waiting and result cards. The game's own
+// scoreboard), and M / the weapon number keys / G on the waiting and result cards. The game's own
 // keys are input.ts'. Plain DOM listeners, outside React: they must see the
 // state as it is when the key goes down, before any dialog reacts to it
 // (hence the capture phase).
@@ -17,6 +17,7 @@
 import type { App, GameView } from "./app.ts";
 import { isMuted, setMuted } from "./audio.ts";
 import type { Input } from "./input.ts";
+import { weaponOfKey } from "./items.ts";
 import type { Readable } from "./store.ts";
 import { ui } from "./uiState.ts";
 
@@ -51,12 +52,13 @@ export function installAppKeys({ app, input, view }: { app: App; input: Input; v
         app.holdScoreboard(true);
         return;
       }
-      // With a card up the game's input is off; M, 1-7 and G still work on the
+      // With a card up the game's input is off; M, the number keys and G still work on the
       // waiting and result cards (they have a weapon picker).
       if (input.enabled || panel || e.repeat) return;
       const card = v?.card;
+      const weapon = weaponOfKey(e.code);
       if (e.code === "KeyM") setMuted(!isMuted());
-      else if (/^Digit[1-7]$/.test(e.code) && (card === "waiting" || card === "result")) app.pick(Number(e.code.slice(5)) - 1);
+      else if (weapon !== null && (card === "waiting" || card === "result")) app.pick(weapon);
       else if (e.code === "KeyG" && (card === "waiting" || card === "result")) app.cycleGrenade();
     },
     { capture: true },

@@ -9,17 +9,10 @@ import { List, ListItem } from "@astryxdesign/core/List";
 import { Text } from "@astryxdesign/core/Text";
 import {
   DASH,
-  FLASH,
   GRENADE,
   GRENADES,
-  GRENADE_FLASH,
-  GRENADE_FRAG,
-  GRENADE_SMOKE,
-  GRENADE_STUN,
   KILLS_TO_WIN,
   SHIELD,
-  SMOKE,
-  STUN,
   TEAM_KILLS_TO_WIN,
   TEAM_SIZE,
   TEAM_TIME_LIMIT,
@@ -27,17 +20,11 @@ import {
 } from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
 import type { ReactNode } from "react";
+import { GRENADE_VIEW, GUN_VIEW } from "../../items.ts";
 import { shared } from "../styles.ts";
 
-const WEAPON_ROLES = [
-  "All-rounder",
-  "Close range",
-  "Long range",
-  "Mid range, fast",
-  "Six heavy, precise shots",
-  "Three rounds per click",
-  "Long range, semi-auto",
-];
+/** Every grenade type in a line: "<Name>: <what it does> (<cooldown> s)." (GRENADE_VIEW's blurbs). */
+const GRENADE_TYPES = GRENADES.map((g) => `${g.name}: ${GRENADE_VIEW[g.key].blurb} (${g.cooldown} s).`).join(" ");
 
 const k = (keys: string) => <Kbd keys={keys} />;
 
@@ -112,7 +99,7 @@ export function HowToPlay() {
             key={w.name}
             startContent={k(String(i + 1))}
             label={w.name}
-            description={WEAPON_ROLES[i]}
+            description={GUN_VIEW[w.key].role}
             endContent={
               <Text type="supporting" color="secondary" xstyle={shared.tabular}>
                 {w.pellets > 1 || w.burst ? `${w.burst ?? w.pellets} × ${w.damage}` : w.damage} dmg · {w.range} m · {w.magazine} rounds
@@ -140,7 +127,7 @@ export function HowToPlay() {
         <ListItem
           startContent={k("G")}
           label="Grenade types"
-          description={`Frag: damage, hurts you too (${GRENADES[GRENADE_FRAG].cooldown} s). Smoke: a ${SMOKE.radius} m cloud for ${SMOKE.duration} s that hides whoever is in or behind it from enemies (${GRENADES[GRENADE_SMOKE].cooldown} s). Stun: ${STUN.speedScale * 100}% speed and no dash for ${STUN.duration} s (${GRENADES[GRENADE_STUN].cooldown} s). Flash: a white screen for whoever looks at it, up to ${FLASH.maxDuration} s; look away or hide behind cover (${GRENADES[GRENADE_FLASH].cooldown} s). Only the frag hurts.`}
+          description={`${GRENADE_TYPES} Only the frag hurts.`}
         />
         <ListItem
           startContent={k("E")}

@@ -1,4 +1,4 @@
-// The four grenade types (GRENADES in constants.ts): what each one does when
+// The grenade types (GRENADES in constants.ts): what each one does when
 // it goes off. They share the throw (grenadeTarget / grenadeArc /
 // grenadeFlightTicks in combat.ts) and differ only in their blast:
 //
@@ -11,12 +11,14 @@
 // - flash: a white screen for whoever looks toward it with no cover in the
 //   way (flashTicks below), resolved by the server at the blast.
 //
-// Who a stun or a flash affects is the friendly-fire rule, `canDamage`:
-// teammates are spared in a team deathmatch, and your own stun or flash gets
-// you in a duel or a free for all. Everything here is pure and deterministic.
+// Who a blast affects is its def's `affects` (grenadeAffects below). For
+// every type today that is "enemies", the friendly-fire rule `canDamage`:
+// teammates are spared in a team deathmatch, and your own grenade gets you in
+// a duel or a free for all. Everything here is pure and deterministic.
 
 import type { Arena } from "./arena.ts";
-import { DEFAULT_GRENADE, FLASH, GRENADES, NO_TEAM, PLAYER_RADIUS, SMOKE, TICK_RATE, ticks, type GrenadeDef } from "./constants.ts";
+import { canDamage } from "./combat.ts";
+import { DEFAULT_GRENADE, FLASH, GRENADES, NO_TEAM, PLAYER_RADIUS, SMOKE, TICK_RATE, ticks, type GrenadeAffects, type GrenadeDef } from "./constants.ts";
 import { lineOfSight, segmentHitsCircle, type Vec2 } from "./physics.ts";
 
 export function grenadeDef(type: number): GrenadeDef {
@@ -30,6 +32,18 @@ export function isGrenadeType(type: unknown): type is number {
 /** Steps from a throw of this type until the next one is allowed. */
 export function grenadeCooldownTicks(type: number): number {
   return ticks(grenadeDef(type).cooldown);
+}
+
+/**
+ * Whether a blast that affects `affects`, thrown by a player on
+ * `throwerTeam`, reaches a player on `victimTeam` (`self`: the thrower).
+ * "enemies" is exactly `canDamage`.
+ */
+export function grenadeAffects(affects: GrenadeAffects, throwerTeam: number, victimTeam: number, self: boolean): boolean {
+  switch (affects) {
+    case "enemies":
+      return canDamage(throwerTeam, victimTeam, self);
+  }
 }
 
 /** Distance from a blast at (bx, bz) to the edge of a body at (x, z), as the frag and the stun measure it (0 or less: standing on it). */

@@ -66,11 +66,11 @@ test("the grenade picker: every type, G cycles, bad picks refused, kept over a r
 
   // Bad payloads are dropped whole (a bad grenade drops the weapon sent with it),
   // then a good one: messages arrive in order, so once it lands the bad ones were seen.
-  await a.page.evaluate((type) => {
+  await a.page.evaluate(({ type, count }) => {
     const room = (window as any).__bagarre.net.room;
-    for (const bad of [{ grenade: 9 }, { grenade: "2" }, { grenade: -1 }, { grenade: 1.5 }, { weapon: 3, grenade: 7 }, {}]) room.send(type, bad);
+    for (const bad of [{ grenade: count + 5 }, { grenade: "2" }, { grenade: -1 }, { grenade: 1.5 }, { weapon: 3, grenade: count }, {}]) room.send(type, bad);
     room.send(type, { grenade: 2 });
-  }, MSG_PICK);
+  }, { type: MSG_PICK, count: GRENADES.length });
   await expect.poll(async () => a.me(await a.state())?.grenadePick).toBe(2);
   expect(a.me(await a.state())?.pick).toBe(0);
 

@@ -1,9 +1,9 @@
-// Self-check of the skin and gun tables (src/skins.ts): unique skin ids and
-// files, and a gun model with a muzzle point for every weapon.
+// Self-check of the skin table (src/skins.ts): unique skin ids and files.
+// (The guns' models are the client's GUN_VIEW, apps/client/src/items.ts,
+// typed so that a gun without one doesn't compile.)
 // Run with `bun run check` (in packages/shared). Exits non-zero on a failure.
 
-import { WEAPONS } from "../src/constants.ts";
-import { GUN_MODELS, SKINS, isSkinId, randomSkin } from "../src/skins.ts";
+import { SKINS, isSkinId, randomSkin } from "../src/skins.ts";
 
 const failures: string[] = [];
 function check(cond: boolean, label: string) {
@@ -16,13 +16,6 @@ check(new Set(ids).size === ids.length, `every skin id is unique (${ids.length} 
 check(new Set(SKINS.map((s) => s.file)).size === SKINS.length, "every skin has its own file");
 check(ids.every((id) => /^[a-z0-9-]+$/.test(id)), "skin ids are lowercase slugs");
 check(!isSkinId("nope") && !isSkinId(undefined) && isSkinId(ids[0]), "isSkinId accepts only listed ids");
-
-check(GUN_MODELS.length === WEAPONS.length, `one gun model per weapon (${GUN_MODELS.length} for ${WEAPONS.length})`);
-WEAPONS.forEach((w, i) => {
-  const g = GUN_MODELS[i];
-  const ok = !!g && !!g.file && g.muzzle.length === 3 && g.muzzle.every(Number.isFinite) && g.grip.length === 3 && g.muzzle[0] > g.grip[0];
-  check(ok, `${w.name} has a gun model and a muzzle point ahead of its grip`);
-});
 
 // A guest's roll prefers a skin nobody wears, and falls back to any when all are taken.
 const taken = ids.slice(0, -1);

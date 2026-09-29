@@ -10,10 +10,6 @@ import {
   DASH_COOLDOWN_TICKS,
   FLASH,
   GRENADES,
-  GRENADE_FLASH,
-  GRENADE_FRAG,
-  GRENADE_SMOKE,
-  GRENADE_STUN,
   NO_TEAM,
   PLAYER_SPEED,
   STUN,
@@ -111,12 +107,12 @@ check(JSON.stringify(replay) === JSON.stringify(full), "replaying from a mid-stu
 
 // --- Cooldowns per type ---------------------------------------------------------
 
-check(GRENADES.length === 4 && [GRENADE_FRAG, GRENADE_SMOKE, GRENADE_STUN, GRENADE_FLASH].join() === "0,1,2,3", "four grenade types, in table order");
 for (const [i, g] of GRENADES.entries()) {
   const r = stepPlayer(open, fresh, { ...idle, seq: 1, grenade: 1, gx: 3 }, 0, true, i);
   check(!!r.grenade && r.sim.grenadeCd === ticks(g.cooldown) && grenadeCooldownTicks(i) === ticks(g.cooldown), `${g.name}: a throw starts its own ${g.cooldown} s cooldown`);
 }
-check(isGrenadeType(0) && isGrenadeType(3) && !isGrenadeType(4) && !isGrenadeType(-1) && !isGrenadeType(1.5) && !isGrenadeType("1"), "isGrenadeType accepts only listed types");
+const last = GRENADES.length - 1;
+check(isGrenadeType(0) && isGrenadeType(last) && !isGrenadeType(last + 1) && !isGrenadeType(-1) && !isGrenadeType(1.5) && !isGrenadeType("1"), "isGrenadeType accepts only listed types");
 
 // --- The flash rule --------------------------------------------------------------
 
@@ -161,7 +157,7 @@ check(smokeVeil(NO_TEAM, NO_TEAM, false, false) === "none" && smokeVeil(null, NO
 check(JSON.stringify(parsePick({ weapon: 2 })) === '{"weapon":2}', "pick: a weapon alone");
 check(JSON.stringify(parsePick({ grenade: 3 })) === '{"grenade":3}', "pick: a grenade alone");
 check(JSON.stringify(parsePick({ weapon: 1, grenade: 1 })) === '{"weapon":1,"grenade":1}', "pick: both");
-for (const bad of [{}, null, [], "x", { grenade: 4 }, { grenade: -1 }, { grenade: 1.5 }, { grenade: "1" }, { weapon: 1, grenade: 9 }, { weapon: 99, grenade: 1 }, { grenade: null }])
+for (const bad of [{}, null, [], "x", { grenade: GRENADES.length }, { grenade: -1 }, { grenade: 1.5 }, { grenade: "1" }, { weapon: 1, grenade: GRENADES.length + 5 }, { weapon: 99, grenade: 1 }, { grenade: null }])
   check(parsePick(bad) === null, `pick: refused ${JSON.stringify(bad)}`);
 
 if (failures.length) {

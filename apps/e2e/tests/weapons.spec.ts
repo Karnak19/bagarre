@@ -1,11 +1,12 @@
+import { WEAPONS } from "@bagarre/shared";
 import { expect, kill, test } from "./fixtures.ts";
 
-test("keys 1-7 while waiting pick each weapon, shown in the picker and put in hand on the next spawn", async ({ players }) => {
+test("the number keys while waiting pick each weapon, shown in the picker and put in hand on the next spawn", async ({ players }) => {
   const { host: a, code } = await players.host("duel", "A");
   await a.expectState("phase", "waiting");
   const id = (await a.state()).you;
 
-  for (let i = 1; i <= 7; i++) {
+  for (let i = 1; i <= WEAPONS.length; i++) {
     await a.page.keyboard.press(`Digit${i}`);
     await expect(a.testId(`pick-${i}`)).toHaveAttribute("aria-pressed", "true");
     await expect.poll(async () => a.me(await a.state())?.pick).toBe(i - 1);

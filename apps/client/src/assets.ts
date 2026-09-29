@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import { GLTFLoader, type GLTF } from "three/addons/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
-import { GUN_MODELS, SKIN_ANIMS_FILE, skinOf } from "@bagarre/shared";
+import { SKIN_ANIMS_FILE, WEAPONS, skinOf } from "@bagarre/shared";
+import { GUN_VIEW } from "./items.ts";
 
 /**
  * Everything loaded before the game starts. Each entry is null when its file
@@ -13,7 +14,7 @@ import { GUN_MODELS, SKIN_ANIMS_FILE, skinOf } from "@bagarre/shared";
 export interface Assets {
   /** The clips every skin plays (models/anims.glb, bones only). */
   anims: THREE.AnimationClip[] | null;
-  /** The gun of each weapon, by weapon id (GUN_MODELS), each a template to clone. Null for one that failed. */
+  /** The gun of each weapon, by weapon id (GUN_VIEW), each a template to clone. Null for one that failed. */
   guns: (THREE.Object3D | null)[];
   /** Arena props by name (Crate, SackTrench_Small, ...), each a template to clone. */
   props: Map<string, THREE.Object3D> | null;
@@ -30,7 +31,7 @@ export const assetsLoaded = new Promise<Assets>((r) => (resolveLoaded = r));
 
 /** Loads every startup asset in parallel. `onProgress` gets a 0-1 fraction. */
 export async function loadAssets(onProgress: (fraction: number) => void): Promise<Assets> {
-  const gunFiles = GUN_MODELS.map((g) => `models/${g.file}`);
+  const gunFiles = WEAPONS.map((w) => `models/${GUN_VIEW[w.key].model.file}`);
   const files = [`models/${SKIN_ANIMS_FILE}`, "models/props.glb", "vfx/particles.png", ...gunFiles];
   const loaded = files.map(() => 0);
   const tick = (i: number, f: number) => {

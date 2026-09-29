@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
-import { GUN_MODELS, PLAYER_SPEED } from "@bagarre/shared";
+import { PLAYER_SPEED, WEAPONS } from "@bagarre/shared";
+import { gunView } from "./items.ts";
 
 /**
  * World height of the `Head` bone (the base of the head) in the Idle pose, in
@@ -20,12 +21,6 @@ const HEAD_BONE_UNITS = 2.117;
  * from the planted feet in the clip (they slide back about 4.5 to 7 u/s).
  */
 const RUN_CLIP_SPEED = 5.2;
-/**
- * The gun's size next to the character, in model units per gun-file unit
- * (the pack's guns are about as long as a character is tall). The small
- * guns are drawn a bit bigger so they still read from above.
- */
-const GUN_SCALE = [0.35, 0.36, 0.33, 0.42, 0.48, 0.46, 0.35];
 /**
  * Where the gun's grip sits in the hand: from the FistR bone's origin (the
  * wrist), along the bone (the fingers' way) and toward the palm, model units.
@@ -338,10 +333,9 @@ export class Character {
       mesh.material = mat;
     };
     this.guns = templates.map((t, w) => {
-      const def = GUN_MODELS[w];
-      if (!t || !def) return null;
+      if (!t || !WEAPONS[w]) return null;
+      const { model: def, scale: s } = gunView(w);
       const gun = t.clone();
-      const s = GUN_SCALE[w] ?? GUN_SCALE[0];
       gun.scale.setScalar(s);
       gun.position.set(-def.grip[0] * s, -def.grip[1] * s, -def.grip[2] * s);
       gun.visible = false;
@@ -376,8 +370,8 @@ export class Character {
   /** World position of the barrel tip of the gun in hand. */
   muzzle(out: THREE.Vector3): THREE.Vector3 {
     const gun = this.guns[this.weapon];
-    const def = GUN_MODELS[this.weapon];
-    if (!gun || !def) return this.root.getWorldPosition(out).setY(1);
+    if (!gun || !WEAPONS[this.weapon]) return this.root.getWorldPosition(out).setY(1);
+    const def = gunView(this.weapon).model;
     gun.updateWorldMatrix(true, false);
     return out.set(def.muzzle[0], def.muzzle[1], def.muzzle[2]).applyMatrix4(gun.matrixWorld);
   }

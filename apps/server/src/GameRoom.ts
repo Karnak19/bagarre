@@ -47,11 +47,8 @@ import {
   TEAM_BLUE,
   TEAM_RED,
   TEAM_RULES,
-  GRENADE_FLASH,
-  GRENADE_FRAG,
+  GRENADES,
   GRENADE_FUSE_TICKS,
-  GRENADE_SMOKE,
-  GRENADE_STUN,
   SMOKE_TICKS,
   STUN,
   STUN_TICKS,
@@ -84,6 +81,7 @@ import {
   ffaRespawnPoint,
   ffaStartSpawns,
   grenadeArc,
+  grenadeAffects,
   grenadeDamage,
   grenadeFlightTicks,
   mapById,
@@ -109,6 +107,8 @@ import {
   weaponDef,
   writeSim,
   type FfaMapDef,
+  type GrenadeDef,
+  type GrenadeEffect,
   type InputMessage,
   type MapDef,
   type ModeRules,
@@ -157,6 +157,16 @@ interface BulletInternal {
 }
 
 /** Server-only bookkeeping per grenade. */
+/** A grenade going off this tick: where, whose, and its type (a GRENADES index). */
+interface Blast {
+  owner: string;
+  x: number;
+  z: number;
+  /** The thrower's team at the throw. */
+  team: number;
+  kind: number;
+}
+
 interface GrenadeInternal {
   ox: number;
   oz: number;
@@ -1160,7 +1170,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
 
   private stepGrenades() {
     const dead: string[] = [];
-    const blasts: { owner: string; x: number; z: number; team: number; kind: number }[] = [];
+    const blasts: Blast[] = [];
     // Smoke clouds that have cleared go first.
     this.state.smokes.forEach((s, id) => {
       if (s.end <= this.state.tick) this.state.smokes.delete(id);
@@ -1195,15 +1205,34 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     for (const b of blasts) {
       // Nothing goes off in warmup (nothing can be thrown then either).
       if (this.state.phase === "warmup") continue;
-      if (b.kind === GRENADE_SMOKE) this.smoke(b.x, b.z);
-      else if (b.kind === GRENADE_STUN) this.stun(b.owner, b.x, b.z, b.team);
-      else if (b.kind === GRENADE_FLASH) this.flash(b.owner, b.x, b.z, b.team);
-      else if (b.kind === GRENADE_FRAG) this.explode(b.owner, b.x, b.z, b.team);
+      const def = GRENADES[b.kind];
+      if (def) this.blastEffects[def.effect](b, def);
     }
   }
 
+  /** What a blast does, by its type's `effect` (GrenadeDef): one handler per effect. */
+  private readonly blastEffects: Record<GrenadeEffect, (b: Blast, def: GrenadeDef) => void> = {
+    damage: (b, def) => this.explode(b, def),
+    cloud: (b) => this.smoke(b),
+    stun: (b, def) => this.stun(b, def),
+    flash: (b, def) => this.flash(b, def),
+  };
+
+  /**
+   * The players alive that a blast may affect, by its type's `affects`
+   * (grenadeAffects: for "enemies", canDamage, so teammates are spared with
+   * teams, and in a duel or FFA it gets its thrower too). In state order.
+   */
+  private blastTargets(b: Blast, def: GrenadeDef): { id: string; p: Player }[] {
+    const out: { id: string; p: Player }[] = [];
+    this.state.players.forEach((p, id) => {
+      if (p.alive && grenadeAffects(def.affects, b.team, p.team, id === b.owner)) out.push({ id, p });
+    });
+    return out;
+  }
+
   /** A smoke grenade went off: a cloud for SMOKE_TICKS. Who it hides is up to each client (smokeVeil). */
-  private smoke(x: number, z: number) {
+  private smoke({ x, z }: Blast) {
     const s = new Smoke();
     s.x = x;
     s.z = z;
@@ -1213,50 +1242,48 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   }
 
   /**
-   * A stun went off: everyone alive in the radius it may affect (canDamage:
-   * teammates are spared with teams, and in a duel or FFA it gets its
-   * thrower too) gets STUN_TICKS of stun, or keeps a longer one already
-   * running. `stepPlayer` does the slowing, on the server and in the
-   * victim's own prediction alike. No damage.
+   * A stun went off: everyone it may affect (blastTargets) in the radius gets
+   * STUN_TICKS of stun, or keeps a longer one already running. `stepPlayer`
+   * does the slowing, on the server and in the victim's own prediction
+   * alike. No damage.
    */
-  private stun(owner: string, x: number, z: number, team: number) {
-    this.state.players.forEach((p, id) => {
-      if (!p.alive || !canDamage(team, p.team, id === owner)) return;
-      if (blastEdge(x, z, p.x, p.z) <= STUN.radius) p.stunTicks = Math.max(p.stunTicks, STUN_TICKS);
-    });
+  private stun(b: Blast, def: GrenadeDef) {
+    for (const { p } of this.blastTargets(b, def)) {
+      if (blastEdge(b.x, b.z, p.x, p.z) <= STUN.radius) p.stunTicks = Math.max(p.stunTicks, STUN_TICKS);
+    }
   }
 
   /**
-   * A flash went off: each player it may affect (canDamage, like the stun)
+   * A flash went off: each player it may affect (blastTargets, like the stun)
    * gets the white screen `flashTicks` gives from where they stand and aim
    * right now, cover included. The end tick is synced, so the victim's
    * screen matches the server. A longer flash still running is kept. No damage.
    */
-  private flash(owner: string, x: number, z: number, team: number) {
+  private flash(b: Blast, def: GrenadeDef) {
     const tick = this.state.tick;
-    this.state.players.forEach((p, id) => {
-      if (!p.alive || !canDamage(team, p.team, id === owner)) return;
-      const n = flashTicks(this.map, p, p.aim, { x, z });
-      if (n <= 0 || tick + n <= p.flashEnd) return;
+    for (const { p } of this.blastTargets(b, def)) {
+      const n = flashTicks(this.map, p, p.aim, { x: b.x, z: b.z });
+      if (n <= 0 || tick + n <= p.flashEnd) continue;
       p.flashEnd = tick + n;
       p.flashTicks = n;
-    });
+    }
   }
 
-  /** A frag went off: damage with falloff, the only grenade that hurts (and the kill feed's "Grenade"). */
-  private explode(owner: string, x: number, z: number, team: number) {
+  /**
+   * A frag went off: damage with falloff, the only grenade that hurts (and the
+   * kill feed's "Grenade"). Teams: it spares the thrower's team and the thrower
+   * (canDamage, its `affects`).
+   */
+  private explode(b: Blast, def: GrenadeDef) {
     // Collect first: a kill can end the match and clear the state mid-loop.
     const hits: { id: string; p: Player; dmg: number }[] = [];
-    this.state.players.forEach((p, id) => {
-      // Teams: the blast spares the thrower's team and the thrower.
-      if (!p.alive || !canDamage(team, p.team, id === owner)) return;
-      const edge = blastEdge(x, z, p.x, p.z);
-      const dmg = grenadeDamage(edge, id === owner);
+    for (const { id, p } of this.blastTargets(b, def)) {
+      const dmg = grenadeDamage(blastEdge(b.x, b.z, p.x, p.z), id === b.owner);
       if (dmg !== null && dmg > 0) hits.push({ id, p, dmg });
-    });
+    }
     for (const h of hits) {
       if (this.state.phase === "ended") break;
-      this.damage(owner, h.id, h.p, h.dmg, KILL_GRENADE);
+      this.damage(b.owner, h.id, h.p, h.dmg, KILL_GRENADE);
     }
   }
 
