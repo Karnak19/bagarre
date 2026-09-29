@@ -12,6 +12,7 @@
     "assets:models": "bun scripts/assets/build-models.ts",
     "assets:atlas": "python3 scripts/assets/build-atlas.py",
     "sfx:build": "bash scripts/sfx/build.sh",
+    "music:build": "bash scripts/music/build.sh",
     "theme:build": "astryx theme build src/ui/theme/bagarre.source.ts -o src/ui/theme/bagarre.css",
     "astryx": "astryx"
   },

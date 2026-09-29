@@ -8,7 +8,7 @@
 import { findMap } from "@bagarre/shared";
 import { App, type GameView, type Navigator } from "./app.ts";
 import { Attract } from "./attract.ts";
-import { activeVoiceCount, initAudio, initAudioOnFirstGesture } from "./audio.ts";
+import { activeVoiceCount, initAudio, initAudioOnFirstGesture, musicDebug, setMusic, type MusicMood } from "./audio.ts";
 import { account } from "./auth.ts";
 import { loadAssets } from "./assets.ts";
 import type { BootConfig } from "./config.ts";
@@ -169,13 +169,21 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
   const drawGap = config.maxFps > 0 ? 1000 / config.maxFps : 0;
   let lastDraw = -Infinity;
 
+  // Music: the menu's track everywhere but a match being played (the menu,
+  // its attract scene, the Maps page's walk, joining, and a game's waiting
+  // card); a match track while it's on; silence from its end (the win or lose
+  // sting) until the next one starts or we are back on the menu.
+  const musicFor = (v: GameView | null): MusicMood =>
+    v?.phase === "playing" ? "match" : v?.phase === "ended" ? "off" : "menu";
+
   function loop(now: number) {
     frames++;
     const dtMs = Math.min(now - lastFrame, 250);
     lastFrame = now;
+    let v: GameView | null = null;
     if (scene) {
       const m = app.match;
-      const v = app.gameView();
+      v = app.gameView();
       view.set(v);
       if (m && v) {
         m.frame(now, dtMs);
@@ -191,6 +199,7 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
         scene.render(now);
       }
     }
+    setMusic(musicFor(v));
     requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);
@@ -231,6 +240,10 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
         },
         get buffer() {
           return app.match?.buffer ?? null;
+        },
+        /** The music: mood, the track asked for and the one heard (see audio.ts' musicDebug). */
+        get music() {
+          return musicDebug();
         },
         /** The walk around a map (`/maps/$id`), while on (null otherwise). */
         get walk() {

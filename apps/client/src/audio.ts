@@ -1,5 +1,5 @@
 /**
- * Sound effects.
+ * Sound effects and music.
  *
  * - Files live in `apps/client/public/sfx/` (mono .mp3, built by scripts/sfx/build.sh,
  *   sources in CREDITS.md). The dash and grenade-throw whooshes have no file:
@@ -12,6 +12,8 @@
  * - Positional sounds pan by where the source is ON SCREEN (the camera looks
  *   down the world diagonal), and get quieter with distance, gently: the arena
  *   is small and the opponent must always be heard.
+ * - Music (see "Music" below) is one looping track at a time, on its own
+ *   volume, under the master volume and mute like the effects.
  */
 
 export type SfxName =
@@ -124,6 +126,8 @@ for (const n of NAMES) active.set(n, []);
 
 let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
+/** The music's own volume, into `master`. */
+let musicBus: GainNode | null = null;
 let listenerX = 0;
 let listenerZ = 0;
 
@@ -245,8 +249,12 @@ export async function initAudio(): Promise<void> {
       comp.attack.value = 0.003;
       comp.release.value = 0.15;
       master.connect(comp).connect(ctx.destination);
+      musicBus = ctx.createGain();
+      musicBus.gain.value = musicVolume;
+      musicBus.connect(master);
     }
     if (ctx.state !== "running") await ctx.resume();
+    syncMusic();
   } catch (err) {
     console.warn("[audio] init failed:", err);
   }
@@ -288,6 +296,7 @@ export function setMuted(m: boolean) {
   muted = m;
   write(MUTED_KEY, m ? "1" : "0");
   applyMaster();
+  syncMusic();
 }
 
 export function isMuted() {
@@ -389,4 +398,208 @@ export function activeVoiceCount(): number {
   let n = 0;
   for (const list of active.values()) n += list.length;
   return n;
+}
+
+// --- Music -------------------------------------------------------------------
+// - Files live in `apps/client/public/music/` (stereo .mp3, built by
+//   scripts/music/build.sh, credits in CREDITS.md): the menu's track and four
+//   match tracks. What should play is set by `setMusic()`, which the frame
+//   loop calls every frame (engine.ts); it only acts on a change.
+// - Gapless: an AudioBufferSourceNode looping between the points build.sh
+//   printed (an <audio loop> leaves a gap at the wrap). The intro before the
+//   loop start plays once.
+// - Memory: a decoded track is ~50 MB of float32 (2.5 min, stereo). So a
+//   track is fetched and decoded only when it is about to play, and dropped
+//   once it has faded out: at most two are held, the one playing and the one
+//   fading out. None while the music volume is 0 or everything is muted
+//   (unmuting starts the track again from its top).
+// - Silent until `initAudio()` ran (autoplay rules), like the effects. A
+//   track that fails to load is logged once and the music stays silent.
+
+export type MusicTrack = "menu" | "match_1" | "match_2" | "match_3" | "match_4";
+/** What should be heard: the menu's track, a match track, or nothing. */
+export type MusicMood = "menu" | "match" | "off";
+
+/** Loop points in seconds, as printed by scripts/music/build.sh. */
+const MUSIC: Record<MusicTrack, { loopStart: number; loopEnd: number }> = {
+  menu: { loopStart: 70.165283, loopEnd: 148.925782 },
+  match_1: { loopStart: 49.871043, loopEnd: 143.770317 },
+  match_2: { loopStart: 56.279751, loopEnd: 155.168912 },
+  match_3: { loopStart: 16.898707, loopEnd: 110.89068 },
+  match_4: { loopStart: 53.539796, loopEnd: 160.206054 },
+};
+const MATCH_TRACKS: readonly MusicTrack[] = ["match_1", "match_2", "match_3", "match_4"];
+
+/** From one track to the next, seconds (equal power). */
+const MUSIC_CROSSFADE = 1.5;
+/** To silence, seconds: at a match end, so the win or lose sting is heard clearly. */
+const MUSIC_FADE_OUT = 0.8;
+
+interface MusicVoice {
+  track: MusicTrack;
+  src: AudioBufferSourceNode;
+  /** Fades in on start; fades out on a gain node of its own, so the two never overlap on one param. */
+  fadeOut: GainNode;
+}
+
+const MUSIC_VOLUME_KEY = "bagarre.music.volume";
+let musicVolume = readNumber(MUSIC_VOLUME_KEY, 0.5);
+let musicMood: MusicMood = "off";
+/** The track the mood asks for (picked when the mood changes, even with no sound). */
+let wantedTrack: MusicTrack | null = null;
+let lastMatchTrack: MusicTrack | null = null;
+let playing: MusicVoice | null = null;
+let fading: MusicVoice | null = null;
+let loading: { track: MusicTrack; abort: AbortController } | null = null;
+
+/** `n` points of an equal-power fade, rising (sin) or falling (cos). */
+function fadeCurve(rise: boolean, n = 64) {
+  const c = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = ((i / (n - 1)) * Math.PI) / 2;
+    c[i] = rise ? Math.sin(a) : Math.cos(a);
+  }
+  return c;
+}
+
+/** Falls quicker than the equal-power one: -12 dB by half-way. */
+function silenceCurve(n = 64) {
+  const c = new Float32Array(n);
+  for (let i = 0; i < n; i++) c[i] = (1 - i / (n - 1)) ** 2;
+  return c;
+}
+
+/**
+ * Sets what the music plays. Idempotent: call it every frame. A new "match"
+ * picks a match track at random, never the previous game's.
+ */
+export function setMusic(mood: MusicMood) {
+  if (mood === musicMood) return;
+  musicMood = mood;
+  if (mood === "menu") wantedTrack = "menu";
+  else if (mood === "off") wantedTrack = null;
+  else {
+    const choices = MATCH_TRACKS.filter((t) => t !== lastMatchTrack);
+    wantedTrack = choices[Math.floor(Math.random() * choices.length)];
+    lastMatchTrack = wantedTrack;
+  }
+  syncMusic();
+}
+
+export function setMusicVolume(v: number) {
+  musicVolume = Math.min(1, Math.max(0, Number.isFinite(v) ? v : 0));
+  write(MUSIC_VOLUME_KEY, String(musicVolume));
+  if (musicBus && ctx) musicBus.gain.setTargetAtTime(musicVolume, ctx.currentTime, 0.01);
+  syncMusic();
+}
+
+export function getMusicVolume() {
+  return musicVolume;
+}
+
+/** Brings what plays in line with the mood, the volume and mute. Safe to call any time. */
+function syncMusic() {
+  if (!ctx || !musicBus || ctx.state !== "running") return;
+  const target = musicVolume > 0 && !muted ? wantedTrack : null;
+  if (loading && loading.track !== target) {
+    loading.abort.abort();
+    loading = null;
+  }
+  if (playing?.track === target || loading) return;
+  if (target === null) {
+    fadeOutPlaying(MUSIC_FADE_OUT, silenceCurve());
+    return;
+  }
+  const abort = new AbortController();
+  const job = { track: target, abort };
+  loading = job;
+  void loadTrack(target, abort.signal).then((buffer) => {
+    if (loading !== job) return; // superseded meanwhile: the buffer is dropped
+    loading = null;
+    if (buffer) startTrack(target, buffer);
+  });
+}
+
+async function loadTrack(track: MusicTrack, signal: AbortSignal): Promise<AudioBuffer | null> {
+  try {
+    const res = await fetch(`${import.meta.env.BASE_URL}music/${track}.mp3`, { signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.arrayBuffer();
+    if (signal.aborted || !ctx) return null;
+    return await ctx.decodeAudioData(data);
+  } catch (err) {
+    if (!signal.aborted) console.warn(`[audio] music ${track} failed:`, err);
+    return null;
+  }
+}
+
+function startTrack(track: MusicTrack, buffer: AudioBuffer) {
+  if (!ctx || !musicBus) return;
+  try {
+    const now = ctx.currentTime;
+    fadeOutPlaying(MUSIC_CROSSFADE, fadeCurve(false));
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.loop = true;
+    const { loopStart, loopEnd } = MUSIC[track];
+    // Out of range (a file rebuilt without updating MUSIC): loop the whole buffer.
+    if (loopEnd <= buffer.duration) {
+      src.loopStart = loopStart;
+      src.loopEnd = loopEnd;
+    }
+    const fadeIn = ctx.createGain();
+    fadeIn.gain.setValueCurveAtTime(fadeCurve(true), now, MUSIC_CROSSFADE);
+    const fadeOut = ctx.createGain();
+    src.connect(fadeIn).connect(fadeOut).connect(musicBus);
+    src.start(now);
+    playing = { track, src, fadeOut };
+  } catch (err) {
+    console.warn(`[audio] music ${track} failed:`, err);
+  }
+}
+
+/** Fades the playing track out and lets it go. One already fading is cut: never more than two held. */
+function fadeOutPlaying(seconds: number, curve: Float32Array) {
+  if (!ctx) return;
+  if (fading) stopVoice(fading);
+  const v = playing;
+  playing = null;
+  if (!v) return;
+  fading = v;
+  try {
+    const now = ctx.currentTime;
+    v.fadeOut.gain.setValueCurveAtTime(curve, now, seconds);
+    v.src.stop(now + seconds + 0.05);
+    v.src.onended = () => {
+      if (fading === v) fading = null;
+      v.fadeOut.disconnect();
+    };
+  } catch {
+    stopVoice(v);
+  }
+}
+
+function stopVoice(v: MusicVoice) {
+  if (fading === v) fading = null;
+  try {
+    v.src.stop();
+  } catch {
+    // Already stopped.
+  }
+  v.fadeOut.disconnect();
+}
+
+/**
+ * The music's state, for the tests: whether the context runs (unlocked, and
+ * the browser has audio), the mood, the track it asks for, the one heard
+ * (null until it is decoded), and how many decoded tracks are held.
+ */
+export function musicDebug() {
+  return {
+    running: ctx?.state === "running",
+    mood: musicMood,
+    wanted: wantedTrack,
+    playing: playing?.track ?? null,
+    held: (playing ? 1 : 0) + (fading ? 1 : 0),
+  };
 }

@@ -1,17 +1,18 @@
-// Settings: master volume and mute, on the audio.ts API, and whether the
-// other players' names show over their heads (display.ts). All remembered.
-// Read when the panel opens; M can't toggle mute meanwhile (the game's keys
-// are off while a panel is up), so nothing goes stale.
+// Settings: master volume, music volume and mute, on the audio.ts API, and
+// whether the other players' names show over their heads (display.ts). All
+// remembered. Read when the panel opens; M can't toggle mute meanwhile (the
+// game's keys are off while a panel is up), so nothing goes stale.
 
 import { Switch } from "@astryxdesign/core/Switch";
 import { Slider } from "@astryxdesign/core/Slider";
 import { VStack } from "@astryxdesign/core/Layout";
 import { useState } from "react";
-import { getMasterVolume, isMuted, setMasterVolume, setMuted } from "../audio.ts";
+import { getMasterVolume, getMusicVolume, isMuted, setMasterVolume, setMusicVolume, setMuted } from "../audio.ts";
 import { getShowNames, setShowNames } from "../display.ts";
 
 export function Settings() {
   const [volume, setVolume] = useState(() => Math.round(getMasterVolume() * 100));
+  const [music, setMusic] = useState(() => Math.round(getMusicVolume() * 100));
   const [muted, setMutedState] = useState(isMuted);
   const [names, setNames] = useState(getShowNames);
 
@@ -23,6 +24,10 @@ export function Settings() {
       setMuted(false);
       setMutedState(false);
     }
+  };
+  const onMusic = (v: number) => {
+    setMusic(v);
+    setMusicVolume(v / 100);
   };
   const onMute = (m: boolean) => {
     setMuted(m);
@@ -46,6 +51,18 @@ export function Settings() {
         formatValue={(v) => `${v}%`}
         isDisabled={false}
         data-testid="settings-volume"
+      />
+      <Slider
+        label="Music volume"
+        min={0}
+        max={100}
+        step={5}
+        value={music}
+        onChange={onMusic}
+        valueDisplay="text"
+        formatValue={(v) => `${v}%`}
+        isDisabled={false}
+        data-testid="settings-music"
       />
       <Switch
         label="Mute all sound"

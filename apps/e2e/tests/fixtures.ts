@@ -66,6 +66,18 @@ export interface PlayerState {
   }[];
 }
 
+export interface MusicState {
+  /** The AudioContext runs: unlocked by a gesture, and the browser has audio. */
+  running: boolean;
+  mood: "menu" | "match" | "off";
+  /** The track the mood asks for (set even with no audio). */
+  wanted: string | null;
+  /** The track heard (null until decoded, or with no audio). */
+  playing: string | null;
+  /** Decoded tracks held: the one playing and the one fading out, never more. */
+  held: number;
+}
+
 export class Player {
   readonly errors: string[] = [];
   constructor(
@@ -168,6 +180,12 @@ export class Player {
   sfxSince(n: number): Promise<string[]> {
     // oxlint-disable-next-line typescript/no-explicit-any
     return this.page.evaluate((from) => (window as any).__bagarre.sfxLog.slice(from).map((e: { name: string }) => e.name), n);
+  }
+
+  /** The music's state (`__bagarre.music`, see audio.ts' musicDebug). */
+  music(): Promise<MusicState> {
+    // oxlint-disable-next-line typescript/no-explicit-any
+    return this.page.evaluate(() => (window as any).__bagarre.music);
   }
 
   /** Drives the dev autopilot (`__bagarre.bot`): world-space move, aim angle, fire. */
