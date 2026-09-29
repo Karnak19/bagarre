@@ -74,7 +74,6 @@ export interface MusicState {
   wanted: string | null;
   /** The track heard (null until decoded, or with no audio). */
   playing: string | null;
-  loading: string | null;
   /** Decoded tracks held: the one playing and the one fading out, never more. */
   held: number;
 }

@@ -480,7 +480,7 @@ export function setMusic(mood: MusicMood) {
   else if (mood === "off") wantedTrack = null;
   else {
     const choices = MATCH_TRACKS.filter((t) => t !== lastMatchTrack);
-    wantedTrack = choices[Math.floor(Math.random() * choices.length)] ?? MATCH_TRACKS[0];
+    wantedTrack = choices[Math.floor(Math.random() * choices.length)];
     lastMatchTrack = wantedTrack;
   }
   syncMusic();
@@ -592,8 +592,7 @@ function stopVoice(v: MusicVoice) {
 /**
  * The music's state, for the tests: whether the context runs (unlocked, and
  * the browser has audio), the mood, the track it asks for, the one heard
- * (null until it is decoded), the one on its way, and how many decoded tracks
- * are held.
+ * (null until it is decoded), and how many decoded tracks are held.
  */
 export function musicDebug() {
   return {
@@ -601,7 +600,6 @@ export function musicDebug() {
     mood: musicMood,
     wanted: wantedTrack,
     playing: playing?.track ?? null,
-    loading: loading?.track ?? null,
     held: (playing ? 1 : 0) + (fading ? 1 : 0),
   };
 }
