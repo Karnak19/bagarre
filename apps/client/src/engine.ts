@@ -70,7 +70,7 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
   const ready = loadAssets((f) => loading.set(f)).then((a) => {
     setAssets(a);
     loading.set(null);
-    scene = new GameScene(canvas);
+    scene = new GameScene(canvas, undefined, { lite: config.lite });
     attract = new Attract(scene);
     walker = new Walk(scene, canvas, walkUi);
     if (app.getState().screen !== "game") {
@@ -185,8 +185,9 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
       const m = app.match;
       v = app.gameView();
       view.set(v);
+      const draw = now - lastDraw >= drawGap - 1;
       if (m && v) {
-        m.frame(now, dtMs);
+        m.frame(now, dtMs, draw);
         // Never while watching: a spectator's keys are spectate/controls.ts'.
         input.enabled = v.card === "none" && !ui.getState().panel && !v.spectating;
       } else {
@@ -194,7 +195,7 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
         if (walker?.running) walker.frame(now, dtMs);
         else attract?.frame(now);
       }
-      if (now - lastDraw >= drawGap - 1) {
+      if (draw) {
         lastDraw = now;
         scene.render(now);
       }

@@ -70,6 +70,10 @@ The first run may need the browser: `bunx playwright install chromium` in
   a player on a given spot at once (the grenade spec sets its throws up with it).
   `POST /warmup` sets one room's warmup length, the one running included
   (the warmup spec plays the real 8 s, then holds it open for its checks).
+  `POST /countdown` and `POST /respawn` do the same for the pre-match
+  countdown and the respawn delay. A 0.5 s death or a 2 s countdown can fall
+  between two frames of a starved CI page, so a spec that checks one holds it
+  open, checks, then lets it go (`setCountdown()`, `setRespawn()`).
 - `tests/fixtures.ts` holds the fixtures. `players.open()` is a new player
   (its own browser context); `players.duel()`, `players.teams(n)` and `players.host()` /
   `players.join()` open a private game by its link, so tests running in
@@ -78,8 +82,11 @@ The first run may need the browser: `bunx playwright install chromium` in
   `bot()`, `sfxCount()` / `sfxSince()` drive and watch the game.
 - Assertions go through `data-testid`s and `__bagarre`, never pixels. Wait
   with web-first assertions and `expect.poll` / `expectState()`, never a
-  fixed sleep. Pages open with `?map=` (pinned map) and `?fps=10` (a dev-only
-  cap on frames drawn: many pages drawing at 60 fps starve the machine).
+  fixed sleep. Pages open with `?map=` (pinned map), `?fps=` (a dev-only
+  cap on frames drawn, 10 with a GPU and 5 with SwiftShader: many pages
+  drawing at 60 fps starve the machine; the HUD and minimap update with the
+  drawn frames too) and `?lite` (dev-only: no antialiasing, no shadows, the
+  bulk of a frame's cost on SwiftShader).
 - WebGL: on a Mac the real GPU (Metal, one shared browser per test); on
   Linux (CI) SwiftShader, one browser per player. `E2E_GL=swiftshader` forces
   the software path locally.

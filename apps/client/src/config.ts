@@ -1,6 +1,6 @@
 // The dev switches in the query string, typed once for both the router's
 // validateSearch (routes/__root.tsx) and the boot config read before the
-// router exists (main.tsx): `?play`, `?map=`, `?lag=`, `?server=`, `?fps=`.
+// router exists (main.tsx): `?play`, `?map=`, `?lag=`, `?server=`, `?fps=`, `?lite`.
 
 import { SERVER_PORT, type GameMode } from "@bagarre/shared";
 
@@ -23,6 +23,11 @@ export interface DevSearch {
    * look at pixels, and many pages drawing at 60 fps starve a CI runner.
    */
   fps?: number;
+  /**
+   * Dev-only: draw without antialiasing or shadows. The e2e suite uses it:
+   * CI renders on the CPU (SwiftShader), where those two cost the most.
+   */
+  lite?: true;
 }
 
 const str = (v: unknown) => (typeof v === "string" && v !== "" ? v : typeof v === "number" ? String(v) : undefined);
@@ -40,6 +45,7 @@ export function validateDevSearch(raw: Record<string, unknown>): DevSearch {
   if (server) out.server = server;
   const fps = Number(raw.fps);
   if (Number.isFinite(fps) && fps > 0) out.fps = fps;
+  if ("lite" in raw && raw.lite !== false && raw.lite !== undefined) out.lite = true;
   return out;
 }
 
@@ -51,6 +57,8 @@ export interface BootConfig {
   playNow: GameMode | null;
   /** `?fps=` in dev: the most frames drawn per second (0: every animation frame). */
   maxFps: number;
+  /** `?lite` in dev: no antialiasing, no shadows. */
+  lite: boolean;
 }
 
 /**
@@ -79,5 +87,6 @@ export function bootConfig(search = location.search): BootConfig {
     mapParam: s.map ?? null,
     playNow: import.meta.env.DEV && s.play ? (s.play === true ? "duel" : s.play) : null,
     maxFps: import.meta.env.DEV ? (s.fps ?? 0) : 0,
+    lite: import.meta.env.DEV && !!s.lite,
   };
 }

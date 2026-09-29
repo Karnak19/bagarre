@@ -1,7 +1,7 @@
 // Name plates over the players' heads, read through the dev handle
 // (`__bagarre.plates`), never through pixels.
 
-import { expect, kill, test, type Player } from "./fixtures.ts";
+import { expect, kill, setRespawn, test, type Player } from "./fixtures.ts";
 
 interface Plate {
   id: string;
@@ -21,7 +21,7 @@ async function plateOf(p: Player, id: string): Promise<Plate | undefined> {
   return (await plates(p)).find((x) => x.id === id);
 }
 
-/** Waits, in the page, until the plate of `id` matches (checked often: a respawn is 0.5 s). */
+/** Waits, in the page, until the plate of `id` matches (checked often). */
 function waitPlate(p: Player, id: string, want: { visible?: boolean; hp?: number; dimmed?: boolean }, timeout = 15_000) {
   return p.page.waitForFunction(
     ({ id, want }) => {
@@ -50,9 +50,12 @@ test("a kill hides the plate until the respawn, which brings it back at full HP"
   const idb = (await b.state()).you;
   await waitPlate(a, idb, { visible: true, hp: 1 });
 
-  const hidden = waitPlate(a, idb, { visible: false });
+  // The death is held until A's plate has shown it: the e2e respawn (0.5 s)
+  // can fall between two frames of a starved CI page. Then B respawns.
+  await setRespawn(code, 60);
   await kill(code, ida, idb);
-  await hidden;
+  await waitPlate(a, idb, { visible: false });
+  await setRespawn(code, 0.5);
   await waitPlate(a, idb, { visible: true, hp: 1 });
   // The victim's own bar too.
   await waitPlate(b, idb, { visible: true, hp: 1 });
