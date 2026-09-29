@@ -542,6 +542,34 @@ export class Vfx {
     this.add.spawn({ x, y: 1.1, z, life: 0.14, cell: Cell.Glow, size: 1.4, sizeEnd: 1.6, color: 0x3fa8ff, alpha: 0.25 });
   }
 
+  /** A heal goes off: a soft green bloom across the radius and green motes drifting up out of it. */
+  healBurst(x: number, z: number, radius: number) {
+    this.add.spawn({ x, y: 0.3, z, life: 0.35, cell: Cell.Glow, size: radius * 1.2, sizeEnd: radius * 2.1, color: 0x5cff8a, alpha: 0.9 });
+    for (let i = 0; i < 20; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.random() * radius * 0.8;
+      this.add.spawn({
+        x: x + Math.cos(a) * r, y: 0.2, z: z + Math.sin(a) * r,
+        vx: Math.cos(a) * 0.6, vy: 1.6 + Math.random() * 1.6, vz: Math.sin(a) * 0.6,
+        life: 0.6 + Math.random() * 0.4, cell: Cell.Star, size: 0.3, sizeEnd: 0.08,
+        rot: Math.random() * 3, color: i % 3 ? 0x7dff9e : 0xd8ffe2, alpha: 1.3, drag: 1.5,
+      });
+    }
+  }
+
+  /** A player just got health back: a green glow on the body and a few motes rising off it. */
+  healGlow(x: number, z: number) {
+    this.add.spawn({ x, y: 1.1, z, life: 0.45, cell: Cell.Glow, size: 1.6, sizeEnd: 2.2, color: 0x3fe070, alpha: 0.7 });
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + Math.random() * 0.5;
+      this.add.spawn({
+        x: x + Math.cos(a) * 0.4, y: 0.6 + Math.random() * 0.6, z: z + Math.sin(a) * 0.4,
+        vy: 1.4 + Math.random() * 0.8, life: 0.6, cell: Cell.Star, size: 0.28, sizeEnd: 0.1,
+        rot: Math.random() * 3, color: 0x9fffb8, alpha: 1.3, drag: 1,
+      });
+    }
+  }
+
   /** A flash goes off: a blinding white bloom (only the world: the white screen itself is the HUD's). */
   flashBurst(x: number, z: number) {
     this.add.spawn({ x, y: 0.8, z, life: 0.22, cell: Cell.Glow, size: 3, sizeEnd: 9, color: 0xffffff, alpha: 1.6 });

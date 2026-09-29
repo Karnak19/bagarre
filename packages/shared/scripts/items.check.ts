@@ -29,7 +29,7 @@ function check(cond: boolean, label: string) {
  * `Player.grenade`, `Grenade.kind` and the kill feed.
  */
 const WEAPON_IDS = ["rifle", "shotgun", "sniper", "smg", "revolver", "burst-pistol", "dmr"];
-const GRENADE_IDS = ["frag", "smoke", "stun", "flash"];
+const GRENADE_IDS = ["frag", "smoke", "stun", "flash", "heal"];
 
 const weaponKeys = WEAPONS.map((w) => w.key);
 const grenadeKeys = GRENADES.map((g) => g.key);
@@ -50,8 +50,8 @@ for (const [what, keys] of [
   check(keys.every((k) => /^[a-z0-9-]+$/.test(k)), `${what} keys are lowercase slugs`);
 }
 
-const EFFECTS: readonly string[] = ["damage", "cloud", "stun", "flash"];
-const AFFECTS: readonly string[] = ["enemies"];
+const EFFECTS: readonly string[] = ["damage", "cloud", "stun", "flash", "heal"];
+const AFFECTS: readonly string[] = ["enemies", "allies"];
 for (const g of GRENADES) check(EFFECTS.includes(g.effect) && AFFECTS.includes(g.affects), `${g.name}: a known effect (${g.effect}) on a known target (${g.affects})`);
 
 // The carriers: uint8 schema fields, the kill feed's weapon id, the number keys.

@@ -2,8 +2,9 @@
  * Sound effects and music.
  *
  * - Files live in `apps/client/public/sfx/` (mono .mp3, built by scripts/sfx/build.sh,
- *   sources in CREDITS.md). The dash and grenade-throw whooshes have no file:
- *   they are filtered-noise sweeps rendered once at load time.
+ *   sources in CREDITS.md). The dash and grenade-throw whooshes and the heal
+ *   chime have no file: they are rendered once at load time (filtered-noise
+ *   sweeps, and a rising run of soft bell tones).
  * - Everything is fetched and decoded as soon as this module is imported, with
  *   an OfflineAudioContext, which browsers allow before any user gesture. The
  *   real AudioContext is only created by `initAudio()`, which must run inside a
@@ -33,6 +34,7 @@ export type SfxName =
   | "smoke_pop"
   | "stun_zap"
   | "flashbang"
+  | "heal_chime"
   | "shield_up"
   | "shield_hit"
   | "shield_break"
@@ -92,6 +94,8 @@ const DEFS: Record<SfxName, SfxDef> = {
   smoke_pop: { files: variants("grenade_bounce", 2), gain: 0.9, voices: 2, rate: 0.55 },
   stun_zap: { files: ["shield_break"], gain: 0.9, voices: 2, rate: 1.5 },
   flashbang: { files: variants("explosion", 2), gain: 0.8, voices: 2, rate: 1.7 },
+  // The heal grenade: a soft rising chime, synthesized (renderChime).
+  heal_chime: { files: [], gain: 0.5, voices: 2 },
   shield_up: { files: ["shield_up"], gain: 0.8, voices: 2 },
   shield_hit: { files: variants("shield_hit", 2), gain: 0.8, voices: 3 },
   shield_break: { files: ["shield_break"], gain: 0.9, voices: 2 },
@@ -212,6 +216,44 @@ async function renderWhoosh(dur: number, f0: number, fPeak: number, f1: number, 
   return out;
 }
 
+/**
+ * A chime: soft bell tones (a sine and a quiet octave above it) rising
+ * through `notes` (Hz), one every `step` seconds, each ringing out over
+ * `ring` seconds. Normalised to a 0.7 peak.
+ */
+async function renderChime(notes: readonly number[], step: number, ring: number): Promise<AudioBuffer> {
+  const dur = step * (notes.length - 1) + ring;
+  const oc = offline(dur);
+  for (const [i, f] of notes.entries()) {
+    const t0 = i * step;
+    const env = oc.createGain();
+    env.gain.setValueAtTime(0.0001, 0);
+    env.gain.setValueAtTime(0.0001, t0);
+    env.gain.exponentialRampToValueAtTime(1, t0 + 0.012);
+    env.gain.exponentialRampToValueAtTime(0.0001, t0 + ring);
+    env.connect(oc.destination);
+    for (const [mul, level] of [
+      [1, 1],
+      [2, 0.25],
+    ] as const) {
+      const osc = oc.createOscillator();
+      osc.type = "sine";
+      osc.frequency.value = f * mul;
+      const g = oc.createGain();
+      g.gain.value = level;
+      osc.connect(g).connect(env);
+      osc.start(t0);
+      osc.stop(t0 + ring);
+    }
+  }
+  const out = await oc.startRendering();
+  const ch = out.getChannelData(0);
+  let peak = 0;
+  for (let i = 0; i < ch.length; i++) peak = Math.max(peak, Math.abs(ch[i]));
+  if (peak > 0) for (let i = 0; i < ch.length; i++) ch[i] *= 0.7 / peak;
+  return out;
+}
+
 async function loadAll() {
   const decoder = offline(1);
   await Promise.all(
@@ -224,6 +266,8 @@ async function loadAll() {
   );
   buffers.set("dash", [await renderWhoosh(0.3, 350, 2600, 600, 0.9), await renderWhoosh(0.28, 420, 3000, 700, 0.8)]);
   buffers.set("grenade_throw", [await renderWhoosh(0.2, 700, 3400, 1400, 1.2)]);
+  // C5, E5, G5, C6.
+  buffers.set("heal_chime", [await renderChime([523.25, 659.25, 783.99, 1046.5], 0.07, 0.6)]);
 }
 
 /** Resolves once every buffer is decoded (or failed; failures are logged and those sounds stay silent). */

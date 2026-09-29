@@ -15,6 +15,8 @@ import {
   GAMES_ROUTE,
   GRENADE_FLASH,
   GRENADE_STUN,
+  GRENADES,
+  HEAL,
   MAX_HP,
   MSG_INPUT,
   MSG_TEAM,
@@ -29,9 +31,11 @@ import {
   TEAM_ROOM_NAME,
   TICK_MS,
   TICK_RATE,
+  blastEdge,
   bodiesSee,
   clearShot,
   findMap,
+  lineOfSight,
   rank,
   teamSpawns,
   type InputMessage,
@@ -290,6 +294,110 @@ async function friendlyFire(url: string): Promise<Lines> {
     room.damage(a.sessionId, a.sessionId, P(a), MAX_HP, 0);
     ok(P(b).alive && P(b).hp === MAX_HP && P(a).alive && P(a).hp === MAX_HP, "damage between teammates, or to yourself, does nothing");
     ok(state(a).redScore === 0 && state(a).blueScore === 0, `no kill came of it (${state(a).redScore}-${state(a).blueScore})`);
+  } finally {
+    await leaveAll(rooms);
+  }
+  return lines;
+}
+
+/**
+ * The heal grenade in a 2v2, thrown for real by a client's inputs. Red A
+ * throws it with teammate B and enemy C hurt and in the blast, in the open:
+ * A and B get HEAL.amount back, C nothing, and no score, kill or damage
+ * stat moves. Then two misses for a teammate: out of the radius, and behind
+ * a flower bed. (The 4-browser e2e version of this was too slow on CI's CPU
+ * rendering; the duel heal stays in grenades.spec.ts.)
+ */
+async function healGrenade(url: string): Promise<Lines> {
+  const tag = "[tdm heal]";
+  const lines: Lines = [];
+  const ok = (c: boolean, l: string) => lines.push([c, `${tag} ${l}`]);
+  const HEAL_ID = GRENADES.findIndex((g) => g.key === "heal");
+  const rooms = await joinN(url, "tdm_test", 4);
+  try {
+    const room = local(rooms[0].roomId);
+    await waitFor(() => room.state.phase === "playing", 4000);
+    const [[a, b], [c, d]] = byTeam(room, rooms);
+    const P = (r: Room) => room.state.players.get(r.sessionId)!;
+    const place = (r: Room, x: number, z: number) => {
+      const p = P(r);
+      p.x = x;
+      p.z = z;
+    };
+    const HURT = 30;
+    const hurtAll = (rs: Room[]) => {
+      for (const r of rs) P(r).hp = HURT;
+    };
+    let seq = 0;
+    let presses = 0;
+    const input = (patch: Partial<InputMessage>): InputMessage => ({
+      seq: ++seq, mx: 0, mz: 0, aim: 0, fire: false, gx: P(a).x, gz: P(a).z, dash: 0, grenade: presses, shield: 0, reload: 0, ...patch,
+    });
+    // The heal is put in A's hand and the cooldown cleared by hand (test setup).
+    const throwHeal = (gx: number, gz: number) => {
+      P(a).grenade = HEAL_ID;
+      P(a).grenadeCd = 0;
+      a.send(MSG_INPUT, input({ grenade: ++presses, gx, gz }));
+    };
+    a.send(MSG_INPUT, input({})); // baseline
+    await sleep(TICK_MS * 3);
+
+    // In the open, south of the clock tower: A, B and C all within the radius, D far off.
+    const blast = { x: -6.5, z: 2.8 };
+    place(a, -7, 2.8);
+    place(b, -5, 2.8);
+    place(c, -6.5, 4.3);
+    place(d, 9, -4);
+    ok(
+      [a, b, c].every((r) => lineOfSight(CROSSROADS, blast, P(r)) && blastEdge(blast.x, blast.z, P(r).x, P(r).z) <= HEAL.radius),
+      "A, B and C are in the radius with nothing in the way (test setup)",
+    );
+    hurtAll([a, b, c]);
+    const stats = () => JSON.stringify([...room.state.players.values()].map((p) => [p.kills, p.deaths, p.damage, p.hits]));
+    const statsBefore = stats();
+    const feedBefore = room.state.feed.length;
+    throwHeal(blast.x, blast.z);
+    const healed = await waitFor(() => P(a).hp > HURT && P(b).hp > HURT, 3000);
+    await sleep(TICK_MS * 3);
+    ok(
+      healed && P(a).hp === HURT + HEAL.amount && P(b).hp === HURT + HEAL.amount,
+      `the heal gives the thrower and a teammate ${HEAL.amount} HP (A ${P(a).hp}, B ${P(b).hp})`,
+    );
+    ok(P(c).hp === HURT && P(d).hp === MAX_HP, `never an enemy, even in the blast (C ${P(c).hp}, D ${P(d).hp})`);
+    ok(
+      stats() === statsBefore && room.state.feed.length === feedBefore && room.state.redScore === 0 && room.state.blueScore === 0,
+      `no kill, death, damage or hit stat, feed line or score comes of it (${stats()}, ${room.state.redScore}-${room.state.blueScore})`,
+    );
+
+    // Nearly full: capped at MAX_HP.
+    P(a).hp = MAX_HP - 10;
+    throwHeal(blast.x, blast.z);
+    await waitFor(() => P(a).hp > MAX_HP - 10, 3000);
+    await sleep(TICK_MS * 3);
+    ok(P(a).hp === MAX_HP, `the heal stops at full health (A ${P(a).hp})`);
+
+    // B out of the radius, in the open.
+    place(b, -2, 2.8);
+    ok(lineOfSight(CROSSROADS, blast, P(b)) && blastEdge(blast.x, blast.z, P(b).x, P(b).z) > HEAL.radius, "B is out of the radius, in the open (test setup)");
+    hurtAll([a, b]);
+    throwHeal(blast.x, blast.z);
+    await waitFor(() => P(a).hp > HURT, 3000);
+    await sleep(TICK_MS * 3);
+    ok(P(a).hp === HURT + HEAL.amount && P(b).hp === HURT, `a teammate out of the radius isn't healed (A ${P(a).hp}, B ${P(b).hp})`);
+
+    // B in the radius but behind the west flower bed.
+    const cover = { x: -7.5, z: -2 };
+    place(a, -8.5, -2);
+    place(b, -4.5, -2);
+    ok(
+      !lineOfSight(CROSSROADS, cover, P(b)) && blastEdge(cover.x, cover.z, P(b).x, P(b).z) <= HEAL.radius,
+      "B is in the radius but behind cover (test setup)",
+    );
+    hurtAll([a, b]);
+    throwHeal(cover.x, cover.z);
+    await waitFor(() => P(a).hp > HURT, 3000);
+    await sleep(TICK_MS * 3);
+    ok(P(a).hp === HURT + HEAL.amount && P(b).hp === HURT, `a teammate behind cover isn't healed (A ${P(a).hp}, B ${P(b).hp})`);
   } finally {
     await leaveAll(rooms);
   }
@@ -653,6 +761,7 @@ export async function teamChecks(url: string, h: AccountsHarness): Promise<Lines
   const results = await Promise.allSettled([
     balanceAndStart(url),
     friendlyFire(url),
+    healGrenade(url),
     creditRespawnReconnect(url),
     dropInAndCap(url),
     rebalanceOnLeave(url),

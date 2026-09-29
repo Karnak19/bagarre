@@ -12,6 +12,9 @@
 //   POST /place { roomId, id, x, z }       puts a player on (x, z) (a teleport)
 //   POST /warmup { roomId, seconds }       that room's warmups last `seconds`, the one
 //                                          running included (from now)
+//   POST /hp { roomId, id, hp }            sets a living player's HP (1..MAX_HP), with no
+//                                          kill, feed line or damage stat (the heal spec
+//                                          hurts players with it)
 //   POST /countdown { roomId, seconds }    the same for that room's pre-match countdowns
 //   POST /respawn { roomId, seconds }      the same for that room's respawn delays (every
 //                                          dead player respawns `seconds` from now)
@@ -21,7 +24,7 @@
 import { createServer as createHttpServer } from "node:http";
 import { matchMaker } from "@colyseus/core";
 import { createServer } from "@bagarre/server/app";
-import { TICK_RATE } from "@bagarre/shared";
+import { MAX_HP, TICK_RATE } from "@bagarre/shared";
 
 /**
  * Every match starts with a 1 s warmup instead of WARMUP_SECONDS (8 s): most
@@ -82,6 +85,22 @@ function place(body: string, reply: (status: number, text: string) => void) {
   p.x = x;
   p.z = z;
   p.dashTicks = 0;
+  reply(200, "ok");
+}
+
+/**
+ * POST /hp { roomId, id, hp }: sets a living player's HP at once (1..MAX_HP),
+ * outside the damage path: no kill, no feed line, no damage stat. The heal
+ * spec uses it to hurt players before a heal.
+ */
+function setHp(body: string, reply: (status: number, text: string) => void) {
+  const { roomId, id, hp } = JSON.parse(body || "{}") as { roomId?: string; id?: string; hp?: number };
+  const room = roomId ? (matchMaker.getLocalRoomById(roomId) as unknown as RoomInternals | undefined) : undefined;
+  if (!room) return reply(404, `no room ${roomId}`);
+  const p = id ? (room.state.players.get(id) as { hp: number; alive: boolean } | undefined) : undefined;
+  if (!p || !p.alive) return reply(404, `no living player ${id}`);
+  if (typeof hp !== "number" || !Number.isInteger(hp) || hp < 1 || hp > MAX_HP) return reply(400, `bad hp ${hp}`);
+  p.hp = hp;
   reply(200, "ok");
 }
 
@@ -188,6 +207,7 @@ createHttpServer((req, res) => {
     if (req.method === "POST" && req.url === "/place") return place(body, reply);
     if (req.method === "POST" && req.url === "/warmup") return setWarmup(body, reply);
     if (req.method === "POST" && req.url === "/smoke") return setSmoke(body, reply);
+    if (req.method === "POST" && req.url === "/hp") return setHp(body, reply);
     if (req.method === "POST" && req.url === "/countdown") return setCountdown(body, reply);
     if (req.method === "POST" && req.url === "/respawn") return setRespawn(body, reply);
     if (req.method !== "POST" || req.url !== "/kill") return reply(404, "not found");

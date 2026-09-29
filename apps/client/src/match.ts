@@ -327,6 +327,9 @@ export class Match {
     return m;
   }
 
+  /** Dev only: every heal cue shown, oldest first (the dev handle's `heals`). */
+  readonly healLog: { t: number; id: string; amount: number }[] = [];
+
   /** Per player drawn, the skin its mesh wears and whether that model has loaded (the dev handle's `skins()`). */
   skins(): Record<string, { skin: string; loaded: boolean }> {
     const out: Record<string, { skin: string; loaded: boolean }> = {};
@@ -441,6 +444,9 @@ export class Match {
     const now = performance.now();
     this.spectate(s, now, !me, resynced);
 
+    // A new phase (a match starting, a duel back to waiting) resets everyone's
+    // HP without a death: that is no heal.
+    const samePhase = s.phase === this.phase;
     if (s.phase !== this.phase) {
       // The map's name as the match starts: with its warmup, or into play when there is none.
       if (s.phase === "warmup" || (s.phase === "playing" && this.phase !== "warmup")) this.mapCardLeft = MAP_CARD_MS;
@@ -482,6 +488,13 @@ export class Match {
       if (p.hp < prev.hp) {
         this.meshFor(id, paintOf(p), p.skin).flash(now + (mine ? 0 : INTERP_DELAY_MS));
         this.sfx(mine ? "hurt" : "hit", at);
+      }
+      // Heal cue (a green glow on them) when HP goes up while they stay alive,
+      // in the same phase. Never on a respawn (dead before) or a match
+      // reset (a new phase), and never the hit flash or sound above.
+      if (p.hp > prev.hp && prev.alive && p.alive && samePhase) {
+        this.meshFor(id, paintOf(p), p.skin).healed(now + (mine ? 0 : INTERP_DELAY_MS));
+        if (import.meta.env.DEV) this.healLog.push({ t: now, id, amount: p.hp - prev.hp });
       }
       if (p.shieldHp < prev.shieldHp && p.shieldHp > 0) this.sfx("shield_hit", at);
       // Broken by damage, not simply run out (expiry zeroes it on its last tick).

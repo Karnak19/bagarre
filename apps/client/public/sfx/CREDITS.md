@@ -4,8 +4,9 @@ Every sound here is CC0 (public domain dedication, no attribution required).
 Credit is given anyway. The files were cut, made mono, levelled and encoded
 to MP3 by `apps/client/scripts/sfx/build.sh`, which lists the exact cut points.
 
-The `dash` and `grenade_throw` whooshes have no file: `apps/client/src/audio.ts`
-synthesizes them from filtered noise when it loads (original work, CC0).
+The `dash` and `grenade_throw` whooshes and the `heal_chime` have no file:
+`apps/client/src/audio.ts` synthesizes them when it loads, from filtered noise
+and from sine tones (original work, CC0).
 
 ## The Free Firearm Sound Library
 

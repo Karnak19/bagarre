@@ -70,6 +70,8 @@ The first run may need the browser: `bunx playwright install chromium` in
   a player on a given spot at once (the grenade spec sets its throws up with it).
   `POST /warmup` sets one room's warmup length, the one running included
   (the warmup spec plays the real 8 s, then holds it open for its checks).
+  `POST /hp` sets a living player's HP outside the damage path (the heal
+  tests hurt players with it).
   `POST /countdown` and `POST /respawn` do the same for the pre-match
   countdown and the respawn delay. A 0.5 s death or a 2 s countdown can fall
   between two frames of a starved CI page, so a spec that checks one holds it
@@ -305,7 +307,7 @@ TypeScript: React never runs per frame and there is no React Three Fiber.
   leaderboard's `open-leaderboard`, `panel-leaderboard`, `leaderboard` (with
   `data-state`) and `leaderboard-row` (with `data-username`, `data-you`),
   `settings-volume`, `settings-mute`, `settings-names`, the grenade picker's
-  `grenade-picker` and `grenade-pick-{frag,smoke,stun,flash}`, and the HUD's `hud-*`
+  `grenade-picker` and `grenade-pick-{frag,smoke,stun,flash,heal}`, and the HUD's `hud-*`
   (`hud-grenade` with `data-type`, `hud-stunned`, `hud-flash` with
   `data-active`, `hud-picker-grenade`). The free for
   all adds `play-ffa`, `private-ffa`, `ffa-countdown`, `ffa-players`,
@@ -608,7 +610,7 @@ match menu ("Stop watching"), M mutes. The overlay is
 | **Q**              | Grenade: lobbed at the cursor, max 10 m, flies over cover     |
 | **E**              | Shield: a bubble that soaks damage before your HP             |
 | **1**-**7**        | Pick a weapon, while dead or between matches (see below)      |
-| **G**              | Next grenade type (frag, smoke, stun, flash), same rules      |
+| **G**              | Next grenade type (frag, smoke, stun, flash, heal), same rules |
 | **Tab** (hold)     | Scoreboard                                                    |
 | **M**              | Mute / unmute sound (remembered between visits)               |
 | **Esc**            | Match menu: resume, settings, leave (the match keeps running) |
@@ -618,7 +620,7 @@ key labelled **A** throws a grenade. In a duel, first to 5 kills wins; the
 match restarts a few seconds later (free for all: see above).
 
 A grenade lands, then goes off 0.6 s later: the circle on the ground shows
-where (red for a frag, grey smoke, blue stun, white flash), so get out of it.
+where (red for a frag, grey smoke, blue stun, white flash, green heal), so get out of it.
 A frag hurts its thrower too, at half rate. The dash has no invulnerability,
 you dodge by getting out of the bullet's path.
 
@@ -637,19 +639,22 @@ happens when they go off differs.
 | Smoke | A 4 m cloud for 8 s. Whoever is in it, or behind it, is hidden from their enemies: model, name plate and health bar, minimap dot, muzzle flash, and their bullets until they come out of it. Shots and steps are still heard; the kill feed still names them. You always see yourself and your teammates; a spectator sees them faded | 12 s |
 | Stun  | Everyone within 3.5 m walks at half speed and can't dash for 2 s (a spark effect on them, a badge on their HUD) | 10 s |
 | Flash | A white screen, up to 2 s, for whoever aims toward it (within 90°) with no cover in the way: shorter the farther away and the farther off their aim. Aiming away, or behind cover, is safe. A plain fade, never a strobe | 10 s |
+| Heal  | +40 HP at once (never over 100, the shield untouched) for the thrower and their teammates within 3.5 m, with no cover in the way. Never an enemy, never a dead player; in a duel or a free for all it only heals you. A green glow on whoever it heals | 14 s |
 
 Who a stun or a flash gets follows the friendly-fire rule (`canDamage`): in
 a team deathmatch never a teammate nor the thrower; in a duel or a free for
-all, your own gets you too.
+all, your own gets you too. The heal is the other way round (`self ||
+sameTeam`, its "allies"): you and your teammates only.
 
 How it works:
 
 - The table is `GRENADES` in `packages/shared/src/constants.ts` (with
-  `SMOKE`, `STUN` and `FLASH`; each type names its `effect`, which picks the
+  `SMOKE`, `STUN`, `FLASH` and `HEAL`; each type names its `effect`, which picks the
   server's handler), the looks are `GRENADE_VIEW` in
   `apps/client/src/items.ts` (see [Adding a gun or a grenade type](#adding-a-gun-or-a-grenade-type)), the rules in `grenades.ts` next to it:
   `flashTicks` (angle, distance, and `lineOfSight`, the new
-  segment-against-cover test in `physics.ts`), `smokeHides` (in a cloud, or
+  segment-against-cover test in `physics.ts`), `healAmount` (radius, cover,
+  capped at `MAX_HP`, nobody dead), `smokeHides` (in a cloud, or
   the line to them crosses one: `segmentHitsCircle`) and `smokeVeil` (who
   sees whom). `bun run check` in `packages/shared` runs their self-checks
   (`scripts/grenades.check.ts`).
@@ -752,7 +757,8 @@ looks, in the client. Nothing is matched by position.
   `audio.ts`. The number keys, the HUD and How to play follow `WEAPONS`
   (up to 9 guns, keys 1-9).
 - **Grenade:** append a line to `GRENADES` with a new `key`, its `effect`
-  (`damage`, `cloud`, `stun`, `flash`) and who it `affects`. Then give it an
+  (`damage`, `cloud`, `stun`, `flash`, `heal`) and who it `affects`
+  (`enemies` or `allies`). Then give it an
   entry in `GRENADE_VIEW` (`items.ts`: icon, telegraph colour, blast sound,
   blast drawing, How to play line). A new effect also needs its tuning
   block, a `GrenadeEffect` member and a handler in `blastEffects`
@@ -760,7 +766,8 @@ looks, in the client. Nothing is matched by position.
 - **Ids are append-only.** An item's index is its id on the wire (picks,
   `Player.weapon` / `Player.grenade`, `Grenade.kind`, the kill feed): never
   reorder, rename or remove one. Append the new key to `WEAPON_IDS` or
-  `GRENADE_IDS` in `packages/shared/scripts/items.check.ts`; `bun run check`
+  `GRENADE_IDS` in `packages/shared/scripts/items.check.ts` (and a new
+  effect or `affects` value to its `EFFECTS` / `AFFECTS` lists); `bun run check`
   fails if the order changes. A missing view entry or effect handler is a
   compile error (the tables are `Record`s keyed by item key or effect).
 

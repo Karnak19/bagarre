@@ -273,6 +273,10 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
         veils(): Record<string, string> {
           return app.match?.veils() ?? {};
         },
+        /** Every heal cue (green glow) this match has shown, oldest first: who, how much HP, when. */
+        get heals(): { t: number; id: string; amount: number }[] {
+          return app.match?.healLog ?? [];
+        },
         /** The minimap's enemy dots right now, by shooter (session id). */
         get minimapPings(): string[] {
           return minimap.pingIds();

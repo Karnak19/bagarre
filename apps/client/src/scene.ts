@@ -146,6 +146,8 @@ export class PlayerMesh {
   /** When stun sparks last crackled on this player, and when `stunned` was last called (performance.now()). */
   private lastSpark = 0;
   private stunSeen = -1e9;
+  /** When to draw the next heal glow (healed()), or -1. */
+  private healAt = -1;
   private stunRing: THREE.Mesh;
   private stunRingMat: THREE.MeshBasicMaterial;
 
@@ -317,6 +319,11 @@ export class PlayerMesh {
     this.scene?.stunSparks(this.group.position.x, this.group.position.z);
   }
 
+  /** HP went up (a heal): a green glow on the body at `at` (a performance.now() time), drawn in update(). */
+  healed(at: number) {
+    this.healAt = at;
+  }
+
   /** HP went down: flash and flinch at `at` (a performance.now() time). */
   flash(at: number) {
     this.character?.hit(at);
@@ -358,6 +365,10 @@ export class PlayerMesh {
       this.stunRing.scale.setScalar(1 + 0.12 * pulse);
     }
     if (this.shield.visible) this.shieldMat.uniforms.time.value = now / 1000;
+    if (this.healAt >= 0 && now >= this.healAt) {
+      this.healAt = -1;
+      if (this.alive && this.veil !== "hidden") this.scene?.healGlow(this.group.position.x, this.group.position.z);
+    }
   }
 }
 
@@ -783,6 +794,10 @@ export class GameScene {
 
   stunSparks(x: number, z: number) {
     this.vfx.stunSparks(x, z);
+  }
+
+  healGlow(x: number, z: number) {
+    this.vfx.healGlow(x, z);
   }
 
   /** Dash streak: dust kicked up behind the runner. */

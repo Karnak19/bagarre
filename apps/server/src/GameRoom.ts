@@ -54,6 +54,7 @@ import {
   STUN_TICKS,
   blastEdge,
   flashTicks,
+  healAmount,
   INPUT_BURST,
   KILL_FEED_SIZE,
   KILL_GRENADE,
@@ -1216,12 +1217,14 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     cloud: (b) => this.smoke(b),
     stun: (b, def) => this.stun(b, def),
     flash: (b, def) => this.flash(b, def),
+    heal: (b, def) => this.heal(b, def),
   };
 
   /**
    * The players alive that a blast may affect, by its type's `affects`
    * (grenadeAffects: for "enemies", canDamage, so teammates are spared with
-   * teams, and in a duel or FFA it gets its thrower too). In state order.
+   * teams, and in a duel or FFA it gets its thrower too; for "allies", the
+   * thrower and their teammates). In state order.
    */
   private blastTargets(b: Blast, def: GrenadeDef): { id: string; p: Player }[] {
     const out: { id: string; p: Player }[] = [];
@@ -1266,6 +1269,19 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       if (n <= 0 || tick + n <= p.flashEnd) continue;
       p.flashEnd = tick + n;
       p.flashTicks = n;
+    }
+  }
+
+  /**
+   * A heal went off: each player it may affect (blastTargets: the thrower
+   * and their teammates, alive) gets `healAmount` back at once, capped at
+   * MAX_HP, if the blast reaches them with no cover in the way. Only HP: no
+   * shield, no kill feed, no damage stat. Clients see it as HP going up.
+   */
+  private heal(b: Blast, def: GrenadeDef) {
+    for (const { p } of this.blastTargets(b, def)) {
+      const n = healAmount(this.map, p, p.hp, { x: b.x, z: b.z });
+      if (n > 0) p.hp += n;
     }
   }
 
