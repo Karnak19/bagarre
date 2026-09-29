@@ -3,7 +3,7 @@ import type { GameMode } from "./modes.ts";
 // Message and state shapes exchanged between client and server.
 
 export const MSG_INPUT = "input";
-/** Weapon choice. Only accepted while dead or between matches. */
+/** Loadout choice. Only accepted while dead, between matches or during warmup (where it applies at once). */
 export const MSG_PICK = "pick";
 /**
  * Latency probe: the server sends `{ n }` every couple of seconds, the client
@@ -79,7 +79,13 @@ export interface TeamMessage {
   team: number;
 }
 
-export type Phase = "waiting" | "playing" | "ended";
+/**
+ * waiting (not enough players, or the countdown) -> warmup (spawned, picks
+ * apply at once, no shooting; skipped when the mode's warmup is 0) ->
+ * playing (the match clock runs) -> ended (the result) -> warmup again for
+ * the rematch, or back to waiting.
+ */
+export type Phase = "waiting" | "warmup" | "playing" | "ended";
 
 /**
  * Everything the shared step function needs to advance a player by one input.
@@ -327,7 +333,10 @@ export interface RoomStateView {
   tick: number;
   /** The map being played (a `MapDef.id`, see `mapById`). Only changes between matches. */
   mapId: string;
-  /** Server tick the current match started on, and the one it ended on (0 while it runs). */
+  /**
+   * Server tick the current match started on (the end of its warmup: 0
+   * during warmup), and the one it ended on (0 while it runs).
+   */
   startTick: number;
   endTick: number;
   /** Kills that win at once, and the time limit in seconds (0: none). From the mode's rules. */
@@ -335,6 +344,12 @@ export interface RoomStateView {
   timeLimit: number;
   /** Server ticks left of the pre-match countdown while waiting (0: not counting down). */
   countdown: number;
+  /**
+   * Warmup: the server tick it ends on (the match starts then). A tick, not
+   * a duration, so every client shows the same timer, one that reconnects
+   * mid-warmup included. 0 outside warmup.
+   */
+  warmupEnd: number;
   /** The time ran out on a tie for the most kills: the next kill that breaks it wins. */
   suddenDeath: boolean;
   players: MapLike<PlayerView>;

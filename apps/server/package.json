@@ -11,7 +11,7 @@
     "start": "bun --env-file=../../.env.local src/index.ts",
     "build:bin": "bun build src/index.ts --compile --minify --bytecode --format=esm --external @electric-sql/pglite --external drizzle-orm/pglite --external 'drizzle-orm/pglite/*' --outfile dist/bagarre-server",
     "typecheck": "tsc --noEmit -p .",
-    "lint": "oxlint src smoke.ts smoke-accounts.ts smoke-ffa.ts smoke-spectate.ts smoke-teams.ts",
+    "lint": "oxlint src smoke.ts smoke-accounts.ts smoke-ffa.ts smoke-spectate.ts smoke-teams.ts smoke-warmup.ts",
     "smoke": "bun --env-file=../../.env.local smoke.ts"
   },
   "dependencies": {

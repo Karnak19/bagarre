@@ -37,6 +37,14 @@ export interface PlayerState {
   mapId: string | null;
   /** The latest snapshot's server tick (0 before any). */
   tick: number;
+  /** Warmup: the server tick it ends on (0 outside warmup), and the tick the match clock started on. */
+  warmupEnd: number;
+  startTick: number;
+  /** Bullets in flight: the server's (latest snapshot), and our own predicted ones not yet confirmed or gone. */
+  bullets: number;
+  localBullets: number;
+  /** Grenades in the air or on the ground (latest snapshot). */
+  grenades: number;
   spectators: number;
   /** Team deathmatch: each team's kills. */
   redScore: number;
@@ -75,6 +83,9 @@ export interface PlayerState {
     stunTicks: number;
     flashEnd: number;
     flashTicks: number;
+    /** Rounds in the magazine and ticks of reload left (as the server last synced them). */
+    ammo: number;
+    reloadTicks: number;
   }[];
 }
 
@@ -144,6 +155,8 @@ export class Player {
           stunTicks: Number(p.stunTicks),
           flashEnd: Number(p.flashEnd),
           flashTicks: Number(p.flashTicks),
+          ammo: Number(p.ammo),
+          reloadTicks: Number(p.reloadTicks),
         }),
       );
       players.sort((a, c) => a.slot - c.slot);
@@ -159,6 +172,11 @@ export class Player {
         phase: latest?.phase ?? null,
         mapId: latest?.mapId ?? null,
         tick: latest?.tick ?? 0,
+        warmupEnd: latest?.warmupEnd ?? 0,
+        startTick: latest?.startTick ?? 0,
+        bullets: latest?.bullets.size ?? 0,
+        localBullets: m?.localBullets?.bullets?.size ?? 0,
+        grenades: latest?.grenades.size ?? 0,
         spectators: latest?.spectators ?? 0,
         redScore: latest?.redScore ?? 0,
         blueScore: latest?.blueScore ?? 0,
@@ -304,6 +322,18 @@ export async function kill(roomId: string, killer: string, victim: string) {
   const res = await fetch(`http://localhost:${SERVER_PORT + 1}/kill`, {
     method: "POST",
     body: JSON.stringify({ roomId, killer, victim }),
+  });
+  expect(res.status, await res.text()).toBe(200);
+}
+
+/**
+ * Asks the e2e server to make that room's warmups last `seconds` (server.ts'
+ * /warmup): the next ones, and the one running if any (it then ends `seconds` from now).
+ */
+export async function setWarmup(roomId: string, seconds: number) {
+  const res = await fetch(`http://localhost:${SERVER_PORT + 1}/warmup`, {
+    method: "POST",
+    body: JSON.stringify({ roomId, seconds }),
   });
   expect(res.status, await res.text()).toBe(200);
 }

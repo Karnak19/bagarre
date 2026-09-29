@@ -29,6 +29,21 @@ export function byPlace<T extends PlayerView>(players: readonly T[], ended: bool
   return sorted.map((player, i) => ({ player, place: ended && player.place ? player.place : i + 1 }));
 }
 
+/** The match clock is running (or stopped at the end): not while waiting, nor during warmup. */
+export function clockRuns(s: Snapshot): boolean {
+  return s.phase === "playing" || s.phase === "ended";
+}
+
+/**
+ * Whole seconds left of the warmup, from the synced end tick and the
+ * snapshot's own tick, so every client (a reconnected one too) shows the
+ * same number. 0 outside warmup.
+ */
+export function warmupLeft(s: Snapshot | null): number {
+  if (!s || s.phase !== "warmup" || s.warmupEnd <= 0) return 0;
+  return Math.max(0, Math.ceil((s.warmupEnd - s.tick) / TICK_RATE));
+}
+
 /** Seconds as "m:ss". */
 export function clock(seconds: number) {
   const s = Math.max(0, Math.floor(seconds));
@@ -37,7 +52,7 @@ export function clock(seconds: number) {
 
 /** Seconds left of a snapshot's time limit (null: no limit, or not running). */
 export function secondsLeft(s: Snapshot | null): number | null {
-  if (!s || s.timeLimit <= 0 || s.phase === "waiting") return null;
+  if (!s || s.timeLimit <= 0 || !clockRuns(s)) return null;
   const elapsed = ((s.endTick || s.tick) - s.startTick) / TICK_RATE;
   return Math.max(0, s.timeLimit - elapsed);
 }
@@ -119,7 +134,8 @@ export function scoreboardModel(s: Snapshot | null, you: string): ScoreboardMode
   const theirs = players.find((p) => p.id !== you);
   const top = placed[0]?.player.kills ?? 0;
   const alone = players.filter((p) => p.kills === top).length === 1;
-  const running = !!s && s.phase !== "waiting";
+  // The clock starts when the warmup ends: 0:00 before.
+  const running = !!s && clockRuns(s);
   const left = secondsLeft(s);
   const row = ({ player: p, place }: { player: PlayerView & { id: string }; place: number }): ScoreboardRow => ({
     id: p.id,

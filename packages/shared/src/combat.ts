@@ -25,7 +25,7 @@ import {
 } from "./constants.ts";
 import { grenadeCooldownTicks } from "./grenades.ts";
 import { clamp, clampMove, movePlayer, muzzle, type BulletSim, type Vec2 } from "./physics.ts";
-import { PLAYER_SIM_KEYS, type InputMessage, type PlayerSim } from "./protocol.ts";
+import { PLAYER_SIM_KEYS, type InputMessage, type Phase, type PlayerSim } from "./protocol.ts";
 
 export function weaponDef(id: number): WeaponDef {
   return WEAPONS[id] ?? WEAPONS[DEFAULT_WEAPON];
@@ -64,6 +64,34 @@ export function spawnSim(x: number, z: number, weapon: number, seen?: PlayerSim)
   };
 }
 
+/**
+ * A live loadout change (a pick during warmup): `weapon` in hand at once,
+ * with a full magazine and nothing of the old gun left over (no reload in
+ * progress, no fire interval or burst running), and the grenade ready (its
+ * cooldown reset). Position, dash, shield, stun and the press counters are
+ * kept. (Spread needs no reset: it is seeded by the input seq, see
+ * `shotPellets`, never stored.)
+ */
+export function equipSim(sim: PlayerSim, weapon: number): PlayerSim {
+  return { ...sim, ammo: weaponDef(weapon).magazine, reloadTicks: 0, fireCd: 0, burstLeft: 0, grenadeCd: 0 };
+}
+
+/**
+ * What a player may do this step: `act` (move, dash, reload: false while
+ * dead or after the match ended) and `armed` (fire, throw a grenade, raise
+ * the shield: also false during warmup, so nobody shoots before the match
+ * starts). The server and the client's prediction both take it from here.
+ */
+export interface Can {
+  act: boolean;
+  armed: boolean;
+}
+
+export function playerCan(alive: boolean, phase: Phase | string): Can {
+  const act = alive && phase !== "ended";
+  return { act, armed: act && phase !== "warmup" };
+}
+
 /** Copies the sim fields out of anything shaped like a player (schema, view). */
 export function readSim(src: PlayerSim): PlayerSim {
   const out = {} as PlayerSim;
@@ -93,9 +121,12 @@ export interface StepResult {
 const dec = (v: number) => (v > 0 ? v - 1 : 0);
 
 /**
- * Advances a player by one input. `canAct` is false while dead or after the
- * match ended: cooldowns still run and presses are still consumed (so a press
- * made while dead doesn't fire on respawn), but nothing moves or happens.
+ * Advances a player by one input. `canAct` (see `playerCan`; a boolean sets
+ * both) is false while dead or after the match ended: cooldowns still run and
+ * presses are still consumed (so a press made while dead doesn't fire on
+ * respawn), but nothing moves or happens. Not `armed` (warmup): the player
+ * moves, dashes and reloads, but a shot, a grenade or a shield press is used
+ * up and does nothing, so none of them goes off when the match starts.
  * `grenadeType` (a GRENADES index, the one in hand) sets the cooldown a throw
  * starts.
  *
@@ -110,9 +141,10 @@ export function stepPlayer(
   prev: PlayerSim,
   input: InputMessage,
   weaponId: number,
-  canAct: boolean,
+  canAct: boolean | Can,
   grenadeType: number = DEFAULT_GRENADE,
 ): StepResult {
+  const { act, armed } = typeof canAct === "boolean" ? { act: canAct, armed: canAct } : canAct;
   const w = weaponDef(weaponId);
   const s: PlayerSim = { ...prev };
   const res: StepResult = { sim: s, fired: false, grenade: null, shield: false, dashing: false };
@@ -137,7 +169,7 @@ export function stepPlayer(
     if (s.reloadTicks === 0) s.ammo = w.magazine;
   }
 
-  if (!canAct) {
+  if (!act) {
     s.dashTicks = 0;
     s.burstLeft = 0;
     return res;
@@ -172,6 +204,12 @@ export function stepPlayer(
   }
   s.x = p.x;
   s.z = p.z;
+
+  if (!armed) {
+    // Warmup: the trigger, the grenade and the shield do nothing.
+    s.burstLeft = 0;
+    return res;
+  }
 
   if (s.burstLeft > 0) {
     // A burst in progress: the next round is due once fireCd (set at the

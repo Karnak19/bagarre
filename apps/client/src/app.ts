@@ -216,8 +216,10 @@ export class App {
     if (phase !== this.lastPhase) {
       const was = this.lastPhase;
       this.lastPhase = phase;
-      if (phase === "waiting" && (was === "playing" || was === "ended")) this.set({ opponentLeft: true });
-      if (phase === "playing" && (this.state.opponentLeft || this.state.staying)) this.set({ opponentLeft: false, staying: false });
+      if (phase === "waiting" && (was === "warmup" || was === "playing" || was === "ended")) this.set({ opponentLeft: true });
+      // A new match started (its warmup, or straight into play without one).
+      if ((phase === "warmup" || phase === "playing") && (this.state.opponentLeft || this.state.staying))
+        this.set({ opponentLeft: false, staying: false });
     }
     const spectating = this.followRole(m);
     let card: GameCard = "none";

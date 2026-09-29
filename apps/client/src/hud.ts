@@ -71,8 +71,10 @@ export interface HudModel {
   feed: KillFeedLine[];
   /** Predicted local state (cooldowns, ammo), fresher than `me`. */
   sim: PlayerSim | null;
-  /** Weapon picks are accepted right now (dead or between matches). */
+  /** Weapon picks are accepted right now (dead, warmup, or between matches). */
   canPick: boolean;
+  /** Warmup: whole seconds until the match starts (the loadout panel shows); null outside warmup. */
+  warmup: number | null;
   /** The map's name and blurb, for a few seconds at match start. */
   mapCard: { title: string; sub: string; opacity: number } | null;
   debug: string;

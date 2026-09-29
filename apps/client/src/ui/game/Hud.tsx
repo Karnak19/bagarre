@@ -37,7 +37,7 @@ import { shallowEqual, useEngine, useSelector, useStoreEffect } from "../hooks.t
 import { shared, slotFill } from "../styles.ts";
 import { FfaPanel, KillFeed, MinimapBox } from "./HudFfa.tsx";
 import { TeamPanel } from "./HudTeam.tsx";
-import { GRENADE_ICONS } from "./WeaponPicker.tsx";
+import { GRENADE_ICONS, GrenadePicker, WeaponPicker } from "./WeaponPicker.tsx";
 
 const styles = stylex.create({
   root: { position: "fixed", inset: 0, pointerEvents: "none", zIndex: 10 },
@@ -112,6 +112,19 @@ const styles = stylex.create({
   lockedPick: { opacity: 0.35 },
   lockedPicked: { opacity: 0.7 },
   hint: { opacity: 0.75, marginInlineStart: "4px" },
+  warmup: {
+    position: "absolute",
+    bottom: "96px",
+    left: "50%",
+    transform: "translateX(-50%)",
+    width: "min(560px, calc(100vw - 32px))",
+    paddingBlock: "12px",
+    paddingInline: "14px",
+    pointerEvents: "auto",
+  },
+  warmupTitle: { fontSize: "26px", lineHeight: 1, color: "var(--bagarre-sand)" },
+  warmupNumber: { color: "var(--bagarre-gold)" },
+  warmupSub: { fontSize: "13px", opacity: 0.8 },
   stunned: {
     position: "absolute",
     bottom: "172px",
@@ -155,6 +168,7 @@ export function Hud() {
       {big && <MinimapBox />}
       <Status />
       <MapCard />
+      <Warmup />
       <Picker />
       <HStack gap={2} align="stretch" xstyle={styles.bottom}>
         <Weapon />
@@ -408,9 +422,35 @@ function Sound() {
   );
 }
 
+/**
+ * The warmup: the timer to the match start and the loadout picker (the same
+ * as the waiting card's, clickable; keys 1-7 and G work too), over the live
+ * game: the player keeps moving meanwhile. A pick applies at once.
+ */
+function Warmup() {
+  countRender("hud.warmup");
+  const { hud } = useEngine();
+  const seconds = useSelector(hud, (m) => m?.warmup ?? null);
+  if (seconds === null) return null;
+  return (
+    <VStack gap={1} xstyle={[styles.panel, styles.warmup]} data-testid="warmup">
+      <Text xstyle={[shared.display, styles.warmupTitle, shared.tabular]} aria-live="polite" data-testid="warmup-timer" data-seconds={seconds}>
+        Match starts in{" "}
+        <Text as="span" color="inherit" xstyle={styles.warmupNumber}>
+          {seconds}
+        </Text>
+      </Text>
+      <Text xstyle={styles.warmupSub}>Pick your loadout: it's in your hand at once. No shooting until the match starts.</Text>
+      <WeaponPicker live />
+      <GrenadePicker heading="Your grenade" live />
+    </VStack>
+  );
+}
+
 function Picker() {
   countRender("hud.picker");
   const { hud } = useEngine();
+  const warmup = useSelector(hud, (m) => m?.warmup != null);
   const p = useSelector(
     hud,
     (m) => ({
@@ -422,6 +462,8 @@ function Picker() {
     }),
     shallowEqual,
   );
+  // The warmup panel has the full picker.
+  if (warmup) return null;
   const changed = p.pick !== p.weapon || p.grenadePick !== p.grenade;
   const hint = p.canPick ? (changed ? "applies on respawn" : "1-7 weapon, G grenade") : "pick while dead";
   return (

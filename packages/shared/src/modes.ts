@@ -28,6 +28,7 @@ import {
   TEAM_RESPAWN_DELAY,
   TEAM_ROOM_NAME,
   TEAM_TIME_LIMIT,
+  WARMUP_SECONDS,
 } from "./constants.ts";
 import { FFA_MAPS, TEAM_MAPS } from "./maps/ffa/index.ts";
 import { MAPS, type MapDef } from "./maps/index.ts";
@@ -66,6 +67,12 @@ export interface ModeRules {
   suddenDeathMax: number;
   /** Seconds of countdown before a match starts once enough players are in (0: starts at once). */
   countdown: number;
+  /**
+   * Seconds of warmup once the match starts, before `playing` (see
+   * WARMUP_SECONDS): spawned, picks apply at once, no shooting. 0 skips it
+   * (a mode where picks are off, like a future gun game).
+   */
+  warmup: number;
   respawnDelay: number;
   /** Seconds the result stays up before the rematch. */
   endDelay: number;
@@ -91,6 +98,7 @@ export const DUEL_RULES: ModeRules = {
   // no result. So no sudden death, and `rank` never has a tie to break.
   suddenDeathMax: 0,
   countdown: 0,
+  warmup: WARMUP_SECONDS,
   respawnDelay: RESPAWN_DELAY,
   endDelay: MATCH_END_DELAY,
   dropIn: false,
@@ -110,6 +118,7 @@ export const FFA_RULES: ModeRules = {
   timeLimit: FFA_TIME_LIMIT,
   suddenDeathMax: SUDDEN_DEATH_MAX,
   countdown: FFA_COUNTDOWN,
+  warmup: WARMUP_SECONDS,
   respawnDelay: FFA_RESPAWN_DELAY,
   endDelay: FFA_END_DELAY,
   dropIn: true,
@@ -134,6 +143,7 @@ export const TEAM_RULES: ModeRules = {
   timeLimit: TEAM_TIME_LIMIT,
   suddenDeathMax: SUDDEN_DEATH_MAX,
   countdown: TEAM_COUNTDOWN,
+  warmup: WARMUP_SECONDS,
   respawnDelay: TEAM_RESPAWN_DELAY,
   endDelay: TEAM_END_DELAY,
   dropIn: true,

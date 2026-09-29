@@ -59,7 +59,8 @@ export function OpenGames() {
             // Teams: "3v2 (5/8)".
             const seats = g.teams ? `${g.teams[0]}v${g.teams[1]} (${g.players}/${g.maxPlayers})` : `${g.players}/${g.maxPlayers} players`;
             // A free-for-all takes players mid-match; a duel under way is full.
-            const live = g.phase !== "waiting";
+            // A warmup is still the start, shown like the countdown before it.
+            const live = g.phase === "playing" || g.phase === "ended";
             const watching = (g.spectators ?? 0) > 0 ? `${g.spectators} watching` : "";
             const details = [mode, seats, map, live ? "in progress" : when, watching].filter(Boolean).join(" · ");
             const verb = g.joinable ? "Join" : "Watch";

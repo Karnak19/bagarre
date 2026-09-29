@@ -59,6 +59,8 @@ export interface Snapshot {
   timeLimit: number;
   /** Ticks left of the pre-match countdown (0: none). */
   countdown: number;
+  /** Warmup: the server tick it ends on (0 outside warmup). See `warmupLeft`. */
+  warmupEnd: number;
   suddenDeath: boolean;
   players: Map<string, PlayerView>;
   bullets: Map<string, BulletView>;
@@ -129,6 +131,7 @@ function capture(state: RoomStateView): Omit<Snapshot, "t" | "epoch"> {
     killsToWin: state.killsToWin,
     timeLimit: state.timeLimit,
     countdown: state.countdown,
+    warmupEnd: state.warmupEnd ?? 0,
     suddenDeath: state.suddenDeath,
     players,
     bullets,

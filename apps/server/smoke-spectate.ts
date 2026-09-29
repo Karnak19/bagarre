@@ -24,6 +24,7 @@ import {
 } from "@bagarre/shared";
 import { openGames } from "./src/app.ts";
 import { DuelRoom, FfaRoom } from "./src/GameRoom.ts";
+import { QUICK_WARMUP } from "./smoke-warmup.ts";
 
 type Lines = [boolean, string][];
 
@@ -59,13 +60,13 @@ type LocalRoom = {
 const local = (roomId: string) => matchMaker.getLocalRoomById(roomId) as unknown as LocalRoom;
 
 /** Short result delay and spectators-only timeout; not pinned, so the rematch changes map. */
-class SpectateDuel extends DuelRoom.withRules({ endDelay: 1 }) {
+class SpectateDuel extends DuelRoom.withRules({ endDelay: 1, warmup: QUICK_WARMUP }) {
   protected override spectatorIdle = 2;
 }
 
 export function registerSpectateRooms() {
   matchMaker.defineRoomType("spec_duel", SpectateDuel);
-  matchMaker.defineRoomType("spec_ffa", FfaRoom.pinnedTo("crossroads").withRules({ countdown: 1, respawnDelay: 0.3 }));
+  matchMaker.defineRoomType("spec_ffa", FfaRoom.pinnedTo("crossroads").withRules({ countdown: 1, respawnDelay: 0.3, warmup: QUICK_WARMUP }));
 }
 
 /** Watches a room through the watch route, like the client does. */

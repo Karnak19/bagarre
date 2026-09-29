@@ -220,6 +220,13 @@ export const KILLS_TO_WIN = 5;
 export const RESPAWN_DELAY = 2;
 /** Seconds the winner banner stays up before the match resets. */
 export const MATCH_END_DELAY = 4;
+/**
+ * Seconds of warmup at the start of every match (ModeRules.warmup): everyone
+ * on their start spot, on the real map, free to move and dash and to change
+ * their loadout (applied at once), but nobody can shoot, throw, raise the
+ * shield or take damage. The match clock starts when it ends.
+ */
+export const WARMUP_SECONDS = 8;
 
 // --- Free for all (see modes.ts and docs/ffa-maps.md) ---
 /** Room name of the free-for-all matchmaking. */

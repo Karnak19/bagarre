@@ -42,6 +42,7 @@ import {
 } from "@bagarre/shared";
 import { writeMatch, type MatchResult } from "./src/accounts.ts";
 import { TeamRoom } from "./src/GameRoom.ts";
+import { QUICK_WARMUP } from "./smoke-warmup.ts";
 import type { AccountsHarness } from "./smoke-accounts.ts";
 
 type Lines = [boolean, string][];
@@ -91,7 +92,7 @@ const sizes = (room: LocalTeam) => {
 
 /** Room types used below. */
 export function registerTeamRooms() {
-  const quick = { countdown: 1, respawnDelay: 0.3 };
+  const quick = { countdown: 1, respawnDelay: 0.3, warmup: QUICK_WARMUP };
   const base = TeamRoom.pinnedTo("crossroads").withRules(quick);
   matchMaker.defineRoomType("tdm_test", base);
   matchMaker.defineRoomType("tdm_seats", base);

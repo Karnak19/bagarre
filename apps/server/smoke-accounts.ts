@@ -364,7 +364,7 @@ export async function accountChecks(url: string, h: AccountsHarness, check: Chec
  */
 async function playMatch(hero: Room, victim: Room) {
   // The smoke server pins every room to Yard (see smoke.ts).
-  const { stepPlayer, readSim, mapById, PLAYER_SPEED, TICK_DT, MSG_INPUT } = await import("@bagarre/shared");
+  const { stepPlayer, playerCan, readSim, mapById, PLAYER_SPEED, TICK_DT, MSG_INPUT } = await import("@bagarre/shared");
   const yard = mapById("yard");
   const drive = (room: Room, controls: () => { tx: number; tz: number; aim: number; fire: boolean }) => {
     let seq = 0;
@@ -382,7 +382,7 @@ async function playMatch(hero: Room, victim: Room) {
       const dist = Math.hypot(dx, dz);
       const f = dist > 1e-9 ? Math.min(1, dist / (PLAYER_SPEED * TICK_DT)) / dist : 0;
       const input = { seq: ++seq, mx: dx * f, mz: dz * f, aim: c.aim, fire: c.fire, gx: 0, gz: 0, dash: 0, grenade: 0, shield: 0, reload: 0 };
-      sim = stepPlayer(yard, sim, input, p.weapon, p.alive && state(room).phase !== "ended").sim;
+      sim = stepPlayer(yard, sim, input, p.weapon, playerCan(p.alive, state(room).phase), p.grenade).sim;
       room.send(MSG_INPUT, input);
     }, TICK_MS);
     return () => clearInterval(timer);

@@ -63,11 +63,13 @@ The first run may need the browser: `bunx playwright install chromium` in
   in) and served by `vite preview`. No `.env.local`: the game server keeps
   its accounts in an in-memory database, fresh on every run.
 - `server.ts` is the real `createServer()` with shorter rules (a duel is won
-  at 2 kills, the FFA and team countdowns are 2 s) and a test-only control API on 2611:
+  at 2 kills, the FFA and team countdowns are 2 s, every warmup is 1 s) and a test-only control API on 2611:
   `POST /kill` kills a player through the room's own damage path, so a test
   reaches a match end without aiming. It is the real damage path, so it does
   nothing between teammates (the team spec checks that). `POST /place` puts
   a player on a given spot at once (the grenade spec sets its throws up with it).
+  `POST /warmup` sets one room's warmup length, the one running included
+  (the warmup spec plays the real 8 s, then holds it open for its checks).
 - `tests/fixtures.ts` holds the fixtures. `players.open()` is a new player
   (its own browser context); `players.duel()`, `players.teams(n)` and `players.host()` /
   `players.join()` open a private game by its link, so tests running in
@@ -475,7 +477,7 @@ The e2e spec is `apps/e2e/tests/teams.spec.ts`, the smoke checks
 
 One room class plays every mode: `GameRoom` (`apps/server/src/GameRoom.ts`),
 driven by the mode's rules (`ModeRules` in `packages/shared/src/modes.ts`:
-seats, start threshold, teams, kill target, time limit, countdown, respawn
+seats, start threshold, teams, kill target, time limit, countdown, warmup, respawn
 delay, result delay, drop-in, map pool). `DuelRoom`, `FfaRoom` and `TeamRoom`
 only pick the rules, and are registered as the `duel`, `ffa` and `tdm` room
 types. The simulation
@@ -483,7 +485,7 @@ types. The simulation
 places only: spawns, respawns, what a leave does, and the end conditions.
 `GameRoom.pinnedTo(mapId)` pins a room class to one map of its own pool
 (`createServer({ mapId, ffaMapId })`), `GameRoom.withRules({...})` tweaks the
-rules (the smoke test's short countdown and time limit), and the dev
+rules (the smoke test's short countdown, time limit and warmup), and the dev
 `?map=<id>` works in both modes, for that mode's maps only.
 
 Map lookup: `findMap(id)` searches the duel and FFA maps and returns null for
@@ -491,8 +493,20 @@ an unknown id. The client resolves the synced `mapId` with it and logs an
 error rather than silently drawing Yard; `mapById` (which falls back to Yard)
 is only for display. A room only ever picks from its own pool.
 
+Every match goes `waiting` -> `warmup` -> `playing` -> `ended`. The warmup
+(`WARMUP_SECONDS`, 8 s, per mode in `ModeRules.warmup`; 0 skips it) puts
+everyone on their start spot with the loadout picker open and a "Match
+starts in N" timer: players move and dash, and a pick (weapon and grenade
+type) is in hand at once with a full magazine, but nobody can shoot, throw
+or raise the shield, and no damage is dealt (`playerCan` in combat.ts, the
+same rule on the server and in the client's prediction). The match clock,
+the time limit and the "first to the score" tiebreak start when it ends
+(`startTick`). Its end is synced as a tick (`warmupEnd`), so every client,
+a reconnected one included, shows the same timer. A player leaving during
+warmup below `minToContinue` sends the room back to waiting, with no result.
+
 The synced state (`GameState`) carries the mode, the kill target, the time
-limit, the countdown, the sudden death flag and the kill feed (the last 5
+limit, the countdown, the warmup's end tick, the sudden death flag and the kill feed (the last 5
 deaths, with names and seats copied so a line stays readable after its
 players leave).
 
