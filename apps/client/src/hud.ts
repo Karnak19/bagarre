@@ -80,6 +80,8 @@ export interface HudModel {
   muted: boolean;
   /** Spectators watching the game (shown small in a corner when there are any). */
   spectators: number;
+  /** Flash grenade: the white screen's opacity right now, 0..1 (0: not flashed). */
+  flash: number;
 }
 
 export class Hud implements Readable<HudModel | null> {

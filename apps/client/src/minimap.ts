@@ -10,7 +10,7 @@
 // canvas; each frame only copies it and draws the few dots, and at most
 // every other frame.
 
-import type { FfaMapDef, MapDef } from "@bagarre/shared";
+import { SMOKE, type FfaMapDef, type MapDef } from "@bagarre/shared";
 import { PLAYER_CSS_COLORS } from "./scene.ts";
 
 /** How long a shot stays on the minimap, fading out. */
@@ -96,6 +96,11 @@ export class Minimap {
     this.pings.length = 0;
   }
 
+  /** Who has a dot on the map right now (dev handle). */
+  pingIds(): string[] {
+    return this.pings.map((p) => p.who);
+  }
+
   /**
    * Per frame, from the match. `me` is our drawn position and aim (null: dead
    * or not spawned), `slot` our paint index. `allies`: our living teammates,
@@ -105,6 +110,7 @@ export class Minimap {
     now: number,
     me: { x: number; z: number; aim: number; slot: number; alive: boolean } | null,
     allies: readonly { x: number; z: number; slot: number }[] = [],
+    smokes: readonly { x: number; z: number }[] = [],
   ) {
     const { canvas, ctx, map } = this;
     if (!canvas || !ctx || !map) return;
@@ -122,6 +128,19 @@ export class Minimap {
     ctx.drawImage(this.base, 0, 0, s, s);
 
     const toPx = planProjector(map, this.size);
+    // Smoke clouds, grey discs (what's in them never shows: match.ts skips their pings).
+    if (smokes.length > 0) {
+      const [ox, oy] = toPx(0, 0);
+      const [rx, ry] = toPx(SMOKE.radius, 0);
+      const r = Math.hypot(rx - ox, ry - oy);
+      ctx.fillStyle = "rgba(200, 200, 195, 0.45)";
+      for (const c of smokes) {
+        const [px, py] = toPx(c.x, c.z);
+        ctx.beginPath();
+        ctx.arc(px, py, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
     // Enemy shots, fading.
     for (let i = this.pings.length - 1; i >= 0; i--) {
       const p = this.pings[i];

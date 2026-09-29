@@ -64,8 +64,15 @@ export interface InputMessage {
   reload: number;
 }
 
+/**
+ * MSG_PICK: the loadout for the next spawn. Either field or both; each one
+ * present must be valid, or the whole message is dropped (see parsePick).
+ */
 export interface PickMessage {
-  weapon: number;
+  /** A WEAPONS index. */
+  weapon?: number;
+  /** A GRENADES index. */
+  grenade?: number;
 }
 
 export interface TeamMessage {
@@ -101,6 +108,13 @@ export interface PlayerSim {
   reloadSeen: number;
   /** Rounds still to come in the burst being fired (burst weapons only, else 0). */
   burstLeft: number;
+  /**
+   * Stun grenade: steps left of the stun (0 = not stunned). While it runs the
+   * player walks at STUN.speedScale and can't dash. Set by the server when a
+   * stun goes off, counted down by `stepPlayer` once per input, so the
+   * client predicts the slow exactly like the server (no rubber-banding).
+   */
+  stunTicks: number;
 }
 
 export const PLAYER_SIM_KEYS = [
@@ -120,6 +134,7 @@ export const PLAYER_SIM_KEYS = [
   "shieldSeen",
   "reloadSeen",
   "burstLeft",
+  "stunTicks",
 ] as const satisfies readonly (keyof PlayerSim)[];
 
 /** What the client reads from a player in the synced room state. */
@@ -183,6 +198,15 @@ export interface PlayerView extends PlayerSim {
    * Empty from an older server: draw the capsule fallback.
    */
   skin: string;
+  /** Grenade type in hand (a GRENADES index), and the one picked for the next spawn. */
+  grenade: number;
+  grenadePick: number;
+  /**
+   * Flash grenade: the server tick the white screen ends on (0 or past: not
+   * flashed), and how many ticks it lasted in all (for the fade).
+   */
+  flashEnd: number;
+  flashTicks: number;
 }
 
 export const PLAYER_VIEW_KEYS = [
@@ -209,6 +233,10 @@ export const PLAYER_VIEW_KEYS = [
   "ping",
   "connected",
   "skin",
+  "grenade",
+  "grenadePick",
+  "flashEnd",
+  "flashTicks",
 ] as const satisfies readonly (keyof PlayerView)[];
 
 /**
@@ -234,6 +262,17 @@ export interface GrenadeView {
   /** True for exactly one snapshot: the tick it blew up. */
   exploded: boolean;
   owner: string;
+  /** Its type (a GRENADES index), fixed when thrown: a new pick doesn't change a grenade in the air. */
+  kind: number;
+}
+
+/** A smoke cloud on the ground (`RoomStateView.smokes`), SMOKE.radius wide. */
+export interface SmokeView {
+  x: number;
+  z: number;
+  /** Server ticks it appeared on and clears on. */
+  start: number;
+  end: number;
 }
 
 /** Minimal iteration interface shared by Colyseus MapSchema and Map. */
@@ -301,6 +340,8 @@ export interface RoomStateView {
   players: MapLike<PlayerView>;
   bullets: MapLike<BulletView>;
   grenades: MapLike<GrenadeView>;
+  /** The smoke clouds on the ground right now (removed once they clear). */
+  smokes: MapLike<SmokeView>;
   /** The last KILL_FEED_SIZE deaths, oldest first. */
   feed: { forEach(cb: (k: KillView, i: number) => void): void; length: number };
   /** Spectators connected right now (clients with no seat, see GameRoom). */

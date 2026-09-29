@@ -54,7 +54,7 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
   const hud = new Hud();
   const minimap = new Minimap();
   const input = new Input(canvas);
-  const bot: Bot = { on: false, mx: 0, mz: 0, aim: 0, fire: false };
+  const bot: Bot = { on: false, mx: 0, mz: 0, aim: 0, fire: false, target: null };
   const sfxLog: SfxLogEntry[] = [];
   const lobby = new Lobby(config.serverUrl);
   const view = new Store<GameView | null>(null);
@@ -267,6 +267,14 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
         /** The current (or watched) match's players: the skin each one's mesh wears, and whether its model has loaded. */
         skins(): Record<string, { skin: string; loaded: boolean }> {
           return app.match?.skins() ?? {};
+        },
+        /** How smoke has each player drawn for us right now: "none", "hidden" (an enemy in or behind smoke) or "faded" (a spectator's view). */
+        veils(): Record<string, string> {
+          return app.match?.veils() ?? {};
+        },
+        /** The minimap's enemy dots right now, by shooter (session id). */
+        get minimapPings(): string[] {
+          return minimap.pingIds();
         },
         get predictor() {
           return app.match?.predictor ?? null;

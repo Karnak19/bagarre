@@ -3,18 +3,25 @@ import {
   BULLET_HEIGHT,
   BULLET_RADIUS,
   GRENADE,
+  GRENADE_FLASH,
+  GRENADE_SMOKE,
+  GRENADE_STUN,
   PLAYER_RADIUS,
   PLAYER_SPEED,
+  SMOKE,
+  STUN,
   WALL_THICKNESS,
+  grenadeDef,
   type GrenadeView,
   type MapDef,
+  type SmokeVeil,
 } from "@bagarre/shared";
 import { buildArena, disposeArena } from "./arenaView.ts";
 import { skinModel, skinModelNow, type Assets } from "./assets.ts";
 import { Character } from "./character.ts";
 import { TEAM_PAINT } from "./paint.ts";
 import { Plates } from "./plates.ts";
-import { Vfx, shieldMaterial } from "./vfx.ts";
+import { Vfx, shieldMaterial, type SmokeCloud } from "./vfx.ts";
 
 /**
  * The player palette, by paint index (see paint.ts). 0-5 are one colour per
@@ -55,6 +62,10 @@ function cameraOffset(yaw: number, out = new THREE.Vector3()) {
   return out.set(Math.sin(yaw) * h, Math.sin(PITCH) * CAMERA_DISTANCE, Math.cos(yaw) * h);
 }
 const REDUCED_MOTION = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+/** How see-through a player in smoke is for a spectator (smokeVeil "faded"). */
+export const FADED_OPACITY = 0.35;
+/** A stunned player's sparks: one crackle every this many ms. */
+const STUN_SPARK_MS = 70;
 
 /** Set once, before any PlayerMesh is made (see main.ts). */
 let assets: Assets | null = null;
@@ -129,6 +140,17 @@ export class PlayerMesh {
   private static DASH_SPEED_VISUAL = PLAYER_SPEED * 1.8;
   /** Set when the mesh moved at dash speed since the last update. */
   dashing = false;
+  /** How smoke has this player drawn for us (smokeVeil): as usual, not at all, or see-through (spectators). */
+  veil: SmokeVeil = "none";
+  /** The see-through look is on the materials (false after a new skin model came in: apply it again). */
+  private fadedApplied = false;
+  /** Each material's own opacity and transparency, to put back when the fade ends. */
+  private fadeSaved = new Map<THREE.Material, { opacity: number; transparent: boolean }>();
+  /** When stun sparks last crackled on this player, and when `stunned` was last called (performance.now()). */
+  private lastSpark = 0;
+  private stunSeen = -1e9;
+  private stunRing: THREE.Mesh;
+  private stunRingMat: THREE.MeshBasicMaterial;
 
   /**
    * `skin`: the SKINS id worn. Until that skin's model has loaded (and for
@@ -175,6 +197,15 @@ export class PlayerMesh {
     } else ring(PLAYER_RADIUS + 0.02, PLAYER_RADIUS + 0.12, color, 0.75);
     if (isLocal) ring(PLAYER_RADIUS + (team ? 0.22 : 0.14), PLAYER_RADIUS + (team ? 0.28 : 0.2), 0xffffff, 0.55);
 
+    // The stun ring: shown while stunned (see `stunned`), pulsing.
+    this.stunRingMat = new THREE.MeshBasicMaterial({ color: 0x7fd8ff, transparent: true, opacity: 0.8, depthWrite: false });
+    this.stunRing = new THREE.Mesh(new THREE.RingGeometry(PLAYER_RADIUS + 0.3, PLAYER_RADIUS + 0.45, 40), this.stunRingMat);
+    this.stunRing.rotation.x = -Math.PI / 2;
+    this.stunRing.position.y = 0.04;
+    this.stunRing.renderOrder = 3;
+    this.stunRing.visible = false;
+    this.group.add(this.stunRing);
+
     this.shieldMat = shieldMaterial(this.baseColor);
     this.shield = new THREE.Mesh(new THREE.SphereGeometry(1.05, 32, 20), this.shieldMat);
     this.shield.position.y = 0.95;
@@ -195,6 +226,7 @@ export class PlayerMesh {
     try {
       this.character = new Character(model, kit);
       this.group.add(this.character.root);
+      this.fadedApplied = false;
       return true;
     } catch (err) {
       console.warn("[scene] character setup failed, using the placeholder", err);
@@ -226,6 +258,8 @@ export class PlayerMesh {
     }
     this.shield.geometry.dispose();
     this.shieldMat.dispose();
+    this.stunRing.geometry.dispose();
+    this.stunRingMat.dispose();
     this.dropPlaceholder();
   }
 
@@ -244,12 +278,46 @@ export class PlayerMesh {
    * `alive` false plays the death animation (the body stays where it fell
    * until the respawn moves it). `weapon` picks the gun in hand.
    */
-  set(x: number, z: number, aim: number, alive: boolean, weapon = this.weapon) {
+  set(x: number, z: number, aim: number, alive: boolean, weapon = this.weapon, veil: SmokeVeil = "none") {
     this.group.position.set(x, 0, z);
     this.aim = aim;
     this.alive = alive;
     this.weapon = weapon;
-    this.group.visible = true;
+    this.veil = veil;
+    // Smoke (client-side only, see smokeVeil): hidden is not drawn at all.
+    this.group.visible = veil !== "hidden";
+    this.applyFade(veil === "faded");
+  }
+
+  /** The spectator's see-through look for a player in smoke: every material of this player at FADED_OPACITY, and back. */
+  private applyFade(on: boolean) {
+    if (on === this.fadedApplied && (on || this.fadeSaved.size === 0)) return;
+    this.fadedApplied = on;
+    this.group.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh || mesh === this.shield || mesh === this.stunRing) return;
+      for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+        let saved = this.fadeSaved.get(m);
+        if (!saved) {
+          if (!on) continue;
+          saved = { opacity: m.opacity, transparent: m.transparent };
+          this.fadeSaved.set(m, saved);
+        }
+        const transparent = on || saved.transparent;
+        if (m.transparent !== transparent) m.needsUpdate = true;
+        m.transparent = transparent;
+        m.opacity = on ? saved.opacity * FADED_OPACITY : saved.opacity;
+      }
+    });
+    if (!on) this.fadeSaved.clear();
+  }
+
+  /** Stunned (called every frame while it lasts): a pulsing blue ring at the feet, and sparks crackling round the body. */
+  stunned(now: number) {
+    this.stunSeen = now;
+    if (!this.alive || this.veil === "hidden" || now - this.lastSpark < STUN_SPARK_MS) return;
+    this.lastSpark = now;
+    this.scene?.stunSparks(this.group.position.x, this.group.position.z);
   }
 
   /** HP went down: flash and flinch at `at` (a performance.now() time). */
@@ -263,7 +331,8 @@ export class PlayerMesh {
   shot(now: number, weapon = this.weapon) {
     if (!this.alive) return;
     this.character?.shot(now);
-    this.scene?.muzzleFlash(this, this.aim, weapon);
+    // Hidden by smoke: no muzzle flash to give them away (the shot is still heard).
+    if (this.veil !== "hidden") this.scene?.muzzleFlash(this, this.aim, weapon);
   }
 
   /** Where the muzzle flash goes. */
@@ -285,6 +354,12 @@ export class PlayerMesh {
       this.dashing = false;
     }
     for (const r of this.rings) r.visible = this.alive;
+    this.stunRing.visible = this.alive && now - this.stunSeen < 150;
+    if (this.stunRing.visible) {
+      const pulse = 0.5 + 0.5 * Math.sin(now / 60);
+      this.stunRingMat.opacity = (0.45 + 0.45 * pulse) * (this.fadedApplied ? FADED_OPACITY : 1);
+      this.stunRing.scale.setScalar(1 + 0.12 * pulse);
+    }
     if (this.shield.visible) this.shieldMat.uniforms.time.value = now / 1000;
   }
 }
@@ -301,6 +376,9 @@ interface DrawnBullet {
   z0: number;
   off: THREE.Vector3 | null;
 }
+
+/** A grenade's landing telegraph, by type (GRENADES index). */
+const TELEGRAPH_COLOR = [0xff4030, 0xc8c8c0, 0x4ab8ff, 0xffffff];
 
 /** A bullet drawn from its shooter's muzzle eases onto its true path (at BULLET_HEIGHT, from the body's centre) over this many metres. */
 const TRACER_MERGE = 3;
@@ -455,6 +533,7 @@ export class GameScene {
     this.bullets.clear();
     for (const g of this.grenades.values()) this.scene.remove(g.ball, g.ring);
     this.grenades.clear();
+    this.vfx.smokeClouds([], 0, SMOKE.radius);
   }
 
   resize() {
@@ -556,10 +635,11 @@ export class GameScene {
    * vanishes next to cover or a player hit it: sparks. One that vanishes in
    * the open ran out of range: nothing.
    */
-  syncBullets(bullets: Map<string, { x: number; z: number; slot: number; owner?: string; weapon?: number }>) {
+  syncBullets(bullets: Map<string, { x: number; z: number; slot: number; owner?: string; weapon?: number; hidden?: boolean }>) {
     for (const [id, b] of this.bullets) {
       if (!bullets.has(id)) {
-        this.impact(b);
+        // A bullet that ends unseen (in smoke) makes no sparks there either.
+        if (b.mesh.visible) this.impact(b);
         this.scene.remove(b.mesh);
         this.bullets.delete(id);
       }
@@ -576,13 +656,17 @@ export class GameScene {
         if (id.endsWith(":0")) for (const p of this.players) if (p.isLocal && p.slot === b.slot) p.shot(now, b.weapon);
         // The sim's bullets fly at BULLET_HEIGHT from the body's centre line;
         // the gun is in the right hand. The tracer starts at the muzzle and
-        // eases onto the true path over its first metres.
+        // eases onto the true path over its first metres. Not for a shot
+        // from inside smoke: it would point back at the hidden shooter.
         for (const p of this.players) {
-          if (!b.owner || p.id !== b.owner) continue;
+          if (b.hidden || !b.owner || p.id !== b.owner) continue;
           const m = p.muzzle(this.tmp).sub(this.tmp2.set(b.x, BULLET_HEIGHT, b.z));
           if (m.length() < TRACER_MAX_OFFSET) d.off = m.clone();
         }
       }
+      // Smoke (client-side only): a bullet in the cloud, or behind it, isn't
+      // drawn; it shows once it comes out, on its own path.
+      d.mesh.visible = !b.hidden;
       if (b.x !== d.x || b.z !== d.z) {
         d.px = d.x;
         d.pz = d.z;
@@ -670,9 +754,11 @@ export class GameScene {
           ball = new THREE.Mesh(this.grenadeGeo, this.grenadeMat);
           ball.castShadow = true;
         }
-        const ringMat = new THREE.MeshBasicMaterial({ color: 0xff4030, transparent: true, opacity: 0.1, depthWrite: false });
+        // The telegraph in the type's colour and radius: red frag, grey smoke, blue stun, white flash.
+        const ringMat = new THREE.MeshBasicMaterial({ color: TELEGRAPH_COLOR[gv.kind] ?? TELEGRAPH_COLOR[0], transparent: true, opacity: 0.1, depthWrite: false });
         const ring = new THREE.Mesh(this.telegraphGeo, ringMat);
         ring.rotation.x = -Math.PI / 2;
+        ring.scale.setScalar(grenadeDef(gv.kind).radius / GRENADE.radius);
         g = { ball, ring, ringMat };
         this.grenades.set(id, g);
         this.scene.add(ball, ring);
@@ -686,10 +772,24 @@ export class GameScene {
     }
   }
 
-  /** Grenade explosion. `own` = we threw it (shakes the camera a little). */
-  blast(x: number, z: number, now: number, own = false) {
-    this.vfx.explosion(x, z, GRENADE.radius, now);
-    if (own) this.shake(0.55);
+  /** A grenade goes off, drawn by its type. `own` = we threw it (a frag shakes the camera a little). */
+  blast(x: number, z: number, now: number, own = false, kind = 0) {
+    if (kind === GRENADE_SMOKE) this.vfx.smokePop(x, z);
+    else if (kind === GRENADE_STUN) this.vfx.stunBurst(x, z, STUN.radius);
+    else if (kind === GRENADE_FLASH) this.vfx.flashBurst(x, z);
+    else {
+      this.vfx.explosion(x, z, GRENADE.radius, now);
+      if (own) this.shake(0.55);
+    }
+  }
+
+  /** The smoke clouds this frame, at server tick `tick` (fractional). */
+  syncSmokes(clouds: readonly SmokeCloud[], tick: number) {
+    this.vfx.smokeClouds(clouds, tick, SMOKE.radius);
+  }
+
+  stunSparks(x: number, z: number) {
+    this.vfx.stunSparks(x, z);
   }
 
   /** Dash streak: dust kicked up behind the runner. */

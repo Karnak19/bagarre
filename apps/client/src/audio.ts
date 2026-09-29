@@ -30,6 +30,9 @@ export type SfxName =
   | "grenade_throw"
   | "grenade_bounce"
   | "explosion"
+  | "smoke_pop"
+  | "stun_zap"
+  | "flashbang"
   | "shield_up"
   | "shield_hit"
   | "shield_break"
@@ -87,6 +90,11 @@ const DEFS: Record<SfxName, SfxDef> = {
   grenade_throw: { files: [], gain: 0.4, voices: 2 },
   grenade_bounce: { files: variants("grenade_bounce", 2), gain: 0.8, voices: 3 },
   explosion: { files: variants("explosion", 2), gain: 1, voices: 3 },
+  // The utility grenades reuse files too: a soft low pop for the smoke, an
+  // electric crackle for the stun, a sharp high bang for the flash.
+  smoke_pop: { files: variants("grenade_bounce", 2), gain: 0.9, voices: 2, rate: 0.55 },
+  stun_zap: { files: ["shield_break"], gain: 0.9, voices: 2, rate: 1.5 },
+  flashbang: { files: variants("explosion", 2), gain: 0.8, voices: 2, rate: 1.7 },
   shield_up: { files: ["shield_up"], gain: 0.8, voices: 2 },
   shield_hit: { files: variants("shield_hit", 2), gain: 0.8, voices: 3 },
   shield_break: { files: ["shield_break"], gain: 0.9, voices: 2 },

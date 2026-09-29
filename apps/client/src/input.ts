@@ -29,6 +29,8 @@ export class Input {
   readonly presses = { dash: 0, grenade: 0, shield: 0, reload: 0 };
   /** Called with 0-6 when a weapon key (1-7) is pressed. */
   onPick: (weapon: number) => void = () => {};
+  /** Called when G (next grenade type) is pressed. */
+  onGrenadeCycle: () => void = () => {};
   /** Called when M (mute toggle) is pressed. */
   onMute: () => void = () => {};
 
@@ -55,6 +57,7 @@ export class Input {
       else if (e.code === "KeyR") this.presses.reload++;
       else if (e.code === "KeyM") this.onMute();
       else if (/^Digit[1-7]$/.test(e.code)) this.onPick(Number(e.code.slice(5)) - 1);
+      else if (e.code === "KeyG") this.onGrenadeCycle();
     });
     window.addEventListener("keyup", (e) => this.keys.delete(e.code));
     window.addEventListener("blur", () => {

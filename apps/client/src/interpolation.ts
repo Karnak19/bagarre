@@ -71,6 +71,17 @@ export class SnapshotBuffer {
     };
   }
 
+  /** The server tick at `renderTime`, fractional (between the two bracketing snapshots). 0 before any. */
+  sampleTick(renderTime: number): number {
+    const br = this.bracket(renderTime);
+    return br ? lerp(br.a.tick, br.b.tick, br.alpha) : 0;
+  }
+
+  /** The smoke clouds of the snapshot at or after `renderTime` (they don't move). */
+  sampleSmokes(renderTime: number): Snapshot["smokes"] | null {
+    return this.bracket(renderTime)?.b.smokes ?? null;
+  }
+
   /** Grenades present in both bracketing snapshots, interpolated (arc height too). */
   sampleGrenades(renderTime: number): Map<string, GrenadeView> {
     const out = new Map<string, GrenadeView>();

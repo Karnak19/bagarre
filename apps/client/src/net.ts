@@ -22,7 +22,9 @@ import {
   type KillView,
   type Phase,
   type PlayerView,
+  type PickMessage,
   type RoomStateView,
+  type SmokeView,
   type TiebreakReason,
 } from "@bagarre/shared";
 import { account } from "./auth.ts";
@@ -61,6 +63,8 @@ export interface Snapshot {
   players: Map<string, PlayerView>;
   bullets: Map<string, BulletView>;
   grenades: Map<string, GrenadeView>;
+  /** Smoke clouds on the ground. */
+  smokes: Map<string, SmokeView>;
   /** The last few deaths, oldest first. */
   feed: KillView[];
   /** Spectators watching the room right now. */
@@ -89,8 +93,11 @@ function capture(state: RoomStateView): Omit<Snapshot, "t" | "epoch"> {
       landed: g.landed,
       exploded: g.exploded,
       owner: g.owner,
+      kind: g.kind ?? 0,
     }),
   );
+  const smokes = new Map<string, SmokeView>();
+  state.smokes?.forEach((c, id) => smokes.set(id, { x: c.x, z: c.z, start: c.start, end: c.end }));
   const feed: KillView[] = [];
   state.feed?.forEach((k) =>
     feed.push({
@@ -126,6 +133,7 @@ function capture(state: RoomStateView): Omit<Snapshot, "t" | "epoch"> {
     players,
     bullets,
     grenades,
+    smokes,
     feed,
     spectators: state.spectators ?? 0,
     maxPlayers: rulesOf(state.mode).maxPlayers,
@@ -423,9 +431,10 @@ export class Net {
     this.delay(() => this.send(MSG_INPUT, input));
   }
 
-  sendPick(weapon: number) {
+  /** The loadout for the next spawn: a weapon, a grenade type, or both. */
+  sendPick(pick: PickMessage) {
     if (this.status !== "connected" || this.role === "spectator") return;
-    this.delay(() => this.send(MSG_PICK, { weapon }));
+    this.delay(() => this.send(MSG_PICK, pick));
   }
 
   /** Team deathmatch, while waiting: ask to move to `team` (the server refuses it if it would unbalance the teams). */

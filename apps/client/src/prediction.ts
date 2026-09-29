@@ -24,7 +24,9 @@ const MAX_PENDING = 120;
  * Every input we send is applied immediately with the shared step function and
  * kept in `pending`. When a server snapshot arrives we drop the inputs it has
  * already processed (`lastSeq`), restart from the server's authoritative
- * state (position, dash, cooldowns, ammo) and re-apply the rest. If client and
+ * state (position, dash, cooldowns, ammo, and the stun a stun grenade put on
+ * us: `stunTicks` is part of PlayerSim, so the replay walks just as slowly as
+ * the server does and nothing rubber-bands) and re-apply the rest. If client and
  * server agree (the normal case, same function, same inputs) this changes
  * nothing; if they disagree, the server wins and the position difference is
  * faded out visually over a few frames.
@@ -36,6 +38,8 @@ export class Predictor {
   prev: Vec2 = { x: 0, z: 0 };
   /** Weapon in hand, from the latest snapshot. */
   weapon = 0;
+  /** Grenade type in hand (its cooldown), from the latest snapshot. */
+  grenade = 0;
   /**
    * The map we predict on: always the one of the latest snapshot (main.ts
    * calls `setMap` before `reconcile`). Predicting on any other map than the
@@ -79,7 +83,7 @@ export class Predictor {
   apply(input: InputMessage, canAct: boolean): StepResult | null {
     if (!this.sim) return null;
     this.prev = { x: this.sim.x, z: this.sim.z };
-    const res = stepPlayer(this.map, this.sim, input, this.weapon, canAct);
+    const res = stepPlayer(this.map, this.sim, input, this.weapon, canAct, this.grenade);
     this.sim = res.sim;
     this.pending.push(input);
     if (this.pending.length > MAX_PENDING) this.pending.shift();
@@ -88,9 +92,10 @@ export class Predictor {
 
   reconcile(server: PlayerView, canAct: boolean) {
     this.weapon = server.weapon;
+    this.grenade = server.grenade;
     this.pending = this.pending.filter((i) => i.seq > server.lastSeq);
     let s = readSim(server);
-    for (const input of this.pending) s = stepPlayer(this.map, s, input, this.weapon, canAct).sim;
+    for (const input of this.pending) s = stepPlayer(this.map, s, input, this.weapon, canAct, this.grenade).sim;
 
     if (!this.sim) {
       this.sim = s;

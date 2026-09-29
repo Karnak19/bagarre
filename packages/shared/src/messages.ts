@@ -10,6 +10,7 @@
 
 import { isWeaponId } from "./combat.ts";
 import { TEAM_BLUE, TEAM_RED } from "./constants.ts";
+import { isGrenadeType } from "./grenades.ts";
 import type { InputMessage, PickMessage, PingMessage, TeamMessage } from "./protocol.ts";
 
 /** Largest press counter or input seq (they are synced as uint32). */
@@ -44,10 +45,23 @@ export function parseInput(raw: unknown): InputMessage | null {
   return { seq, mx, mz, aim, fire, gx, gz, dash, grenade, shield, reload };
 }
 
-/** MSG_PICK: a weapon id that exists. */
+/**
+ * MSG_PICK: a weapon id that exists, a grenade type that exists, or both.
+ * A field that is there must be valid (a bad grenade drops the weapon pick
+ * sent with it too); a message with neither is refused.
+ */
 export function parsePick(raw: unknown): PickMessage | null {
   const m = record(raw);
-  return m && isWeaponId(m.weapon) ? { weapon: m.weapon } : null;
+  if (!m) return null;
+  const hasWeapon = m.weapon !== undefined;
+  const hasGrenade = m.grenade !== undefined;
+  if (!hasWeapon && !hasGrenade) return null;
+  if (hasWeapon && !isWeaponId(m.weapon)) return null;
+  if (hasGrenade && !isGrenadeType(m.grenade)) return null;
+  const out: PickMessage = {};
+  if (hasWeapon) out.weapon = m.weapon as number;
+  if (hasGrenade) out.grenade = m.grenade as number;
+  return out;
 }
 
 /** MSG_PONG: the number of the probe being answered. */

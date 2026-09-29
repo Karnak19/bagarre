@@ -1,5 +1,5 @@
 import { schema, t, type SchemaType } from "@colyseus/schema";
-import { DEFAULT_MAP_ID, DEFAULT_WEAPON, MAX_HP, NO_TEAM, WEAPONS } from "@bagarre/shared";
+import { DEFAULT_GRENADE, DEFAULT_MAP_ID, DEFAULT_WEAPON, MAX_HP, NO_TEAM, WEAPONS } from "@bagarre/shared";
 
 // Positions and the dash direction are float64 on purpose: the client re-runs
 // the shared step function from these exact values during reconciliation. A
@@ -64,6 +64,16 @@ export const Player = schema(
      * client just never reads it.
      */
     skin: t.string().default(""),
+
+    // Grenades (appended after `skin` for the same reason).
+    /** Stun steps left (PlayerSim.stunTicks): read by the shared step, so it's predicted. */
+    stunTicks: t.uint16().default(0),
+    /** Grenade type in hand, and the one picked for the next spawn (GRENADES index). */
+    grenade: t.uint8().default(DEFAULT_GRENADE),
+    grenadePick: t.uint8().default(DEFAULT_GRENADE),
+    /** Flash: the tick the white screen ends on, and its full length in ticks (for the fade). */
+    flashEnd: t.uint32().default(0),
+    flashTicks: t.uint16().default(0),
   },
   "Player",
 );
@@ -89,10 +99,24 @@ export const Grenade = schema(
     landed: t.boolean().default(false),
     exploded: t.boolean().default(false),
     owner: t.string().default(""),
+    /** Its type (GRENADES index), fixed at the throw. */
+    kind: t.uint8().default(DEFAULT_GRENADE),
   },
   "Grenade",
 );
 export type Grenade = SchemaType<typeof Grenade>;
+
+/** A smoke cloud on the ground (SmokeView in @bagarre/shared). */
+export const Smoke = schema(
+  {
+    x: t.float32().default(0),
+    z: t.float32().default(0),
+    start: t.uint32().default(0),
+    end: t.uint32().default(0),
+  },
+  "Smoke",
+);
+export type Smoke = SchemaType<typeof Smoke>;
 
 /** One line of the kill feed (KillView in @bagarre/shared). */
 export const KillEvent = schema(
@@ -148,6 +172,8 @@ export const GameState = schema(
     feed: t.array(KillEvent),
     /** Spectators connected (clients with no seat), capped at 255 for the sync. */
     spectators: t.uint8().default(0),
+    /** Smoke clouds on the ground; each is removed once it clears. */
+    smokes: t.map(Smoke),
   },
   "GameState",
 );

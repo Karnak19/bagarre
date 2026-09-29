@@ -9,6 +9,7 @@
 //   POST /kill { roomId, killer, victim }  the killer's shot kills the victim at once
 //                                          (through the real damage path: nothing
 //                                          happens between teammates)
+//   POST /place { roomId, id, x, z }       puts a player on (x, z) (a teleport)
 //
 // Run by playwright.config.ts (webServer), or by hand: `bun server.ts`.
 
@@ -54,12 +55,30 @@ interface RoomInternals {
   damage: DamageFn;
 }
 
+/**
+ * POST /place { roomId, id, x, z }: puts a player on (x, z) at once, as a
+ * respawn would (their client snaps to it), so a test can set up a grenade
+ * throw without walking there.
+ */
+function place(body: string, reply: (status: number, text: string) => void) {
+  const { roomId, id, x, z } = JSON.parse(body || "{}") as { roomId?: string; id?: string; x?: number; z?: number };
+  const room = roomId ? (matchMaker.getLocalRoomById(roomId) as unknown as RoomInternals | undefined) : undefined;
+  if (!room) return reply(404, `no room ${roomId}`);
+  const p = id ? (room.state.players.get(id) as { x: number; z: number; dashTicks: number } | undefined) : undefined;
+  if (!p || typeof x !== "number" || typeof z !== "number") return reply(404, `no player ${id}`);
+  p.x = x;
+  p.z = z;
+  p.dashTicks = 0;
+  reply(200, "ok");
+}
+
 /** The test-only control API. */
 createHttpServer((req, res) => {
   let body = "";
   req.on("data", (chunk: Buffer) => (body += chunk));
   req.on("end", () => {
     const reply = (status: number, text: string) => res.writeHead(status, { "content-type": "text/plain" }).end(text);
+    if (req.method === "POST" && req.url === "/place") return place(body, reply);
     if (req.method !== "POST" || req.url !== "/kill") return reply(404, "not found");
     const { roomId, killer, victim } = JSON.parse(body || "{}") as { roomId?: string; killer?: string; victim?: string };
     const room = roomId ? (matchMaker.getLocalRoomById(roomId) as unknown as RoomInternals | undefined) : undefined;

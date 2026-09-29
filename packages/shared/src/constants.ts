@@ -99,7 +99,11 @@ export const DASH = {
   cooldown: 3,
 } as const;
 
-/** Grenade (Q): lobbed at the cursor, flies over cover, explodes after a fuse. */
+/**
+ * Grenade (Q): lobbed at the cursor, flies over cover, goes off after a fuse.
+ * The throw (range, flight, arc, fuse) is the same for every type (see
+ * GRENADES below); the blast radius and damage here are the frag's.
+ */
 export const GRENADE = {
   /** Max throw distance; farther targets are pulled back to this. */
   range: 10,
@@ -112,15 +116,83 @@ export const GRENADE = {
   arcPerMetre: 0.3,
   /** Seconds between landing and exploding (the telegraph is shown meanwhile). */
   fuse: 0.6,
-  /** Blast radius, measured to the edge of the player's body. */
+  /** Frag blast radius, measured to the edge of the player's body. */
   radius: 3.5,
-  /** Damage at the centre, falling off linearly to minDamage at the edge. */
+  /** Frag damage at the centre, falling off linearly to minDamage at the edge. */
   maxDamage: 60,
   minDamage: 15,
-  /** Multiplier applied when the grenade hurts its own thrower. */
+  /** Multiplier applied when the frag hurts its own thrower. */
   selfDamageScale: 0.5,
-  cooldown: 8,
 } as const;
+
+/**
+ * Smoke grenade: leaves a cloud that hides whoever is in it, or behind it,
+ * from their enemies. Client-side only (see smokeVeil in grenades.ts). No damage.
+ */
+export const SMOKE = {
+  /** Cloud radius, metres. */
+  radius: 4,
+  /** Seconds the cloud lasts. */
+  duration: 8,
+} as const;
+
+/** Stun grenade ("para"): everyone in the blast walks slower and can't dash for a while. No damage. */
+export const STUN = {
+  /** Blast radius, measured to the edge of the player's body (like the frag's). */
+  radius: 3.5,
+  /** Seconds the stun lasts. */
+  duration: 2,
+  /** Walking speed multiplier while stunned. */
+  speedScale: 0.5,
+} as const;
+
+/**
+ * Flash grenade: a player who looks toward the blast with no cover in the way
+ * gets a white screen, shorter the farther away they are and the farther
+ * their aim is from the blast. Aiming away: nothing. No damage.
+ */
+export const FLASH = {
+  /** Farther than this from the blast: nothing. */
+  range: 14,
+  /** Up to this distance: the full length (it then shrinks linearly to 0 at `range`). */
+  fullRange: 4,
+  /** Largest angle between the aim and the blast that still flashes, radians (90°). */
+  maxAngle: Math.PI / 2,
+  /** Closer than this it goes off in your face: flashed whatever your aim. */
+  pointBlank: 1,
+  /** Longest white screen, seconds, and the shortest worth showing (below it: nothing). */
+  maxDuration: 2,
+  minDuration: 0.3,
+} as const;
+
+export interface GrenadeDef {
+  /** Stable key (test ids, the HUD). */
+  key: "frag" | "smoke" | "stun" | "flash";
+  name: string;
+  /** Seconds from a throw until the next one is allowed. */
+  cooldown: number;
+  /** The landing telegraph's radius, metres. */
+  radius: number;
+}
+
+/** `Player.grenade` / `Grenade.kind` values: the index in GRENADES. */
+export const GRENADE_FRAG = 0;
+export const GRENADE_SMOKE = 1;
+export const GRENADE_STUN = 2;
+export const GRENADE_FLASH = 3;
+
+/**
+ * Index = grenade type (MSG_PICK, `Player.grenade`, `Grenade.kind`). They all
+ * share the throw (GRENADE); only the frag hurts, and only the frag counts as
+ * the "Grenade" weapon in the kill feed.
+ */
+export const GRENADES: readonly GrenadeDef[] = [
+  { key: "frag", name: "Frag", cooldown: 8, radius: GRENADE.radius },
+  { key: "smoke", name: "Smoke", cooldown: 12, radius: SMOKE.radius },
+  { key: "stun", name: "Stun", cooldown: 10, radius: STUN.radius },
+  { key: "flash", name: "Flash", cooldown: 10, radius: 1.2 },
+];
+export const DEFAULT_GRENADE = GRENADE_FRAG;
 
 /** Shield (E): a bubble that absorbs damage before HP. */
 export const SHIELD = {
@@ -136,8 +208,9 @@ export const SHIELD = {
 export const DASH_TICKS = ticks(DASH.duration);
 export const DASH_SPEED = DASH.distance / (DASH_TICKS * TICK_DT);
 export const DASH_COOLDOWN_TICKS = ticks(DASH.cooldown);
-export const GRENADE_COOLDOWN_TICKS = ticks(GRENADE.cooldown);
 export const GRENADE_FUSE_TICKS = ticks(GRENADE.fuse);
+export const SMOKE_TICKS = ticks(SMOKE.duration);
+export const STUN_TICKS = ticks(STUN.duration);
 export const SHIELD_TICKS = ticks(SHIELD.duration);
 export const SHIELD_COOLDOWN_TICKS = ticks(SHIELD.cooldown);
 

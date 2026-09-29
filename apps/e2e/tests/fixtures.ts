@@ -35,6 +35,8 @@ export interface PlayerState {
   mode: string | null;
   phase: string | null;
   mapId: string | null;
+  /** The latest snapshot's server tick (0 before any). */
+  tick: number;
   spectators: number;
   /** Team deathmatch: each team's kills. */
   redScore: number;
@@ -63,6 +65,16 @@ export interface PlayerState {
     hp: number;
     x: number;
     z: number;
+    /** Grenade type in hand and picked (GRENADES index), steps of stun left, and the flash's end tick and length. */
+    grenade: number;
+    /** Aim angle, radians (as the server last applied it). */
+    aim: number;
+    /** Last input the server applied for this player. */
+    lastSeq: number;
+    grenadePick: number;
+    stunTicks: number;
+    flashEnd: number;
+    flashTicks: number;
   }[];
 }
 
@@ -125,6 +137,13 @@ export class Player {
           hp: Number(p.hp),
           x: Number(p.x),
           z: Number(p.z),
+          grenade: Number(p.grenade),
+          aim: Number(p.aim),
+          lastSeq: Number(p.lastSeq),
+          grenadePick: Number(p.grenadePick),
+          stunTicks: Number(p.stunTicks),
+          flashEnd: Number(p.flashEnd),
+          flashTicks: Number(p.flashTicks),
         }),
       );
       players.sort((a, c) => a.slot - c.slot);
@@ -139,6 +158,7 @@ export class Player {
         mode: latest?.mode ?? null,
         phase: latest?.phase ?? null,
         mapId: latest?.mapId ?? null,
+        tick: latest?.tick ?? 0,
         spectators: latest?.spectators ?? 0,
         redScore: latest?.redScore ?? 0,
         blueScore: latest?.blueScore ?? 0,
@@ -189,7 +209,7 @@ export class Player {
   }
 
   /** Drives the dev autopilot (`__bagarre.bot`): world-space move, aim angle, fire. */
-  bot(patch: { on?: boolean; mx?: number; mz?: number; aim?: number; fire?: boolean }): Promise<void> {
+  bot(patch: { on?: boolean; mx?: number; mz?: number; aim?: number; fire?: boolean; target?: { x: number; z: number } | null }): Promise<void> {
     // oxlint-disable-next-line typescript/no-explicit-any
     return this.page.evaluate((p) => void Object.assign((window as any).__bagarre.bot, p), patch);
   }
@@ -284,6 +304,15 @@ export async function kill(roomId: string, killer: string, victim: string) {
   const res = await fetch(`http://localhost:${SERVER_PORT + 1}/kill`, {
     method: "POST",
     body: JSON.stringify({ roomId, killer, victim }),
+  });
+  expect(res.status, await res.text()).toBe(200);
+}
+
+/** Asks the e2e server to put a player on (x, z) at once (server.ts' /place). */
+export async function place(roomId: string, id: string, x: number, z: number) {
+  const res = await fetch(`http://localhost:${SERVER_PORT + 1}/place`, {
+    method: "POST",
+    body: JSON.stringify({ roomId, id, x, z }),
   });
   expect(res.status, await res.text()).toBe(200);
 }

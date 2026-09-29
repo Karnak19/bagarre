@@ -11,17 +11,19 @@ import {
   DASH_COOLDOWN_TICKS,
   DASH_SPEED,
   DASH_TICKS,
+  DEFAULT_GRENADE,
   DEFAULT_WEAPON,
   GRENADE,
-  GRENADE_COOLDOWN_TICKS,
   NO_TEAM,
   PLAYER_SPEED,
   SHIELD_COOLDOWN_TICKS,
+  STUN,
   TICK_DT,
   WEAPONS,
   ticks,
   type WeaponDef,
 } from "./constants.ts";
+import { grenadeCooldownTicks } from "./grenades.ts";
 import { clamp, clampMove, movePlayer, muzzle, type BulletSim, type Vec2 } from "./physics.ts";
 import { PLAYER_SIM_KEYS, type InputMessage, type PlayerSim } from "./protocol.ts";
 
@@ -58,6 +60,7 @@ export function spawnSim(x: number, z: number, weapon: number, seen?: PlayerSim)
     shieldSeen: seen?.shieldSeen ?? 0,
     reloadSeen: seen?.reloadSeen ?? 0,
     burstLeft: 0,
+    stunTicks: 0,
   };
 }
 
@@ -93,8 +96,23 @@ const dec = (v: number) => (v > 0 ? v - 1 : 0);
  * Advances a player by one input. `canAct` is false while dead or after the
  * match ended: cooldowns still run and presses are still consumed (so a press
  * made while dead doesn't fire on respawn), but nothing moves or happens.
+ * `grenadeType` (a GRENADES index, the one in hand) sets the cooldown a throw
+ * starts.
+ *
+ * A stun (`stunTicks` > 0, set by the server when a stun grenade goes off)
+ * slows walking to STUN.speedScale, cuts a dash short and blocks new ones; a
+ * dash press made meanwhile is used up, like one made during the cooldown.
+ * It counts down here, once per input, so the client's prediction slows
+ * down exactly with the server.
  */
-export function stepPlayer(arena: Arena, prev: PlayerSim, input: InputMessage, weaponId: number, canAct: boolean): StepResult {
+export function stepPlayer(
+  arena: Arena,
+  prev: PlayerSim,
+  input: InputMessage,
+  weaponId: number,
+  canAct: boolean,
+  grenadeType: number = DEFAULT_GRENADE,
+): StepResult {
   const w = weaponDef(weaponId);
   const s: PlayerSim = { ...prev };
   const res: StepResult = { sim: s, fired: false, grenade: null, shield: false, dashing: false };
@@ -112,6 +130,8 @@ export function stepPlayer(arena: Arena, prev: PlayerSim, input: InputMessage, w
   s.fireCd = dec(s.fireCd);
   s.grenadeCd = dec(s.grenadeCd);
   s.shieldCd = dec(s.shieldCd);
+  const stunned = s.stunTicks > 0;
+  s.stunTicks = dec(s.stunTicks);
   if (s.reloadTicks > 0) {
     s.reloadTicks--;
     if (s.reloadTicks === 0) s.ammo = w.magazine;
@@ -126,7 +146,8 @@ export function stepPlayer(arena: Arena, prev: PlayerSim, input: InputMessage, w
   if (pressReload && s.reloadTicks === 0 && s.ammo < w.magazine) s.reloadTicks = ticks(w.reloadTime);
 
   const move = clampMove(input.mx, input.mz);
-  if (pressDash && s.dashCd === 0 && s.dashTicks === 0) {
+  if (stunned) s.dashTicks = 0;
+  if (pressDash && !stunned && s.dashCd === 0 && s.dashTicks === 0) {
     // Move direction if moving, otherwise where we're facing.
     const len = Math.sqrt(move.x * move.x + move.z * move.z);
     if (len > 1e-3) {
@@ -146,7 +167,8 @@ export function stepPlayer(arena: Arena, prev: PlayerSim, input: InputMessage, w
     res.dashing = true;
     p = movePlayer(arena, s, s.dashDx * DASH_SPEED * TICK_DT, s.dashDz * DASH_SPEED * TICK_DT);
   } else {
-    p = movePlayer(arena, s, move.x * PLAYER_SPEED * TICK_DT, move.z * PLAYER_SPEED * TICK_DT);
+    const speed = stunned ? PLAYER_SPEED * STUN.speedScale : PLAYER_SPEED;
+    p = movePlayer(arena, s, move.x * speed * TICK_DT, move.z * speed * TICK_DT);
   }
   s.x = p.x;
   s.z = p.z;
@@ -169,7 +191,7 @@ export function stepPlayer(arena: Arena, prev: PlayerSim, input: InputMessage, w
   }
 
   if (pressGrenade && s.grenadeCd === 0) {
-    s.grenadeCd = GRENADE_COOLDOWN_TICKS;
+    s.grenadeCd = grenadeCooldownTicks(grenadeType);
     res.grenade = grenadeTarget(arena, s.x, s.z, input.gx, input.gz);
   }
 
@@ -263,8 +285,9 @@ export function grenadeArc(ox: number, oz: number, tx: number, tz: number, t: nu
 }
 
 /**
- * Blast damage at `distance` metres from the centre to the edge of a body
- * (0 = standing on it). Null outside the radius.
+ * Frag blast damage at `distance` metres from the centre to the edge of a
+ * body (0 = standing on it). Null outside the radius. (The other grenade
+ * types deal no damage, see grenades.ts.)
  */
 export function grenadeDamage(distance: number, self: boolean): number | null {
   if (distance > GRENADE.radius) return null;
