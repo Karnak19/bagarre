@@ -32,6 +32,7 @@ import {
   DASH_COOLDOWN_TICKS,
   DASH_TICKS,
   GRENADE,
+  HIT_REWIND_TICKS,
   INPUT_BURST,
   KILLS_TO_WIN,
   MATCH_END_DELAY,
@@ -52,6 +53,8 @@ import {
   MAPS,
   WEAPONS,
   bodiesSee,
+  bulletLifeTicks,
+  circlesOverlap,
   circleOverlapsBox,
   grenadeDamage,
   grenadeTarget,
@@ -779,6 +782,142 @@ async function shieldDuel() {
       `shield absorbs ${SHIELD.absorb} of a ${sniper} hit before HP (hp ${other(r1)!.hp}, expected ${hpExpected})`,
     );
   } finally {
+    d1.stop();
+    d2.stop();
+    await r2.leave();
+    await r1.leave();
+  }
+  return lines;
+}
+
+// ---------------------------------------------------------------------------
+// Part 2d: hit registration on a strafing target (lag compensation). A
+// shooter sees the other player HIT_REWIND_TICKS (INTERP_DELAY_MS) in the
+// past, so the server tests bullet hits against the poses of that tick.
+// ---------------------------------------------------------------------------
+const REVOLVER_ID = WEAPONS.findIndex((w) => w.key === "revolver");
+
+type Pose = { x: number; z: number; alive: boolean };
+
+/**
+ * Replays one shot of the revolver (no spread) on the server's ticks: fired
+ * from `from` at tick `fireTick`, tested at each tick t against the target's
+ * pose at t - `lag`. True if it hits, false if not, null if a pose is missing.
+ */
+function replayShot(from: Vec2, aim: number, seq: number, fireTick: number, poses: Map<number, Pose>, lag: number): boolean | null {
+  const sim = shotPellets(REVOLVER_ID, from.x, from.z, aim, seq)[0];
+  for (let t = fireTick; t < fireTick + bulletLifeTicks(WEAPONS[REVOLVER_ID]); t++) {
+    const pose = poses.get(t - lag);
+    if (!pose) return null;
+    let hit = false;
+    const flying = stepBullet(YARD, sim, (bx, bz) => (hit = pose.alive && circlesOverlap(bx, bz, BULLET_RADIUS, pose.x, pose.z, PLAYER_RADIUS)));
+    if (hit) return true;
+    if (!flying) return false;
+  }
+  return false;
+}
+
+/**
+ * P2 strafes at full speed along the z = -12 row, P1 fires across it from
+ * 2.5 m away. Two kinds of shot, each fired as P2 crosses x = 0:
+ * - "seen": aimed at P2's pose HIT_REWIND_TICKS old (what P1's screen draws).
+ *   It must hit, and it lands where the live P2 no longer is: the old server,
+ *   testing live poses, missed it.
+ * - "ahead": aimed HIT_REWIND_TICKS ahead of P2's live pose, the lead the old
+ *   server wanted. It lands where the live P2 is but not the rewound one, so
+ *   it must miss now.
+ * (A shot at the live pose itself proves nothing either way: the shooter's own
+ * input delay, a tick or two, already covers most of the rewind.)
+ * Every shot is replayed on the poses P1 received, per server tick, to check
+ * its geometry really tells the rewound target from the live one; a shot
+ * where it does not (network jitter) is fired again.
+ */
+async function hitRegDuel() {
+  const tag = "[hitreg]";
+  const { r1, r2, d1, d2 } = await duel(tag, REVOLVER_ID);
+  const lines: [boolean, string][] = [];
+  const ok = (c: boolean, l: string) => lines.push([c, `${tag} ${l}`]);
+  const poses = new Map<number, Pose>();
+  /** Per shot seq: the server tick that applied it (P1's lastSeq reached it). */
+  const applied = new Map<number, number>();
+  let pending: number | null = null;
+  let armed: ((live: Pose, tick: number) => void) | null = null;
+  const cb = (raw: unknown) => {
+    const s = raw as RoomStateView;
+    const b = s.players.get(r2.sessionId);
+    const a = s.players.get(r1.sessionId);
+    if (!a || !b) return;
+    poses.set(s.tick, { x: b.x, z: b.z, alive: b.alive });
+    if (pending !== null && a.lastSeq >= pending) {
+      applied.set(pending, s.tick);
+      pending = null;
+    }
+    armed?.({ x: b.x, z: b.z, alive: b.alive }, s.tick);
+  };
+  r1.onStateChange(cb);
+  try {
+    ok(me(r1)!.weapon === REVOLVER_ID, "P1 holds the revolver (no spread)");
+    const [a1, a2] = await Promise.all([
+      d1.goTo(0, -12).then(() => d1.goTo(0, -9.5)),
+      d2.goTo(12, -12).then(() => d2.goTo(9, -12)),
+    ]);
+    if (!a1 || !a2) throw new Error(`${tag} players did not reach their spots`);
+    await Promise.all([caughtUp(r1, d1), caughtUp(r2, d2)]);
+    const from = { x: me(r1)!.x, z: me(r1)!.z };
+
+    /** One pass of P2 across the row, one shot of `kind`. Returns the replays and what the server did. */
+    const pass = async (kind: "seen" | "ahead", toX: number) => {
+      const dir = Math.sign(toX - other(r1)!.x);
+      const hitsBefore = me(r1)!.hits;
+      const hpBefore = other(r1)!.hp;
+      const walk = d2.goTo(toX, -12);
+      const shot = new Promise<{ seq: number; aim: number }>((resolve) => {
+        armed = (live, tick) => {
+          if (live.x * dir < 0) return; // P2 has not crossed x = 0 yet
+          const past = poses.get(tick - HIT_REWIND_TICKS);
+          if (!past) return;
+          armed = null;
+          // "ahead" extrapolates as far forward as "seen" looks back.
+          const target = kind === "seen" ? past : { x: 2 * live.x - past.x, z: 2 * live.z - past.z };
+          const aim = Math.atan2(target.z - from.z, target.x - from.x);
+          d1.set({ aim });
+          d1.fireOnce();
+          const seq = d1.seq + 1; // the driver's next input carries it
+          pending = seq;
+          resolve({ seq, aim });
+        };
+      });
+      const { seq, aim } = await shot;
+      await walk;
+      await sleep(300);
+      const fireTick = applied.get(seq);
+      const rewound = fireTick === undefined ? null : replayShot(from, aim, seq, fireTick, poses, HIT_REWIND_TICKS);
+      const live = fireTick === undefined ? null : replayShot(from, aim, seq, fireTick, poses, 0);
+      const hit = me(r1)!.hits > hitsBefore && other(r1)!.hp < hpBefore;
+      return { rewound, live, hit, clean: rewound !== null && live !== null && rewound !== live };
+    };
+
+    // Up to 3 passes per kind, until one whose geometry is clean.
+    let x = 9;
+    for (const kind of ["ahead", "seen"] as const) {
+      let tries = 0;
+      let res: Awaited<ReturnType<typeof pass>> | null = null;
+      while (tries < 3 && !res?.clean) {
+        tries++;
+        x = -x;
+        res = await pass(kind, x);
+        if (!other(r1)?.alive) throw new Error(`${tag} P2 died, the passes need it alive`);
+      }
+      const expected = kind === "seen";
+      const what = expected ? `at the pose seen ${HIT_REWIND_TICKS} ticks ago hits` : `${HIT_REWIND_TICKS} ticks ahead of the live pose misses`;
+      ok(
+        !!res?.clean && res.rewound === expected && res.hit === expected,
+        `a shot aimed ${what} a target strafing at full speed ` +
+          `(server ${res?.hit ? "hit" : "missed"}; replay: rewound ${res?.rewound}, live ${res?.live}; ${tries} pass(es))`,
+      );
+    }
+  } finally {
+    r1.onStateChange.remove(cb);
     d1.stop();
     d2.stop();
     await r2.leave();
@@ -1563,6 +1702,7 @@ try {
     burstDuel(),
     grenadeDuel(),
     shieldDuel(),
+    hitRegDuel(),
     ...WALL_CASES.map((c) => mapDuel(c)),
     randomMaps(),
     // The warmup (its real 8 s duel included), alongside.

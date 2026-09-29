@@ -49,6 +49,8 @@ import {
   TEAM_RULES,
   GRENADES,
   GRENADE_FUSE_TICKS,
+  HIT_HISTORY_FRAMES,
+  HIT_REWIND_TICKS,
   SMOKE_TICKS,
   STUN,
   STUN_TICKS,
@@ -155,6 +157,19 @@ interface BulletInternal {
   weapon: number;
   /** The shooter's team when it was fired (NO_TEAM outside a team mode): it flies through that team. */
   team: number;
+}
+
+/** Where a player stood at the end of one tick's movement (see `history`). */
+interface PastPose {
+  x: number;
+  z: number;
+  alive: boolean;
+}
+
+/** One tick of player poses, by session id. */
+interface HistoryFrame {
+  tick: number;
+  poses: Map<string, PastPose>;
 }
 
 /** A grenade going off this tick: where, whose, and its type (a GRENADES index). */
@@ -296,6 +311,12 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   private admitting = false;
   private bulletInternals = new Map<string, BulletInternal>();
   private grenadeInternals = new Map<string, GrenadeInternal>();
+  /**
+   * The last HIT_HISTORY_FRAMES ticks of player poses, a ring indexed by
+   * `tick % HIT_HISTORY_FRAMES`. Bullets test their hits against the frame
+   * HIT_REWIND_TICKS old: the poses the shooter saw (see stepBullets).
+   */
+  private history: (HistoryFrame | undefined)[] = [];
   private nextGrenadeId = 0;
   private nextKill = 0;
   private matchResetTicks = 0;
@@ -954,6 +975,29 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     this.state.grenades.clear();
     this.grenadeInternals.clear();
     this.state.smokes.clear();
+    // A new match must not rewind into the previous one's poses.
+    this.history = [];
+  }
+
+  /**
+   * Stores this tick's player poses. Called once positions are final for the
+   * tick (inputs applied) and before any bullet moves.
+   */
+  private recordHistory() {
+    const tick = this.state.tick;
+    const slot = tick % HIT_HISTORY_FRAMES;
+    const frame = this.history[slot] ?? { tick, poses: new Map<string, PastPose>() };
+    frame.tick = tick;
+    frame.poses.clear();
+    this.state.players.forEach((p, id) => frame.poses.set(id, { x: p.x, z: p.z, alive: p.alive }));
+    this.history[slot] = frame;
+  }
+
+  /** The frame of `tick`, or undefined if it is not (or no longer) in the ring. */
+  private historyAt(tick: number): HistoryFrame | undefined {
+    if (tick < 0) return undefined;
+    const frame = this.history[tick % HIT_HISTORY_FRAMES];
+    return frame && frame.tick === tick ? frame : undefined;
   }
 
   private tick() {
@@ -975,7 +1019,9 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       }
     });
 
-    // 2. Move bullets and grenades, resolve hits and blasts.
+    // 2. Move bullets and grenades, resolve hits and blasts. The poses are
+    //    recorded first: final for this tick, and untouched by combat yet.
+    this.recordHistory();
     this.stepBullets();
     this.stepGrenades();
 
@@ -1137,6 +1183,10 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
 
   private stepBullets() {
     const dead: string[] = [];
+    // Lag compensation: the shooter aimed at poses drawn INTERP_DELAY_MS in
+    // the past, so hits are tested against the poses of that tick. The whole
+    // flight is shifted by the same amount, like the shooter's own screen.
+    const past = this.historyAt(this.state.tick - HIT_REWIND_TICKS);
     this.state.bullets.forEach((bullet, id) => {
       const internal = this.bulletInternals.get(id);
       if (!internal) {
@@ -1149,7 +1199,10 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
         this.state.players.forEach((target, targetId) => {
           // A teammate is not in the way: the bullet flies through (canDamage).
           if (hit || targetId === bullet.owner || !target.alive || !canDamage(internal.team, target.team, false)) return;
-          if (circlesOverlap(bx, bz, BULLET_RADIUS, target.x, target.z, PLAYER_RADIUS)) {
+          // No past pose (just joined) or dead back then: nothing to hit.
+          const pose = past?.poses.get(targetId);
+          if (!pose || !pose.alive) return;
+          if (circlesOverlap(bx, bz, BULLET_RADIUS, pose.x, pose.z, PLAYER_RADIUS)) {
             hit = true;
             const shooter = this.state.players.get(bullet.owner);
             if (shooter && this.state.phase === "playing") shooter.hits = Math.min(0xffff, shooter.hits + 1);
