@@ -99,7 +99,7 @@ function capture(state: RoomStateView): Omit<Snapshot, "t" | "epoch"> {
     }),
   );
   const smokes = new Map<string, SmokeView>();
-  state.smokes?.forEach((c, id) => smokes.set(id, { x: c.x, z: c.z, start: c.start, end: c.end }));
+  state.smokes?.forEach((c, id) => smokes.set(id, { x: c.x, z: c.z, start: c.start, end: c.end, owner: c.owner, team: c.team }));
   const feed: KillView[] = [];
   state.feed?.forEach((k) =>
     feed.push({

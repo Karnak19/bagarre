@@ -22,7 +22,7 @@ import {
   TICK_RATE,
   ticks,
 } from "../src/constants.ts";
-import { flashTicks, grenadeCooldownTicks, healAmount, isGrenadeType, smokeHides, smokeVeil } from "../src/grenades.ts";
+import { flashTicks, grenadeCooldownTicks, healAmount, isGrenadeType, ownsCloud, smokeCover, smokeHides, smokeVeil } from "../src/grenades.ts";
 import { parsePick } from "../src/messages.ts";
 import { lineOfSight, segmentHitsBox, segmentHitsCircle } from "../src/physics.ts";
 import type { InputMessage, PlayerSim } from "../src/protocol.ts";
@@ -123,8 +123,10 @@ const eye = { x: 0, z: -5 - FLASH.fullRange }; // straight south of it, in the o
 const north = Math.PI / 2; // aim toward +z: at the blast
 const max = Math.round(FLASH.maxDuration * TICK_RATE);
 check(flashTicks(arena, eye, north, blast) === max, `aiming straight at it, close: the full ${FLASH.maxDuration} s`);
-check(flashTicks(arena, eye, -north, blast) === 0, "aiming away: nothing");
-check(flashTicks(arena, eye, 0, blast) === 0, "aiming across it (90°): nothing");
+const away = flashTicks(arena, eye, -north, blast);
+const across = flashTicks(arena, eye, 0, blast);
+check(max > across && across > away && away > 0, `still flashed when turned away, just shorter (facing: ${max}, across 90°: ${across}, away: ${away} ticks)`);
+check(Math.abs(away - max * FLASH.backFactor) <= 1, `aiming away: about ${FLASH.backFactor} of the full length`);
 const at30 = flashTicks(arena, eye, north - Math.PI / 6, blast);
 const at60 = flashTicks(arena, eye, north - Math.PI / 3, blast);
 check(max > at30 && at30 > at60 && at60 > 0, `the farther the aim from it, the shorter (0°: ${max}, 30°: ${at30}, 60°: ${at60} ticks)`);
@@ -171,12 +173,36 @@ check(!smokeHides({ x: -10, z: 0 }, { x: -6, z: 0 }, cloud, 4), "a target in fro
 check(!smokeHides({ x: -10, z: 6 }, { x: 10, z: 6 }, cloud, 4), "a line passing beside the cloud: seen");
 check(smokeHides({ x: 1, z: 0 }, { x: -10, z: 0 }, cloud, 4), "from inside the cloud nobody outside is seen");
 check(!smokeHides({ x: -10, z: 0 }, { x: 1, z: 0 }, [], 4), "no cloud: seen");
-check(smokeVeil(NO_TEAM, NO_TEAM, false, true) === "hidden", "an enemy in smoke is hidden (duel, FFA)");
-check(smokeVeil(TEAM_RED, TEAM_BLUE, false, true) === "hidden", "an enemy in smoke is hidden (teams)");
-check(smokeVeil(TEAM_RED, TEAM_RED, false, true) === "none", "a teammate in smoke is still seen");
-check(smokeVeil(NO_TEAM, NO_TEAM, true, true) === "none", "you always see yourself");
-check(smokeVeil(null, TEAM_RED, false, true) === "faded", "a spectator sees a player in smoke faded");
-check(smokeVeil(NO_TEAM, NO_TEAM, false, false) === "none" && smokeVeil(null, NO_TEAM, false, false) === "none", "out of the smoke: seen by all");
+check(smokeVeil(NO_TEAM, NO_TEAM, false, "foreign") === "hidden", "an enemy in smoke is hidden (duel, FFA)");
+check(smokeVeil(TEAM_RED, TEAM_BLUE, false, "foreign") === "hidden", "an enemy in smoke is hidden (teams)");
+check(smokeVeil(TEAM_RED, TEAM_RED, false, "foreign") === "none", "a teammate in smoke is still seen");
+check(smokeVeil(NO_TEAM, NO_TEAM, true, "foreign") === "none", "you always see yourself");
+check(smokeVeil(null, TEAM_RED, false, "foreign") === "faded", "a spectator sees a player in smoke faded");
+check(smokeVeil(NO_TEAM, NO_TEAM, false, "none") === "none" && smokeVeil(null, NO_TEAM, false, "none") === "none", "out of the smoke: seen by all");
+
+// Whose cloud it is: the thrower's side sees through it (faded), everyone else is blocked.
+const redCloud = { owner: "r1", team: TEAM_RED };
+const ffaCloud = { owner: "f1", team: NO_TEAM };
+check(ownsCloud("r1", TEAM_RED, redCloud) && ownsCloud("r2", TEAM_RED, redCloud), "teams: the thrower and their teammates own the cloud");
+check(!ownsCloud("b1", TEAM_BLUE, redCloud), "teams: the other team does not");
+check(ownsCloud("f1", NO_TEAM, ffaCloud) && !ownsCloud("f2", NO_TEAM, ffaCloud), "duel/FFA: only the thrower owns it (NO_TEAM is not a team)");
+check(!ownsCloud(null, null, redCloud), "a spectator owns no cloud");
+const mineOf = (id: string | null, team: number | null, cs: { x: number; z: number; owner: string; team: number }[]) =>
+  cs.map((c) => ({ x: c.x, z: c.z, mine: ownsCloud(id, team, c) }));
+const nearCloud = { x: 0, z: 0, ...redCloud };
+const far = { x: 6, z: 0, owner: "b1", team: TEAM_BLUE };
+const from = { x: -10, z: 0 };
+const to = { x: 1, z: 0 };
+const behindBoth = { x: 12, z: 0 };
+check(smokeCover(from, to, mineOf("r2", TEAM_RED, [nearCloud]), 4) === "own", "own team's cloud in the way: cover is own");
+check(smokeCover(from, to, mineOf("b1", TEAM_BLUE, [nearCloud]), 4) === "foreign", "enemy team's cloud in the way: cover is foreign");
+check(smokeCover(from, to, [], 4) === "none", "no cloud in the way: no cover");
+check(smokeCover(from, behindBoth, mineOf("r2", TEAM_RED, [nearCloud, far]), 4) === "foreign", "own cloud and a foreign one in the chain: foreign");
+check(smokeCover(from, behindBoth, mineOf("r2", TEAM_RED, [nearCloud, { ...far, owner: "r3", team: TEAM_RED }]), 4) === "own", "two own clouds in the chain: own");
+check(smokeVeil(TEAM_RED, TEAM_BLUE, false, "own") === "faded", "the thrower's team sees an enemy in its smoke faded");
+check(smokeVeil(TEAM_BLUE, TEAM_RED, false, "foreign") === "hidden", "the other team still sees nothing");
+check(smokeVeil(NO_TEAM, NO_TEAM, false, "own") === "faded", "FFA: the thrower sees others in their smoke faded");
+check(smokeVeil(null, TEAM_RED, false, smokeCover(from, to, mineOf(null, null, [nearCloud]), 4)) === "faded", "a spectator still sees it faded");
 
 // --- MSG_PICK -----------------------------------------------------------------------
 

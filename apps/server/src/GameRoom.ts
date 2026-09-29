@@ -1234,13 +1234,15 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     return out;
   }
 
-  /** A smoke grenade went off: a cloud for SMOKE_TICKS. Who it hides is up to each client (smokeVeil). */
-  private smoke({ x, z }: Blast) {
+  /** A smoke grenade went off: a cloud for SMOKE_TICKS. Who it hides is up to each client (smokeVeil); it remembers who threw it. */
+  private smoke({ x, z, owner, team }: Blast) {
     const s = new Smoke();
     s.x = x;
     s.z = z;
     s.start = this.state.tick;
     s.end = this.state.tick + SMOKE_TICKS;
+    s.owner = owner;
+    s.team = team;
     this.state.smokes.set(String(this.nextGrenadeId++), s);
   }
 

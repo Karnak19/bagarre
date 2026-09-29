@@ -151,6 +151,10 @@ test("smoke hides a player in it from enemies (model, plate, minimap), a spectat
   await expect.poll(() => veilOf(d, ida)).toBe("faded");
   await expect.poll(() => plateOf(d, ida)).toMatchObject({ visible: true, faded: true });
 
+  // A threw it, so A sees through their own cloud: B, behind it, is faded (not hidden).
+  await expect.poll(() => veilOf(a, idb), { message: "A sees B faded through their own smoke" }).toBe("faded");
+  await expect.poll(() => plateOf(a, idb)).toMatchObject({ visible: true, faded: true });
+
   // A fires from inside (away from everyone): heard, but no dot on B's minimap.
   const shotsFrom = await b.sfxCount();
   await a.bot({ fire: true, aim: Math.PI });
@@ -251,7 +255,7 @@ test("stun slows the players in it and blocks their dash, with no rubber-banding
   await expect.poll(async () => (await playerIn(a, idb)).hp, { message: "the frag hurts B" }).toBeLessThan(100);
 });
 
-test("flash: a player aiming at it gets the white screen; aiming away, or behind cover, gets nothing", async ({ players }) => {
+test("flash: a player aiming at it gets the white screen; aiming away gets a shorter one, and behind cover gets nothing", async ({ players }) => {
   const { host: a, invite, code } = await players.host("duel", "A");
   await a.testId("grenade-pick-flash").click();
   await expect.poll(async () => a.me(await a.state())?.grenadePick).toBe(3);
@@ -305,10 +309,12 @@ test("flash: a player aiming at it gets the white screen; aiming away, or behind
     await expect.poll(async () => a.me(await a.state())?.alive).toBe(true);
   }
 
-  // 2. Same place, B aiming away: nothing.
+  // 2. Same place, B aiming away: still flashed, but only FLASH.backFactor of the full length.
   await rearm();
-  expect((await flashOnce({ x: -10, z: -12 }, { x: 0, z: -12 }, 0, { x: -4, z: -12 })).flashed).toBe(false);
-  await expect(b.testId("hud-flash")).not.toHaveAttribute("data-active", "");
+  const away = await flashOnce({ x: -10, z: -12 }, { x: 0, z: -12 }, 0, { x: -4, z: -12 });
+  expect(away.flashed).toBe(true);
+  expect(away.ticks).toBe(ticks(FLASH.maxDuration * FLASH.backFactor));
+  expect(away.ticks).toBeLessThan(ticks(FLASH.maxDuration));
 
   // 3. B looks at it, but the crate stack north of the centre is in the way: nothing.
   await rearm();

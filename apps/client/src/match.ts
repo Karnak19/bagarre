@@ -25,7 +25,8 @@ import {
   ordinal,
   playerCan,
   sameTeam,
-  smokeHides,
+  ownsCloud,
+  smokeCover,
   smokeVeil,
   weaponDef,
   type InputMessage,
@@ -681,10 +682,12 @@ export class Match {
     const renderTick = buffer.sampleTick(renderTime);
     const clouds: SmokeCloud[] = [];
     buffer.sampleSmokes(renderTime)?.forEach((c, id) => {
-      if (c.start <= renderTick && renderTick < c.end) clouds.push({ id, x: c.x, z: c.z, start: c.start, end: c.end });
+      if (c.start <= renderTick && renderTick < c.end) clouds.push({ id, x: c.x, z: c.z, start: c.start, end: c.end, owner: c.owner, team: c.team });
     });
     scene.syncSmokes(clouds, renderTick);
     const viewerTeam = meServer ? myTeam : null;
+    // The clouds our side threw (us, or our team) are see-through to us.
+    const seenClouds = clouds.map((c) => ({ x: c.x, z: c.z, mine: ownsCloud(meServer ? sessionId : null, viewerTeam, c) }));
 
     latest?.players.forEach((p, id) => {
       if (id === sessionId) return;
@@ -693,7 +696,7 @@ export class Match {
       if (!s) return;
       const m = this.meshFor(id, paintOf(s), s.skin);
       // A spectator has no viewpoint: only being inside a cloud counts (and it fades, never hides).
-      const veil = clouds.length > 0 ? smokeVeil(viewerTeam, s.team, false, smokeHides(viewer ?? s, s, clouds)) : "none";
+      const veil = clouds.length > 0 ? smokeVeil(viewerTeam, s.team, false, smokeCover(viewer ?? s, s, seenClouds)) : "none";
       m.set(s.x, s.z, s.aim, s.alive, s.weapon, veil);
       if (s.stunTicks > 0) m.stunned(now);
       const shield = s.shieldTicks > 0 ? s.shieldHp / SHIELD.absorb : 0;
@@ -740,7 +743,7 @@ export class Match {
       if (localBullets.owns(id)) continue;
       const owner = latest?.players.get(b.owner);
       // An enemy's bullet in or behind smoke isn't drawn (see above); a spectator sees them all.
-      const hidden = !!viewer && clouds.length > 0 && !sameTeam(owner?.team ?? NO_TEAM, myTeam) && smokeHides(viewer, b, clouds);
+      const hidden = !!viewer && clouds.length > 0 && !sameTeam(owner?.team ?? NO_TEAM, myTeam) && smokeCover(viewer, b, seenClouds) === "foreign";
       bullets.set(id, { x: b.x, z: b.z, slot: owner ? paintOf(owner) : 0, owner: b.owner, hidden });
     }
     if (meServer) localBullets.render(this.accumulator / TICK_MS, paintOf(meServer), bullets, sessionId);

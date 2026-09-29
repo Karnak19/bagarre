@@ -279,6 +279,9 @@ export interface SmokeView {
   /** Server ticks it appeared on and clears on. */
   start: number;
   end: number;
+  /** Session id of the player who threw it, and their team (NO_TEAM outside teams): who sees through it. */
+  owner: string;
+  team: number;
 }
 
 /** Minimal iteration interface shared by Colyseus MapSchema and Map. */

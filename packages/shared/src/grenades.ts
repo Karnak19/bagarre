@@ -8,8 +8,8 @@
 //   it, is hidden from their enemies (smokeHides / smokeVeil below).
 // - stun: `stunTicks` on everyone in the radius; `stepPlayer` slows them and
 //   blocks their dash while it runs.
-// - flash: a white screen for whoever looks toward it with no cover in the
-//   way (flashTicks below), resolved by the server at the blast.
+// - flash: a white screen for anyone with no cover in the way, longest for
+//   whoever looks toward it and shorter with their back turned (flashTicks below), resolved by the server at the blast.
 // - heal: an instant HEAL.amount of health (healAmount below) for the
 //   thrower and their teammates in the radius, with no cover in the way.
 //
@@ -54,12 +54,13 @@ function angleBetween(a: number, b: number): number {
  * 0 when:
  * - the blast is farther than FLASH.range;
  * - cover is in the way (lineOfSight: no flashing through walls);
- * - their aim is FLASH.maxAngle (90°) or more away from the blast, unless it
- *   goes off in their face (closer than FLASH.pointBlank).
- * Otherwise the length is FLASH.maxDuration, times an angle factor (1 aiming
- * straight at it, easing down to 0 at 90°) and a distance factor (1 up to
- * FLASH.fullRange, then down to 0 at FLASH.range). Under FLASH.minDuration it
- * is nothing.
+ * - the length works out under FLASH.minDuration (see below).
+ * Turning away never cancels it: the length is FLASH.maxDuration, times an
+ * angle factor (1 aiming straight at it, easing down to FLASH.backFactor at
+ * 180°) and a distance factor (1 up to FLASH.fullRange, then down to 0 at
+ * FLASH.range). Closer than FLASH.pointBlank the aim does not matter (angle
+ * factor 1). Under FLASH.minDuration it is nothing, so far away and turned
+ * away can still come out at 0.
  */
 export function flashTicks(arena: Arena, eye: Vec2, aim: number, blast: Vec2): number {
   const dx = blast.x - eye.x;
@@ -70,8 +71,7 @@ export function flashTicks(arena: Arena, eye: Vec2, aim: number, blast: Vec2): n
   let angleFactor = 1;
   if (d >= FLASH.pointBlank) {
     const off = angleBetween(Math.atan2(dz, dx), aim);
-    if (off >= FLASH.maxAngle) return 0;
-    angleFactor = Math.cos((off / FLASH.maxAngle) * (Math.PI / 2));
+    angleFactor = FLASH.backFactor + (1 - FLASH.backFactor) * Math.cos((off / Math.PI) * (Math.PI / 2));
   }
   const distFactor = d <= FLASH.fullRange ? 1 : 1 - (d - FLASH.fullRange) / (FLASH.range - FLASH.fullRange);
   const seconds = FLASH.maxDuration * angleFactor * distFactor;
@@ -97,29 +97,66 @@ export function healAmount(arena: Arena, pos: Vec2, hp: number, blast: Vec2): nu
   return Math.min(HEAL.amount, MAX_HP - hp);
 }
 
+/** A smoke cloud with the side that threw it (SmokeView has both). */
+export interface OwnedCloud extends Vec2 {
+  /** Session id of the thrower. */
+  owner: string;
+  /** The thrower's team, NO_TEAM in a duel or free for all. */
+  team: number;
+}
+
 /**
- * Smoke: whether `target` is hidden from someone standing at `viewer` by any
- * of `clouds` (`radius` each). Hidden when the target is inside a cloud, or
- * when the line from the viewer to the target crosses one (the target is
- * behind it, or the viewer is inside and looks out).
+ * Whether the viewer's side threw this cloud: they threw it themselves, or
+ * (in teams) a teammate did. In a duel or free for all (NO_TEAM) only the
+ * thrower counts. A spectator (`viewerId` null) owns none.
  */
-export function smokeHides(viewer: Vec2, target: Vec2, clouds: readonly Vec2[], radius: number = SMOKE.radius): boolean {
+export function ownsCloud(viewerId: string | null, viewerTeam: number | null, cloud: { owner: string; team: number }): boolean {
+  if (viewerId === null) return false;
+  if (cloud.owner === viewerId) return true;
+  return viewerTeam !== null && viewerTeam !== NO_TEAM && cloud.team === viewerTeam;
+}
+
+/**
+ * Smoke between a viewer and a target: "none", "own" (every cloud in the way
+ * is one the viewer's side threw: they see through it, faded) or "foreign"
+ * (at least one cloud in the way is not theirs: hidden). `mine` says whether
+ * each cloud is the viewer's (ownsCloud).
+ *
+ * A cloud is in the way when the target is inside it, or when the line from
+ * the viewer to the target crosses it (the target is behind it, or the viewer
+ * is inside and looks out).
+ */
+export type SmokeCover = "none" | "own" | "foreign";
+export function smokeCover(
+  viewer: Vec2,
+  target: Vec2,
+  clouds: readonly (Vec2 & { mine?: boolean })[],
+  radius: number = SMOKE.radius,
+): SmokeCover {
+  let cover: SmokeCover = "none";
   for (const c of clouds) {
     const dx = target.x - c.x;
     const dz = target.z - c.z;
-    if (dx * dx + dz * dz < radius * radius) return true;
-    if (segmentHitsCircle(viewer, target, c, radius)) return true;
+    if (dx * dx + dz * dz >= radius * radius && !segmentHitsCircle(viewer, target, c, radius)) continue;
+    if (!c.mine) return "foreign";
+    cover = "own";
   }
-  return false;
+  return cover;
+}
+
+/** Whether any cloud of `clouds` hides `target` from `viewer` (smokeCover, ignoring who owns what). */
+export function smokeHides(viewer: Vec2, target: Vec2, clouds: readonly Vec2[], radius: number = SMOKE.radius): boolean {
+  return smokeCover(viewer, target, clouds, radius) !== "none";
 }
 
 /**
  * How a player is drawn for one viewer: "none" (as usual), "hidden"
  * (nothing: model, plate, health bar, minimap dot, muzzle flash, the start of
  * their tracers) or "faded" (see-through: what a spectator sees of a player in
- * smoke, since spectators see everything).
+ * smoke, since spectators see everything, and what the thrower's side sees of
+ * an enemy in their own cloud).
  *
- * `hidden`: smoke hides the target from this viewer (smokeHides).
+ * `cover`: the smoke between this viewer and the target (smokeCover).
  * `viewerTeam`: null for a spectator. Players always see themselves and
  * their teammates.
  *
@@ -128,9 +165,9 @@ export function smokeHides(viewer: Vec2, target: Vec2, clouds: readonly Vec2[], 
  * between friends, with no anti-cheat.
  */
 export type SmokeVeil = "none" | "hidden" | "faded";
-export function smokeVeil(viewerTeam: number | null, targetTeam: number, self: boolean, hidden: boolean): SmokeVeil {
-  if (!hidden || self) return "none";
+export function smokeVeil(viewerTeam: number | null, targetTeam: number, self: boolean, cover: SmokeCover): SmokeVeil {
+  if (cover === "none" || self) return "none";
   if (viewerTeam === null) return "faded";
   if (viewerTeam !== NO_TEAM && viewerTeam === targetTeam) return "none";
-  return "hidden";
+  return cover === "own" ? "faded" : "hidden";
 }
