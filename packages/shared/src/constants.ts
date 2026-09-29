@@ -363,8 +363,12 @@ export const INTERP_DELAY_MS = 100;
  * (lag compensation). Never under 3, so a hit is never judged on live poses.
  */
 export const HIT_REWIND_TICKS = Math.max(3, Math.ceil(INTERP_DELAY_MS / TICK_MS));
-/** Ticks of player positions the server keeps for that rewind (a ring buffer). */
-export const HIT_HISTORY_FRAMES = 16;
+/**
+ * Ticks of player positions the server keeps for that rewind (a ring buffer).
+ * Always more than the rewind, or every hit would silently find no frame; 16
+ * leaves headroom for adding the shooter's latency later.
+ */
+export const HIT_HISTORY_FRAMES = Math.max(16, HIT_REWIND_TICKS + 1);
 /**
  * Server-side input budget. Each tick grants one token; each processed input
  * costs one. The cap allows catching up after network jitter without letting a
