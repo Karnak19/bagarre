@@ -338,6 +338,20 @@ export async function setWarmup(roomId: string, seconds: number) {
   expect(res.status, await res.text()).toBe(200);
 }
 
+/**
+ * Asks the e2e server to give every smoke cloud in a room `seconds` left from
+ * now (server.ts' /smoke). Returns the ticks each had left before.
+ */
+export async function setSmoke(roomId: string, seconds: number): Promise<number[]> {
+  const res = await fetch(`http://localhost:${SERVER_PORT + 1}/smoke`, {
+    method: "POST",
+    body: JSON.stringify({ roomId, seconds }),
+  });
+  const text = await res.text();
+  expect(res.status, text).toBe(200);
+  return JSON.parse(text) as number[];
+}
+
 /** Asks the e2e server to put a player on (x, z) at once (server.ts' /place). */
 export async function place(roomId: string, id: string, x: number, z: number) {
   const res = await fetch(`http://localhost:${SERVER_PORT + 1}/place`, {

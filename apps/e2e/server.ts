@@ -104,6 +104,27 @@ function setWarmup(body: string, reply: (status: number, text: string) => void) 
   reply(200, "ok");
 }
 
+/**
+ * Sets how long every smoke cloud in a room has left (seconds from now), so a
+ * test can hold one open while it checks things, however slow the machine,
+ * then let it clear. Replies with the ticks each had left before, oldest first.
+ */
+function setSmoke(body: string, reply: (status: number, text: string) => void) {
+  const { roomId, seconds } = JSON.parse(body || "{}") as { roomId?: string; seconds?: number };
+  const room = roomId
+    ? (matchMaker.getLocalRoomById(roomId) as unknown as { state: { tick: number; smokes?: Map<string, { end: number }> } } | undefined)
+    : undefined;
+  if (!room) return reply(404, `no room ${roomId}`);
+  if (typeof seconds !== "number" || seconds < 0) return reply(400, `bad seconds ${seconds}`);
+  if (!room.state.smokes) return reply(500, "GameRoom state.smokes is gone: update apps/e2e/server.ts");
+  const left: number[] = [];
+  room.state.smokes.forEach((s) => {
+    left.push(s.end - room.state.tick);
+    s.end = room.state.tick + Math.round(seconds * TICK_RATE);
+  });
+  reply(200, JSON.stringify(left));
+}
+
 /** The test-only control API. */
 createHttpServer((req, res) => {
   let body = "";
@@ -112,6 +133,7 @@ createHttpServer((req, res) => {
     const reply = (status: number, text: string) => res.writeHead(status, { "content-type": "text/plain" }).end(text);
     if (req.method === "POST" && req.url === "/place") return place(body, reply);
     if (req.method === "POST" && req.url === "/warmup") return setWarmup(body, reply);
+    if (req.method === "POST" && req.url === "/smoke") return setSmoke(body, reply);
     if (req.method !== "POST" || req.url !== "/kill") return reply(404, "not found");
     const { roomId, killer, victim } = JSON.parse(body || "{}") as { roomId?: string; killer?: string; victim?: string };
     const room = roomId ? (matchMaker.getLocalRoomById(roomId) as unknown as RoomInternals | undefined) : undefined;
