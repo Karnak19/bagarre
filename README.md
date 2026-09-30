@@ -33,6 +33,7 @@ what it can (a second `bun run build` with nothing changed is instant).
 | `bun run lint`          | oxlint on every package                                             |
 | `bun run smoke`         | Boots a real server, connects headless clients, checks the game loop, accounts, reconnection and shutdown (port 2599, or `SMOKE_PORT`) |
 | `bun run e2e`           | The Playwright suite: real browsers playing against a real server (see [End-to-end tests](#end-to-end-tests)) |
+| `bun run bench`         | Times the shared physics per tick (movement, bullets, reconcile, line of sight) on Ironvale and Crossroads, with a checksum that must not change when optimizing (`--map`, `--ticks`, `--json`) |
 | `bun run maps:validate` | Checks every map and prints its stats (see [docs/maps.md](docs/maps.md)) |
 | `bun run start`         | Runs the server alone (no watch)                                    |
 

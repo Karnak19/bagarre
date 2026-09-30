@@ -15,7 +15,8 @@
     "smoke": "turbo run smoke",
     "e2e": "turbo run e2e",
     "maps:validate": "turbo run maps:validate",
-    "start": "bun run --cwd apps/server start"
+    "start": "bun run --cwd apps/server start",
+    "bench": "bun run --cwd packages/shared bench"
   },
   "devDependencies": {
     "oxlint": "^1.85.0",
