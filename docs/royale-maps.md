@@ -23,8 +23,9 @@ so it is an FFA and team map only and the royale pool can't pick it.
 From `packages/shared`:
 
 ```sh
-bun scripts/royale-maps.check.ts                  # the layout checks below (also part of `bun run check`)
-bun scripts/royale.check.ts                       # the mode's rules, and the pool's crate spots and zone (also in `bun run check`)
+bun test src/maps/royale                          # the layout tests below (also part of `bun run test`)
+bun test src/royale.test.ts                       # the mode's rules, and the pool's crate spots and zone (also in `bun run test`)
+bun scripts/royale-maps.ts                        # the stats table under "Results"
 bun scripts/royale.preview.ts [outDir] [mapId...]  # <id>-top.png and <id>-iso.png (default .previews/royale-maps/)
 ```
 
@@ -50,22 +51,22 @@ shapes), and:
 
 ## Checks
 
-Two scripts run on every map in `ROYALE_MAPS`, both part of `bun run check`.
-`scripts/royale.check.ts` (from #32) checks the mode's rules and, for the
+Two test files run on every map in `ROYALE_MAPS`, both part of `bun run test`.
+`src/royale.test.ts` (from #32) checks the mode's rules and, for the
 maps, that the crates stand on open floor (the crate's radius plus the
 player's, 1.1 m, clear of every box), inside the walls, and at least 3 m
 from every spawn, and that the zone closes inside `royale.zone`.
-`scripts/royale-maps.check.ts` checks the layout, using the duel validator's
+`src/maps/royale/royale-maps.test.ts` checks the layout, using the duel validator's
 geometry (`scripts/analyze.ts`):
 
 1. Size 80..100 m a side. Boxes 0.8-2.0 m tall; a box under 1.5 m thick and
    4 m or longer is 1.1-1.4 m tall. No gap between boxes (or a box and the
    outer wall) under 1.6 m unless they touch.
 2. At least 10 start spots. Every start spot clear of every box by the
-   player radius plus 0.25 m, every crate spot by 1.1 m (royale.check.ts's
+   player radius plus 0.25 m, every crate spot by 1.1 m (royale.test.ts's
    rule), and inside the walls.
 3. No two start spots see each other (`bodiesSee`, all pairs).
-4. 15-25 crate spots, none within 3 m of a start (royale.check.ts's rule),
+4. 15-25 crate spots, none within 3 m of a start (royale.test.ts's rule),
    none within 1.5 m of another.
 5. Flood fill (0.2 m grid) from start 0 reaches every start and crate, and
    the whole floor is one connected region, so any open part of the circle
@@ -90,12 +91,14 @@ geometry (`scripts/analyze.ts`):
    its scale) and run through the duel validator's `hiddenFromCamera` for
    every floor cell.
 
-It also reports, without a limit, the tight and open floor shares as the
+`bun scripts/royale-maps.ts` (the endgame and sight helpers the tests and
+the preview share) prints each map's stats, among them, without a limit,
+the tight and open floor shares as the
 FFA validator defines them (`ffaSight` in `scripts/ffa/analyze.ts`): tight
 floor sees less than 250 m² within 30 m (shotgun and SMG ground), open floor
 sees at least 150 m² beyond 18 m (sniper lanes). Samples every 2 m (1 m
 takes about 25 s on a 90 m map and differs by 0.1 pp), which is most of the
-check's 3-4 s.
+script's 3-4 s. The tests skip it and take well under a second.
 
 Results:
 

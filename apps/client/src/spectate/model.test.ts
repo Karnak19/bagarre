@@ -1,4 +1,4 @@
-// bun test apps/client/src/spectate
+// Run with `bun run test` (or `bun test src/spectate` in apps/client).
 
 import { describe, expect, test } from "bun:test";
 import { SpectatorCamera, overviewViewHeight, screenToGround, type SpectatorCameraRig } from "./camera.ts";

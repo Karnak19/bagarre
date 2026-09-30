@@ -1,0 +1,7 @@
+{
+  // vite.config.ts runs in Bun, not the browser. Its plugins' types import
+  // "bun" (unplugin), which brings Bun's and Node's globals: they stay here,
+  // out of tsconfig.json's browser code.
+  "extends": "../../tsconfig.base.json",
+  "include": ["vite.config.ts"]
+}
