@@ -102,7 +102,7 @@ To add a test: a `*.spec.ts` in `apps/e2e/tests/` importing `test` and
 `expect` from `./fixtures.ts`; give any element you drive a `data-testid`
 and extend `PlayerState` when a test needs a new piece of state.
 
-CI (`.github/workflows/ci.yml`, on pushes to main and pull requests) runs
+CI (`.github/workflows/ci.yml`, on pull requests and before each release) runs
 with no secrets, as parallel jobs: `check` (build, typecheck, lint, map and
 shared checks), `smoke`, and the e2e suite split into 4 shards
 (`playwright test --shard=N/4`). A failing shard uploads its Playwright report

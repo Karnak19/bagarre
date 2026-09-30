@@ -14,8 +14,8 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
+  # Not on pushes to main: every change lands through a PR, and release.yml
+  # runs this workflow again before each deploy.
   pull_request:
   # Reused by release.yml before a tagged deploy.
   workflow_call:
