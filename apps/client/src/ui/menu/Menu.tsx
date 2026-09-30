@@ -8,7 +8,7 @@ import { Heading } from "@astryxdesign/core/Heading";
 import { Icon } from "@astryxdesign/core/Icon";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { Text } from "@astryxdesign/core/Text";
-import { FFA_MAX_PLAYERS, FFA_MIN_PLAYERS, KILLS_TO_WIN, MAPS, TEAM_SIZE, type GameMode } from "@bagarre/shared";
+import { FFA_MAX_PLAYERS, FFA_MIN_PLAYERS, KILLS_TO_WIN, MAPS, ROYALE_MAX_PLAYERS, ROYALE_MIN_PLAYERS, TEAM_SIZE, type GameMode } from "@bagarre/shared";
 import { useNavigate } from "@tanstack/react-router";
 import * as stylex from "@stylexjs/stylex";
 import { useEffect, useRef, useSyncExternalStore } from "react";
@@ -110,6 +110,13 @@ const styles = stylex.create({
     },
   },
   tdmLabel: { fontSize: "22px", lineHeight: 1, whiteSpace: "normal", textAlign: "start", overflow: "visible" },
+  // Battle royale: gold, the last one standing's colour, the same size as teams.
+  royale: {
+    color: "var(--color-background-card)",
+    padding: "10px 18px 12px",
+    backgroundColor: "var(--bagarre-gold)",
+    filter: { default: "none", ":hover": { default: null, "@media (hover: hover)": "brightness(1.08)" } },
+  },
   // Wraps to two lines ("Free for / all") rather than being cut off in the narrow button.
   ffaLabel: { fontSize: "24px", lineHeight: 1, whiteSpace: "normal", textAlign: "start", overflow: "visible" },
   playSub: {
@@ -198,8 +205,8 @@ function Menu({ focusPlay }: { focusPlay: boolean }) {
             Bagarre
           </Heading>
           <Text color="secondary" xstyle={styles.tagline}>
-            Isometric 1v1 duels, first to {KILLS_TO_WIN} kills. Or a free for all, up to {FFA_MAX_PLAYERS} players, or red
-            against blue, up to {TEAM_SIZE}v{TEAM_SIZE}.
+            Isometric 1v1 duels, first to {KILLS_TO_WIN} kills. Or a free for all, up to {FFA_MAX_PLAYERS} players, red
+            against blue, up to {TEAM_SIZE}v{TEAM_SIZE}, or a battle royale for {ROYALE_MAX_PLAYERS}.
           </Text>
         </VStack>
 
@@ -278,6 +285,27 @@ function Menu({ focusPlay }: { focusPlay: boolean }) {
             </Button>
             <PrivateButton mode="tdm" />
           </VStack>
+          <VStack xstyle={styles.row}>
+            <Button
+              label={`Battle royale: quick match, ${ROYALE_MIN_PLAYERS} to ${ROYALE_MAX_PLAYERS} players`}
+              variant="primary"
+              size="lg"
+              xstyle={[styles.play, styles.royale, styles.fill]}
+              data-testid="play-royale"
+              onClick={() => {
+                gesture();
+                app.quickMatch("royale");
+              }}
+            >
+              <VStack as="span" gap={1} align="start">
+                <Text xstyle={[shared.display, styles.tdmLabel]} color="inherit">
+                  Battle royale
+                </Text>
+                <Text xstyle={styles.playSub}>One life · last one standing</Text>
+              </VStack>
+            </Button>
+            <PrivateButton mode="royale" />
+          </VStack>
           <VStack xstyle={[styles.row, styles.rowEven]}>
             <PrivateButton mode="duel" />
             <PrivateButton mode="ffa" />
@@ -321,6 +349,7 @@ const PRIVATE = {
   duel: { title: "Private game", short: "Private game", sub: "Duel a friend with a link", testId: "private-game" },
   ffa: { title: "Private free for all", short: "Private FFA", sub: `Up to ${FFA_MAX_PLAYERS}, with a link`, testId: "private-ffa" },
   tdm: { title: "Private team deathmatch", short: "Private teams", sub: `Up to ${TEAM_SIZE}v${TEAM_SIZE}, with a link`, testId: "private-tdm" },
+  royale: { title: "Private battle royale", short: "Private royale", sub: `Up to ${ROYALE_MAX_PLAYERS}, with a link`, testId: "private-royale" },
 } as const;
 
 /** Private game of a mode: a room joined by its link only. */

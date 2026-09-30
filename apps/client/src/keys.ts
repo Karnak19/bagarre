@@ -46,7 +46,7 @@ export function installAppKeys({ app, input, view }: { app: App; input: Input; v
       // card, no panel), or while watching with no card or panel up:
       // everywhere else Tab moves focus as usual.
       const v = view.getState();
-      const watching = !!v?.spectating && v.card === "none" && !panel;
+      const watching = (!!v?.spectating || !!v?.knockedOut) && v.card === "none" && !panel;
       if (e.code === "Tab" && (input.enabled || watching)) {
         e.preventDefault();
         app.holdScoreboard(true);

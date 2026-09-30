@@ -18,6 +18,7 @@ import {
   spectateUiModel,
   stepSpectate,
   type CameraMode,
+  type SpectatePlayer,
   type SpectateSnapshot,
   type SpectateState,
   type SpectateUiModel,
@@ -37,6 +38,8 @@ export interface SpectatorOptions extends SpectatorCameraOptions {
   rig: SpectatorCameraRig;
   /** CSS colour of a player slot (the FFA palette once there is one). */
   colorOf?: (slot: number) => string;
+  /** Q / E and the arrows only go through the players still alive (a battle royale: the dead are out for good). */
+  cycleAlive?: boolean;
 }
 
 export class Spectator implements SpectatorControlActions {
@@ -48,10 +51,12 @@ export class Spectator implements SpectatorControlActions {
   private hasPrev = false;
   private last: SpectateSnapshot | null = null;
   private readonly colorOf: (slot: number) => string;
+  private readonly cycleAlive: boolean;
 
   constructor(options: SpectatorOptions) {
     this.camera = new SpectatorCamera(options.rig, options);
     this.colorOf = options.colorOf ?? fallbackColor;
+    this.cycleAlive = options.cycleAlive ?? false;
   }
 
   /** The id of the player the camera follows (the sound listener sits on the camera target either way). */
@@ -122,8 +127,16 @@ export class Spectator implements SpectatorControlActions {
   }
 
   cycle(dir: 1 | -1) {
-    const players = this.last?.players;
+    let players = this.last?.players;
     if (!players) return;
+    if (this.cycleAlive) {
+      const alive = new Map<string, SpectatePlayer>();
+      players.forEach((p, id) => {
+        if (p.alive) alive.set(id, p);
+      });
+      // Nobody left alive (the last ones went together): everyone, as usual.
+      if (alive.size > 0) players = alive;
+    }
     // From Overview or Free, Q / E first goes back to whoever was followed.
     const next = this.camera.mode === "follow" ? cycleTarget(players, this.state.followId, dir) : this.state.followId;
     if (next) this.follow(next);

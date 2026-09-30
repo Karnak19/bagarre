@@ -23,9 +23,13 @@ export const COLUMNS = [
  * goes last. While it runs: a live order, most kills then most damage, one
  * place each. Equal players keep their input order (by seat, see callers).
  */
-export function byPlace<T extends PlayerView>(players: readonly T[], ended: boolean): { player: T; place: number }[] {
+export function byPlace<T extends PlayerView>(players: readonly T[], ended: boolean, royale = false): { player: T; place: number }[] {
   const last = (p: PlayerView) => p.place || Number.MAX_SAFE_INTEGER;
-  const sorted = [...players].sort(ended ? (a, b) => last(a) - last(b) : (a, b) => b.kills - a.kills || b.damage - a.damage);
+  // Battle royale, while it runs: those still in first (by kills), then the
+  // ones out, the last out first (the order their places will follow).
+  const out = (p: PlayerView) => (p.alive ? Number.MAX_SAFE_INTEGER : p.outTick);
+  const live = royale ? (a: T, b: T) => out(b) - out(a) || b.kills - a.kills || b.damage - a.damage : (a: T, b: T) => b.kills - a.kills || b.damage - a.damage;
+  const sorted = [...players].sort(ended ? (a, b) => last(a) - last(b) : live);
   return sorted.map((player, i) => ({ player, place: ended && player.place ? player.place : i + 1 }));
 }
 
@@ -129,7 +133,7 @@ export function scoreboardModel(s: Snapshot | null, you: string): ScoreboardMode
   // Equal players keep a stable order (by seat).
   players.sort((a, b) => a.slot - b.slot);
   const ended = s?.phase === "ended";
-  const placed = byPlace(players, ended);
+  const placed = byPlace(players, ended, s?.mode === "royale");
   const mine = s?.players.get(you);
   const theirs = players.find((p) => p.id !== you);
   const top = placed[0]?.player.kills ?? 0;
@@ -146,7 +150,7 @@ export function scoreboardModel(s: Snapshot | null, you: string): ScoreboardMode
     place,
     placeLabel: ordinal(place),
     // The winner once ended (a broken tie included); while playing, the one most kills.
-    leader: ended ? place === 1 : top > 0 && alone && p.kills === top,
+    leader: ended ? place === 1 : s?.mode !== "royale" && top > 0 && alone && p.kills === top,
     account: p.account,
     away: !p.connected,
     kills: p.kills,

@@ -23,6 +23,9 @@ import {
   FFA_MIN_PLAYERS,
   NO_TEAM,
   RECONNECT_GRACE_S,
+  ROYALE_MAX_PLAYERS,
+  ROYALE_MIN_PLAYERS,
+  ROYALE_MIN_RECORDED,
   TEAM_BLUE,
   TEAM_MIN_PER_TEAM,
   TEAM_NAMES,
@@ -358,7 +361,7 @@ function InviteLink() {
 function WaitingCard() {
   const { view } = useEngine();
   const mode = useSelector(view, (v) => v?.snapshot?.mode ?? "duel");
-  return mode === "ffa" ? <FfaWaitingCard /> : mode === "tdm" ? <TeamWaitingCard /> : <DuelWaitingCard />;
+  return mode === "ffa" ? <FfaWaitingCard /> : mode === "tdm" ? <TeamWaitingCard /> : mode === "royale" ? <RoyaleWaitingCard /> : <DuelWaitingCard />;
 }
 
 function DuelWaitingCard() {
@@ -456,6 +459,66 @@ function FfaWaitingCard() {
       </Text>
       <WeaponPicker />
       <GrenadePicker heading="Your grenade" />
+      <HStack xstyle={styles.actions}>
+        <Button label="Cancel" variant="secondary" onClick={() => app.leave()} data-testid="waiting-cancel" />
+      </HStack>
+    </CardBox>
+  );
+}
+
+/**
+ * A battle royale waiting for players: who's in, then the pre-match
+ * countdown once ROYALE_MIN_PLAYERS are in (more can join until it ends).
+ * No loadout: everyone starts with the Pistol.
+ */
+function RoyaleWaitingCard() {
+  countRender("card.waitingRoyale");
+  const { app, view } = useEngine();
+  const { opponentLeft, isPrivate } = useSelector(app, (s) => ({ opponentLeft: s.opponentLeft, isPrivate: s.isPrivate }), shallowEqual);
+  const players = useSelector(view, (v) => v?.snapshot?.players.size ?? 0);
+  const seconds = useSelector(view, (v) => Math.ceil((v?.snapshot?.countdown ?? 0) / TICK_RATE));
+  const count = `${players}/${ROYALE_MAX_PLAYERS} players`;
+  const [title, sub] =
+    seconds > 0
+      ? [null, `${count}. Others can still join until it starts, not after.`]
+      : opponentLeft
+        ? ["Too few players left", `Waiting for more to join. It starts again when ${ROYALE_MIN_PLAYERS} are in (${count}).`]
+        : [
+            isPrivate ? "Waiting for your friends…" : "Waiting for players…",
+            `Starts when ${ROYALE_MIN_PLAYERS} are in · ${count}.${isPrivate ? " Send them the link." : ""}`,
+          ];
+  return (
+    <CardBox name="waiting">
+      <HStack gap={3} align="start">
+        {seconds === 0 && <Spinner size="lg" xstyle={styles.spinner} aria-label="Waiting" />}
+        <VStack>
+          {title ? (
+            <Title name="waiting">{title}</Title>
+          ) : (
+            <Title name="waiting" xstyle={[shared.display, styles.countdown, shared.tabular]} testId="royale-countdown">
+              Starting in{" "}
+              <Text as="span" color="inherit" xstyle={styles.countdownNumber}>
+                {seconds}
+              </Text>
+            </Title>
+          )}
+          <Text color="secondary" xstyle={[styles.sub, shared.tabular]} data-testid="royale-players">
+            {sub}
+          </Text>
+        </VStack>
+      </HStack>
+      <Text color="secondary" xstyle={styles.sub}>
+        One life. Everyone starts with the Pistol: find guns and grenades in crates, stay inside the zone. The last one
+        standing wins.
+      </Text>
+      <Text as="p" xstyle={shared.eyebrow}>
+        Players
+      </Text>
+      <Seats total={ROYALE_MAX_PLAYERS} showAway />
+      <Text as="p" xstyle={shared.eyebrow}>
+        Invite link
+      </Text>
+      <InviteLink />
       <HStack xstyle={styles.actions}>
         <Button label="Cancel" variant="secondary" onClick={() => app.leave()} data-testid="waiting-cancel" />
       </HStack>
@@ -629,6 +692,8 @@ function PauseCard() {
  */
 function tiebreakLine(reason: TiebreakReason, score: number, team: string | null): string | null {
   const won = team ? `${team} won` : "Won";
+  // Battle royale: the last two went out on the same tick.
+  if (reason === "kills") return "The last ones went down together: won on kills.";
   if (reason === "damage") return `${won} on damage dealt.`;
   if (reason === "first") return `${won} by reaching ${score} ${score === 1 ? "kill" : "kills"} first.`;
   if (reason === "lot") return `${won} on a coin flip.`;
@@ -644,8 +709,12 @@ function ResultCard() {
   const endDelay = useSelector(view, (v) => rulesOf(v?.snapshot?.mode ?? "duel").endDelay);
   const left = useSelector(view, (v) => Math.max(0, Math.ceil(endDelay - (performance.now() - (v?.endedAt ?? 0)) / 1000)));
   const model = useSelector(view, (v) => scoreboardModel(v?.snapshot ?? null, v?.you ?? ""), jsonEqual);
-  const ffa = model.mode === "ffa";
+  // A battle royale's result reads like a free for all's: our place.
+  const royale = model.mode === "royale";
+  const ffa = model.mode === "ffa" || royale;
   const teams = model.teams;
+  // Places recorded: a royale started with too few players isn't counted.
+  const counted = useSelector(view, (v) => (v?.snapshot?.players.size ?? 0) >= ROYALE_MIN_RECORDED);
   // FFA: our place, the server's (every place is its own: no draws).
   const mine = model.rows.find((r) => r.you);
   // Teams: our team's result; a spectator (or a player without a team) reads which team won.
@@ -691,7 +760,14 @@ function ResultCard() {
           <Text as="span" color="inherit" weight="bold" xstyle={slotText(leader.slot)}>
             {leader.name}
           </Text>{" "}
-          won with {leader.kills} {leader.kills === 1 ? "kill" : "kills"}.
+          {royale ? "was the last one standing" : "won"} with {leader.kills} {leader.kills === 1 ? "kill" : "kills"}.
+        </Text>
+      )}
+      {royale && (
+        <Text color="secondary" xstyle={styles.resultSub} data-testid="result-stats">
+          {counted
+            ? "Places follow the order you went out in. 1st place counts as a win in your stats, any other place as a loss."
+            : `Places follow the order you went out in. Not counted in the stats: it takes ${ROYALE_MIN_RECORDED} players.`}
         </Text>
       )}
       {why && (
@@ -709,11 +785,15 @@ function ResultCard() {
           <VStack xstyle={styles.boardGap}>
             <Scoreboard model={model} label="Match result" flat rowTestId={ffa ? "placement-row" : undefined} />
           </VStack>
-          <Text as="p" xstyle={shared.eyebrow}>
-            Weapon for the next match
-          </Text>
-          <WeaponPicker />
-          <GrenadePicker heading="Grenade for the next match" />
+          {!royale && (
+            <>
+              <Text as="p" xstyle={shared.eyebrow}>
+                Weapon for the next match
+              </Text>
+              <WeaponPicker />
+              <GrenadePicker heading="Grenade for the next match" />
+            </>
+          )}
         </>
       )}
       <HStack gap={2} wrap="wrap" xstyle={styles.actions}>

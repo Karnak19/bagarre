@@ -4,7 +4,7 @@
 // position, and typed as Record<key, ...>: an item missing here is a compile
 // error.
 
-import { FLASH, GRENADE, HEAL, SMOKE, STUN, WEAPONS, grenadeDef, weaponDef, type GrenadeKey, type WeaponKey } from "@bagarre/shared";
+import { FLASH, GRENADE, HEAL, SMOKE, STUN, WEAPONS, grenadeDef, isPickableWeapon, weaponDef, type GrenadeKey, type WeaponKey } from "@bagarre/shared";
 import type { SfxName } from "./audio.ts";
 import { Cell, type MuzzleFlash, type Vfx } from "./vfx.ts";
 
@@ -96,6 +96,14 @@ export const GUN_VIEW: Record<WeaponKey, GunViewDef> = {
     sfx: "dmr",
     role: "Long range, semi-auto",
   },
+  pistol: {
+    // The burst pistol's Pistol_6, a little smaller: the royale's starting gun.
+    model: { file: "guns/burst-pistol.glb", grip: [-0.13, -0.1, 0], muzzle: [2.1092, 0.5807, 0] },
+    scale: 0.4,
+    flash: { cell: Cell.MuzzleSmall, w: 0.26, h: 0.4 },
+    sfx: "pistol",
+    role: "The battle royale's starting gun: weak, find better in crates",
+  },
 };
 
 /** The view of a weapon id (a WEAPONS index); an unknown id gets the default weapon's, like weaponDef. */
@@ -103,15 +111,22 @@ export function gunView(weapon: number): GunViewDef {
   return GUN_VIEW[weaponDef(weapon).key];
 }
 
-/** The number keys that pick a weapon, as shown in hints ("1-7"). */
-export const WEAPON_KEYS = `1-${WEAPONS.length}`;
+/**
+ * The guns the loadout picker offers, by id: every gun but the starting-only
+ * ones (the royale's Pistol, `pickable: false`), which come last in WEAPONS,
+ * so a gun's number key is still its id + 1.
+ */
+export const PICKABLE_WEAPONS: readonly number[] = WEAPONS.map((_, i) => i).filter(isPickableWeapon);
 
-/** The weapon id a key picks (`KeyboardEvent.code`: Digit1 = weapon 0), or null. Only 1-9 are number keys. */
+/** The number keys that pick a weapon, as shown in hints ("1-7"). */
+export const WEAPON_KEYS = `1-${PICKABLE_WEAPONS.length}`;
+
+/** The weapon id a key picks (`KeyboardEvent.code`: Digit1 = weapon 0), or null. Only 1-9 are number keys, and never a starting-only gun. */
 export function weaponOfKey(code: string): number | null {
   const m = /^Digit([1-9])$/.exec(code);
   if (!m) return null;
   const id = Number(m[1]) - 1;
-  return id < WEAPONS.length ? id : null;
+  return isPickableWeapon(id) ? id : null;
 }
 
 // --- Grenades ------------------------------------------------------------------

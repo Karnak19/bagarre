@@ -10,12 +10,16 @@ import {
   MSG_TEAM,
   NO_TEAM,
   PLAYER_VIEW_KEYS,
+  emptyKit,
   isGameMode,
   parseTiebreak,
+  readKit,
   rulesOf,
   watchPath,
   type OpenGame,
   type BulletView,
+  type CrateView,
+  type FloorItemView,
   type GameMode,
   type GrenadeView,
   type InputMessage,
@@ -26,6 +30,7 @@ import {
   type RoomStateView,
   type SmokeView,
   type TiebreakReason,
+  type ZoneView,
 } from "@bagarre/shared";
 import { account } from "./auth.ts";
 
@@ -39,7 +44,7 @@ export interface Snapshot {
    */
   epoch: number;
   tick: number;
-  /** "duel", "ffa" or "tdm" (never changes in a room). */
+  /** "duel", "ffa", "tdm" or "royale" (never changes in a room). */
   mode: GameMode;
   phase: Phase;
   winner: string;
@@ -73,13 +78,22 @@ export interface Snapshot {
   spectators: number;
   /** Seats in this game (the mode's cap). */
   maxPlayers: number;
+  /** Battle royale: the items on the floor, the crates still standing, and the zone (`end` 0: none). */
+  items: Map<string, FloorItemView>;
+  crates: Map<string, CrateView>;
+  zone: ZoneView;
 }
+
+const NO_ZONE: ZoneView = { x0: 0, z0: 0, x1: 0, z1: 0, r0: 0, r1: 0, start: 0, end: 0 };
 
 function capture(state: RoomStateView): Omit<Snapshot, "t" | "epoch"> {
   const players = new Map<string, PlayerView>();
   state.players.forEach((p, id) => {
     const copy = {} as Record<string, unknown>;
     for (const k of PLAYER_VIEW_KEYS) copy[k] = p[k];
+    // The kit is a child schema: a plain copy of its own (an older server has none).
+    copy.kit = p.kit ? readKit(p.kit) : emptyKit();
+    copy.outTick = p.outTick ?? 0;
     players.set(id, copy as unknown as PlayerView);
   });
   const bullets = new Map<string, BulletView>();
@@ -100,6 +114,12 @@ function capture(state: RoomStateView): Omit<Snapshot, "t" | "epoch"> {
   );
   const smokes = new Map<string, SmokeView>();
   state.smokes?.forEach((c, id) => smokes.set(id, { x: c.x, z: c.z, start: c.start, end: c.end, owner: c.owner, team: c.team }));
+  const items = new Map<string, FloorItemView>();
+  state.items?.forEach((it, id) => items.set(id, { x: it.x, z: it.z, kind: it.kind, item: it.item, amount: it.amount }));
+  const crates = new Map<string, CrateView>();
+  state.crates?.forEach((c, id) => crates.set(id, { x: c.x, z: c.z }));
+  const z = state.zone;
+  const zone: ZoneView = z ? { x0: z.x0, z0: z.z0, x1: z.x1, z1: z.z1, r0: z.r0, r1: z.r1, start: z.start, end: z.end } : NO_ZONE;
   const feed: KillView[] = [];
   state.feed?.forEach((k) =>
     feed.push({
@@ -140,6 +160,9 @@ function capture(state: RoomStateView): Omit<Snapshot, "t" | "epoch"> {
     feed,
     spectators: state.spectators ?? 0,
     maxPlayers: rulesOf(state.mode).maxPlayers,
+    items,
+    crates,
+    zone,
   };
 }
 

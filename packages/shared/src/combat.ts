@@ -16,6 +16,7 @@ import {
   GRENADE,
   NO_TEAM,
   PLAYER_SPEED,
+  ROYALE,
   SHIELD_COOLDOWN_TICKS,
   STUN,
   TICK_DT,
@@ -26,7 +27,8 @@ import {
 } from "./constants.ts";
 import { grenadeCooldownTicks } from "./grenades.ts";
 import { clamp, clampMove, movePlayer, muzzle, type BulletSim, type Vec2 } from "./physics.ts";
-import { PLAYER_SIM_KEYS, type InputMessage, type Phase, type PlayerSim } from "./protocol.ts";
+import { KIT_KEYS, PLAYER_SIM_KEYS, type InputMessage, type KitSim, type Phase, type PlayerSim } from "./protocol.ts";
+import { NO_GUN, emptyKit, gunInHand, switchGun, useGrenade } from "./royale.ts";
 
 export function weaponDef(id: number): WeaponDef {
   return WEAPONS[id] ?? WEAPONS[DEFAULT_WEAPON];
@@ -36,13 +38,34 @@ export function isWeaponId(id: unknown): id is number {
   return typeof id === "number" && Number.isInteger(id) && id >= 0 && id < WEAPONS.length;
 }
 
+/** A weapon the loadout picker offers (not a starting-only gun like the royale's Pistol). */
+export function isPickableWeapon(id: unknown): id is number {
+  return isWeaponId(id) && WEAPONS[id].pickable !== false;
+}
+
+/**
+ * What a player carries, which decides how the step reads the gun and the
+ * grenade:
+ * - "loadout" (duel, FFA, teams): the one gun picked (`weaponId`), and the
+ *   grenade on its type's cooldown;
+ * - "slots" (battle royale): the gun in the kit's hand slot, a slot switch
+ *   on `InputMessage.switch`, and counted grenades (`kit.grenades`) with a
+ *   short gap between throws.
+ */
+export type KitMode = "loadout" | "slots";
+
 /** Ticks a bullet of this weapon lives before it expires (its range). */
 export function bulletLifeTicks(w: WeaponDef): number {
   return Math.ceil(w.range / (w.bulletSpeed * TICK_DT));
 }
 
-/** A fresh player at (x, z): full magazine, everything off cooldown. */
-export function spawnSim(x: number, z: number, weapon: number, seen?: PlayerSim): PlayerSim {
+/**
+ * A fresh player at (x, z): full magazine, everything off cooldown. `kit`:
+ * what they carry in a battle royale (royale.ts' startKit), empty elsewhere.
+ * With slots, the gun in the kit's hand is what `ammo` is filled for.
+ */
+export function spawnSim(x: number, z: number, weapon: number, seen?: PlayerSim, kit: KitSim = emptyKit()): PlayerSim {
+  const hand = gunInHand(kit);
   return {
     x,
     z,
@@ -53,7 +76,7 @@ export function spawnSim(x: number, z: number, weapon: number, seen?: PlayerSim)
     fireCd: 0,
     grenadeCd: 0,
     shieldCd: 0,
-    ammo: weaponDef(weapon).magazine,
+    ammo: weaponDef(hand !== NO_GUN ? hand : weapon).magazine,
     reloadTicks: 0,
     // Press counters carry over: they track the client's running totals.
     dashSeen: seen?.dashSeen ?? 0,
@@ -62,6 +85,7 @@ export function spawnSim(x: number, z: number, weapon: number, seen?: PlayerSim)
     reloadSeen: seen?.reloadSeen ?? 0,
     burstLeft: 0,
     stunTicks: 0,
+    kit: { ...kit, switchSeen: seen?.kit.switchSeen ?? kit.switchSeen, swapSeen: seen?.kit.swapSeen ?? kit.swapSeen },
   };
 }
 
@@ -93,15 +117,25 @@ export function playerCan(alive: boolean, phase: Phase | string): Can {
   return { act, armed: act && phase !== "warmup" };
 }
 
-/** Copies the sim fields out of anything shaped like a player (schema, view). */
-export function readSim(src: PlayerSim): PlayerSim {
-  const out = {} as PlayerSim;
-  for (const k of PLAYER_SIM_KEYS) out[k] = src[k];
+/** Copies a kit out of anything shaped like one (the `Kit` schema, a view): a plain object. */
+export function readKit(src: KitSim): KitSim {
+  const out = {} as KitSim;
+  for (const k of KIT_KEYS) out[k] = src[k];
   return out;
 }
 
+/** Copies the sim fields out of anything shaped like a player (schema, view), its kit included. */
+export function readSim(src: PlayerSim): PlayerSim {
+  const out = {} as PlayerSim;
+  for (const k of PLAYER_SIM_KEYS) out[k] = src[k];
+  out.kit = readKit(src.kit);
+  return out;
+}
+
+/** Writes a sim into a player (the schema: its `kit` child is written field by field, never replaced). */
 export function writeSim(dst: PlayerSim, sim: PlayerSim) {
   for (const k of PLAYER_SIM_KEYS) dst[k] = sim[k];
+  for (const k of KIT_KEYS) dst.kit[k] = sim.kit[k];
 }
 
 export interface StepResult {
@@ -115,6 +149,8 @@ export interface StepResult {
   grenade: Vec2 | null;
   /** This input activated the shield. */
   shield: boolean;
+  /** Battle royale: this input pressed F (swap for a gun on the floor). The server does the swap (floor.ts). */
+  swap: boolean;
   /** This step moved at dash speed (for visuals). */
   dashing: boolean;
 }
@@ -136,6 +172,14 @@ const dec = (v: number) => (v > 0 ? v - 1 : 0);
  * dash press made meanwhile is used up, like one made during the cooldown.
  * It counts down here, once per input, so the client's prediction slows
  * down exactly with the server.
+ *
+ * `kit` "slots" (battle royale, see KitMode): the gun is the one in the
+ * kit's hand (`weaponId` is ignored), a `switch` press puts the asked slot in
+ * hand first (switchGun: its own magazine, no reload carried over, a short
+ * delay before it fires), and a grenade needs one left in `kit.grenades`,
+ * spends it, and blocks the next throw for ROYALE.throwGap instead of the
+ * type's cooldown. The switch is predicted like a shot, so the client fires
+ * the right gun from the next input on.
  */
 export function stepPlayer(
   arena: Arena,
@@ -144,20 +188,25 @@ export function stepPlayer(
   weaponId: number,
   canAct: boolean | Can,
   grenadeType: number = DEFAULT_GRENADE,
+  kit: KitMode = "loadout",
 ): StepResult {
   const { act, armed } = typeof canAct === "boolean" ? { act: canAct, armed: canAct } : canAct;
-  const w = weaponDef(weaponId);
-  const s: PlayerSim = { ...prev };
-  const res: StepResult = { sim: s, fired: false, grenade: null, shield: false, dashing: false };
+  const slots = kit === "slots";
+  const s: PlayerSim = { ...prev, kit: { ...prev.kit } };
+  const res: StepResult = { sim: s, fired: false, grenade: null, shield: false, dashing: false, swap: false };
 
   const pressDash = input.dash > s.dashSeen;
   const pressGrenade = input.grenade > s.grenadeSeen;
   const pressShield = input.shield > s.shieldSeen;
   const pressReload = input.reload > s.reloadSeen;
+  const pressSwitch = (input.switch ?? 0) > s.kit.switchSeen;
+  const pressSwap = (input.swap ?? 0) > s.kit.swapSeen;
   s.dashSeen = Math.max(s.dashSeen, input.dash);
   s.grenadeSeen = Math.max(s.grenadeSeen, input.grenade);
   s.shieldSeen = Math.max(s.shieldSeen, input.shield);
   s.reloadSeen = Math.max(s.reloadSeen, input.reload);
+  s.kit.switchSeen = Math.max(s.kit.switchSeen, input.switch ?? 0);
+  s.kit.swapSeen = Math.max(s.kit.swapSeen, input.swap ?? 0);
 
   s.dashCd = dec(s.dashCd);
   s.fireCd = dec(s.fireCd);
@@ -165,6 +214,10 @@ export function stepPlayer(
   s.shieldCd = dec(s.shieldCd);
   const stunned = s.stunTicks > 0;
   s.stunTicks = dec(s.stunTicks);
+  // The switch comes first: everything below (reload, fire) is the new gun's.
+  if (slots && act && pressSwitch) switchGun(s, input.slot ?? -1);
+  const hand = slots ? gunInHand(s.kit) : weaponId;
+  const w = weaponDef(hand === NO_GUN ? weaponId : hand);
   if (s.reloadTicks > 0) {
     s.reloadTicks--;
     if (s.reloadTicks === 0) s.ammo = w.magazine;
@@ -229,10 +282,15 @@ export function stepPlayer(
     fireRound(s, w, res);
   }
 
-  if (pressGrenade && s.grenadeCd === 0) {
-    s.grenadeCd = grenadeCooldownTicks(grenadeType);
+  if (pressGrenade && s.grenadeCd === 0 && (!slots || s.kit.grenades > 0)) {
+    if (slots) {
+      s.kit.grenades = useGrenade(s.kit.grenades);
+      s.grenadeCd = ticks(ROYALE.throwGap);
+    } else s.grenadeCd = grenadeCooldownTicks(grenadeType);
     res.grenade = grenadeTarget(arena, s.x, s.z, input.gx, input.gz);
   }
+
+  if (slots && pressSwap) res.swap = true;
 
   if (pressShield && s.shieldCd === 0) {
     s.shieldCd = SHIELD_COOLDOWN_TICKS;

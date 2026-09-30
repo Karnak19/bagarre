@@ -96,7 +96,8 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
         // Press counters start over with each game (the server takes a new
         // seat's first counters as its baseline anyway). A resumed seat
         // lifts them back to the server's in Match.resync.
-        Object.assign(input.presses, { dash: 0, grenade: 0, shield: 0, reload: 0 });
+        Object.assign(input.presses, { dash: 0, grenade: 0, shield: 0, reload: 0, switch: 0, swap: 0 });
+        input.slot = 0;
         const match = new Match({ scene: scene!, input, hud, net, bot, sfxLog, minimap });
         // The spectator's own keys (Q / E, arrows, 1-3, WASD pan), drag and
         // wheel. Installed for every match, live only while watching; the
@@ -188,8 +189,8 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
       const draw = now - lastDraw >= drawGap - 1;
       if (m && v) {
         m.frame(now, dtMs, draw);
-        // Never while watching: a spectator's keys are spectate/controls.ts'.
-        input.enabled = v.card === "none" && !ui.getState().panel && !v.spectating;
+        // Never while watching (a knocked-out royale player too): a spectator's keys are spectate/controls.ts'.
+        input.enabled = v.card === "none" && !ui.getState().panel && !v.spectating && !v.knockedOut;
       } else {
         input.enabled = false;
         if (walker?.running) walker.frame(now, dtMs);

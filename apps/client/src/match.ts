@@ -8,28 +8,47 @@
 // like a remote player, and the camera and the sound listener come from the
 // spectator (spectate/spectator.ts). Taking a seat mid-way flips back to the
 // player path on the first snapshot that has us, on the same Match.
+//
+// Battle royale: once knocked out (`knockedOut`) we keep our seat but watch
+// like a spectator until the match ends: the camera starts on our killer (the
+// nearest living player after a zone death) and cycles through the players
+// still alive. While alive, the number keys and the wheel pick a gun slot
+// (Input's slot mode), predicted by the shared step like a shot; the zone,
+// the crates and the items on the floor are drawn from the latest snapshot
+// (scene.royale), the zone at the server tick we are at right now.
 
 import {
   GRENADES,
   INTERP_DELAY_MS,
   KILL_GRENADE,
+  KILL_ZONE,
   MAX_HP,
+  NO_GUN,
+  ROYALE,
   NO_TEAM,
   SHIELD,
   TICK_MS,
   TICK_RATE,
   WEAPONS,
   canDamage,
+  carriedGuns,
+  cycleSlot,
   findMap,
+  gunAt,
   isGrenadeType,
+  magAt,
   ordinal,
+  outsideZone,
   playerCan,
   sameTeam,
   ownsCloud,
   smokeCover,
   smokeVeil,
   weaponDef,
+  zoneAt,
+  zoneProgress,
   type InputMessage,
+  type KitMode,
   type Phase,
   type PlayerView,
   type SmokeVeil,
@@ -38,7 +57,7 @@ import {
 import { getShowNames } from "./display.ts";
 import { isMuted, play, setListener, type PlayOptions, type SfxName } from "./audio.ts";
 import { LocalBullets } from "./bullets.ts";
-import type { FfaHud, Hud, HudModel, KillFeedLine, TeamHud } from "./hud.ts";
+import type { FfaHud, Hud, HudModel, KillFeedLine, RoyaleHud, TeamHud } from "./hud.ts";
 import { screenToWorldMove, type Input } from "./input.ts";
 import { WEAPON_KEYS, grenadeView, gunView } from "./items.ts";
 import { SnapshotBuffer } from "./interpolation.ts";
@@ -55,7 +74,9 @@ import type { CameraMode } from "./spectate/model.ts";
 import { Spectator } from "./spectate/spectator.ts";
 
 /** The spectator's Follow zoom: the game's own in a duel, a little wider on the bigger FFA and team maps. */
-const FOLLOW_VIEW_HEIGHT = { duel: 22, ffa: 26, tdm: 26 } as const;
+const FOLLOW_VIEW_HEIGHT = { duel: 22, ffa: 26, tdm: 26, royale: 26 } as const;
+/** How the players of a mode carry their guns (the shared step's KitMode). */
+const kitOf = (mode: string): KitMode => (mode === "royale" ? "slots" : "loadout");
 /** CSS colour of a paint index (paint.ts). */
 const paintCss = (paint: number) => PLAYER_CSS_COLORS[paint % PLAYER_CSS_COLORS.length];
 
@@ -119,8 +140,17 @@ function canMove(p: PlayerView, ph: Phase) {
  * pick goes in hand at once; the predictor follows when the server's
  * snapshot shows the new weapon (reconcile).
  */
-function canPick(p: PlayerView | null, ph: Phase) {
-  return !!p && (!p.alive || ph !== "playing");
+function canPick(p: PlayerView | null, ph: Phase, mode = "duel") {
+  // Battle royale: no loadout at all (everyone starts with the Pistol).
+  return mode !== "royale" && !!p && (!p.alive || ph !== "playing");
+}
+
+/**
+ * Battle royale: we are out (killed, the zone) while the match goes on, so
+ * we watch it like a spectator, from our own seat.
+ */
+function isKnockedOut(s: Snapshot | null | undefined, me: PlayerView | null | undefined): boolean {
+  return !!s && !!me && s.mode === "royale" && s.phase === "playing" && !me.alive && me.outTick > 0;
 }
 
 export class Match {
@@ -212,6 +242,11 @@ export class Match {
     this.sfxLog = deps.sfxLog;
     this.minimap = deps.minimap;
     this.net.onSnapshot = (s) => this.onSnapshot(s);
+    // The wheel, in slot mode: the next or previous gun carried, from our predicted slots.
+    this.input.onCycle = (dir) => {
+      const sim = this.predictor.sim;
+      if (sim && this.predictor.kit === "slots") this.input.selectSlot(cycleSlot(sim.kit, dir));
+    };
   }
 
   private sfx(name: SfxName, opts?: PlayOptions) {
@@ -228,9 +263,17 @@ export class Match {
     return this.latest?.players.get(this.net.sessionId) ?? null;
   }
 
-  /** Watching: a snapshot has come in and we aren't in it. */
+  /**
+   * Watching: a snapshot has come in and we aren't in it, or (battle royale)
+   * we are out of the match and watch the rest of it from our seat.
+   */
   get spectating(): boolean {
-    return !!this.latest && this.net.role === "spectator";
+    return !!this.latest && (this.net.role === "spectator" || this.knockedOut);
+  }
+
+  /** Battle royale: knocked out while the match goes on (we watch it, see isKnockedOut). */
+  get knockedOut(): boolean {
+    return isKnockedOut(this.latest, this.me);
   }
 
   /**
@@ -276,7 +319,7 @@ export class Match {
   /** Weapon picks are accepted right now (dead, waiting or between matches). */
   get canPick(): boolean {
     const latest = this.latest;
-    return !!latest && canPick(this.me, latest.phase);
+    return !!latest && canPick(this.me, latest.phase, latest.mode);
   }
 
   /** Picks the weapon for the next (re)spawn, if allowed right now. Returns whether it was sent. */
@@ -423,6 +466,9 @@ export class Match {
       p.grenade = Math.max(p.grenade, me.grenadeSeen);
       p.shield = Math.max(p.shield, me.shieldSeen);
       p.reload = Math.max(p.reload, me.reloadSeen);
+      p.switch = Math.max(p.switch, me.kit.switchSeen);
+      p.swap = Math.max(p.swap, me.kit.swapSeen);
+      this.input.slot = me.kit.hand;
     }
   }
 
@@ -438,12 +484,12 @@ export class Match {
     this.buffer.push(s);
     const me = s.players.get(sessionId);
     if (me) {
-      this.predictor.reconcile(me, canMove(me, s.phase));
+      this.predictor.reconcile(me, canMove(me, s.phase), kitOf(s.mode));
       this.localBullets.reconcile(s, me.lastSeq);
     }
 
     const now = performance.now();
-    this.spectate(s, now, !me, resynced);
+    this.spectate(s, now, !me || isKnockedOut(s, me), resynced);
 
     // A new phase (a match starting, a duel back to waiting) resets everyone's
     // HP without a death: that is no heal.
@@ -502,6 +548,9 @@ export class Match {
       if (prev.shieldHp > 0 && p.shieldHp === 0 && prev.shieldTicks > 1) this.sfx("shield_break", at);
       if (prev.alive && !p.alive) this.sfx("death", at);
       if (!prev.alive && p.alive) this.sfx("respawn", at);
+      // Battle royale: something picked up (a gun in a new slot, grenades).
+      if (mine && p.alive && prev.alive && samePhase && (carriedGuns(p).length > carriedGuns(prev).length || p.kit.grenades > prev.kit.grenades))
+        this.sfx("weapon_pick");
 
       // The opponent's own actions (ours come from the prediction). Shots are
       // read from the ammo count, not from new bullets: a fast bullet can hit
@@ -541,6 +590,9 @@ export class Match {
       if (!reset) (kills ??= []).push({ victim: k.victim, killer: k.killer || k.victim });
     }
     this.lastKillN = Math.max(top, 0);
+    const out = isKnockedOut(s, s.players.get(this.net.sessionId));
+    const justOut = out && !this.wasOut;
+    this.wasOut = out;
     if (!watching) return;
     if (!this.spectator) {
       const mode = s.mode;
@@ -552,19 +604,35 @@ export class Match {
         });
         return paintCss(paint);
       };
-      this.spectator = new Spectator({ rig: sceneRig(this.scene), colorOf, followViewHeight: FOLLOW_VIEW_HEIGHT[mode] });
+      // A battle royale cycles through the players still in it only.
+      this.spectator = new Spectator({ rig: sceneRig(this.scene), colorOf, followViewHeight: FOLLOW_VIEW_HEIGHT[mode], cycleAlive: mode === "royale" });
       const map = findMap(s.mapId);
       if (map) this.spectator.setMap(map);
       // Follow in a duel, the whole map in a free for all or a team deathmatch.
       if (mode !== "duel") this.spectator.setMode("overview");
       reset = true;
     }
-    this.spectator.onSnapshot(
-      { players: s.players, spectators: s.spectators, maxPlayers: s.maxPlayers, kills },
-      now,
-      reset,
-    );
+    // No "Join the game" in a royale once it started (no drop-in): no free seat to show.
+    const maxPlayers = s.mode === "royale" && s.phase !== "waiting" ? s.players.size : s.maxPlayers;
+    this.spectator.onSnapshot({ players: s.players, spectators: s.spectators, maxPlayers, kills }, now, reset);
+    // Just knocked out: watch whoever did it, or the nearest player still in after a zone death.
+    if (justOut) {
+      const me = s.players.get(this.net.sessionId);
+      const line = [...s.feed].reverse().find((k) => k.victim === this.net.sessionId);
+      const killer = line?.killer && s.players.get(line.killer)?.alive ? line.killer : null;
+      let nearest: string | null = null;
+      let best = Infinity;
+      s.players.forEach((p, id) => {
+        const d = me ? Math.hypot(p.x - me.x, p.z - me.z) : 0;
+        if (id !== this.net.sessionId && p.alive && d < best) [best, nearest] = [d, id];
+      });
+      const target = killer ?? nearest;
+      if (target) this.spectator.follow(target);
+    }
   }
+
+  /** The previous snapshot had us knocked out (battle royale), to catch the moment it happens. */
+  private wasOut = false;
 
   /**
    * One frame: send this frame's inputs, draw everyone, update the HUD.
@@ -586,6 +654,10 @@ export class Match {
     //    prediction stays in step.
     //    Nothing while reconnecting: the server takes no input from us then,
     //    and our character must not run off on its own.
+    // Battle royale: 1-3 and the wheel pick a gun slot (never a loadout gun), while in the match.
+    const royale = latest?.mode === "royale";
+    const out = isKnockedOut(latest, meServer);
+    input.slotMode = royale && !!meServer && !out;
     if (net.status !== "connected") this.accumulator = 0;
     else if (latest && meServer) {
       this.accumulator += dtMs;
@@ -606,13 +678,17 @@ export class Match {
           gx: target.x,
           gz: target.z,
           ...input.presses,
+          slot: input.slot,
         };
         const before = predictor.sim;
         const res = predictor.apply(msg, this.canNow(meServer, latest, now));
-        // Instant local shots: same pellets, same ids as the server will spawn.
-        if (res?.fired) localBullets.spawn(meServer.slot, msg.seq, predictor.weapon, res.sim.x, res.sim.z, msg.aim);
+        // Instant local shots: same pellets, same ids as the server will spawn,
+        // from the gun in hand as predicted (a slot switch counts at once).
+        const gun = predictor.weaponOf(res?.sim ?? null);
+        if (res?.fired) localBullets.spawn(meServer.slot, msg.seq, gun, res.sim.x, res.sim.z, msg.aim);
         if (res && before) {
-          if (res.fired) this.sfx(gunView(predictor.weapon).sfx);
+          if (res.fired) this.sfx(gunView(gun).sfx);
+          if (predictor.weaponOf(before) !== gun) this.sfx("weapon_pick");
           if (res.sim.dashCd > before.dashCd) this.sfx("dash");
           if (res.grenade) this.sfx("grenade_throw");
           if (res.shield) this.sfx("shield_up");
@@ -630,7 +706,9 @@ export class Match {
     // 2. Local player: predicted position, smoothed between ticks. Where we
     //    stand is also where smoke is seen from (`viewer`).
     let viewer: Vec2 | null = null;
-    if (meServer && this.spectatedLastFrame) {
+    // Knocked out in a royale: the spectator's camera and ears, like a watcher.
+    const watching = !meServer || out;
+    if (!watching && this.spectatedLastFrame) {
       // A seat was just taken: back to the game's own framing.
       this.spectatedLastFrame = false;
       scene.resize();
@@ -638,7 +716,6 @@ export class Match {
     }
     if (meServer) {
       const pos = predictor.render(this.accumulator / TICK_MS, dt);
-      setListener(pos.x, pos.z);
       if (bot.on) this.aim = bot.aim;
       else if (input.hasPointer && input.enabled) {
         const hit = scene.cursorOnGround(input.ndc);
@@ -650,15 +727,26 @@ export class Match {
         }
       }
       const mine = this.meshFor(sessionId, paintOf(meServer), meServer.skin);
-      mine.set(pos.x, pos.z, this.aim, meServer.alive, meServer.weapon);
+      mine.set(pos.x, pos.z, this.aim, meServer.alive, predictor.weaponOf());
       if ((predictor.sim?.stunTicks ?? 0) > 0) mine.stunned(now);
       viewer = pos;
       const shield = meServer.shieldTicks > 0 ? meServer.shieldHp / SHIELD.absorb : 0;
       mine.setShield(shield);
       // Our own plate: the bar alone, at the predicted position like the body.
       scene.plates.set(sessionId, pos.x, pos.z, meServer.name, paintOf(meServer), meServer.hp / MAX_HP, shield, meServer.alive, meServer.connected, false);
-      scene.follow(pos.x, pos.z, dt, !this.cameraSnapped);
-      this.cameraSnapped = true;
+      if (!watching) {
+        setListener(pos.x, pos.z);
+        scene.follow(pos.x, pos.z, dt, !this.cameraSnapped);
+        this.cameraSnapped = true;
+      }
+    }
+
+    // Battle royale: the zone as of now (the latest tick plus the time since
+    // it came in), the crates and the items on the floor.
+    const tickNow = latest ? latest.tick + (now - latest.t) / TICK_MS : 0;
+    if (royale && latest) {
+      scene.royale.setZone(zoneAt(latest.zone, tickNow));
+      scene.royale.sync(latest.crates, latest.items, now);
     }
 
     // 3. Remote players and bullets: interpolated ~100 ms in the past.
@@ -716,7 +804,7 @@ export class Match {
     // interpolated position) or frames the map, and the sounds are heard
     // from where it looks.
     const spectator = this.spectator;
-    if (!meServer && latest && spectator) {
+    if (watching && latest && spectator) {
       this.spectatedLastFrame = true;
       spectator.frame(now, dt, this.drawnAt);
       setListener(spectator.listenerX, spectator.listenerZ);
@@ -764,8 +852,8 @@ export class Match {
     // (`opponent` is assigned in a callback above, which TypeScript can't follow.)
     const ffa = latest?.mode === "ffa";
     const teams = latest?.mode === "tdm";
-    // The big maps (FFA and teams): no single opponent, a minimap.
-    const big = ffa || teams;
+    // The big maps (FFA, teams, royale): no single opponent, a minimap.
+    const big = ffa || teams || royale;
     const opp = big ? null : (opponent as PlayerView | null);
     let away: PlayerView | null = opp && !opp.connected ? opp : null;
     if (big) latest?.players.forEach((p, id) => (away ??= id !== sessionId && !p.connected ? p : null));
@@ -775,7 +863,7 @@ export class Match {
       status = big
         ? `${away.name || "A player"} lost their connection.`
         : `${away.name || "Your opponent"} lost their connection. Waiting for them to come back…`;
-    else if (meServer && !meServer.alive && latest?.phase === "playing")
+    else if (meServer && !meServer.alive && latest?.phase === "playing" && !royale)
       status = `Respawning in ${(meServer.respawnTicks / TICK_RATE).toFixed(1)}s (${WEAPON_KEYS}: weapon, G: grenade)`;
 
     const map = scene.map;
@@ -809,9 +897,10 @@ export class Match {
       opponent: opp,
       ffa: ffa && latest ? this.ffaHud(latest) : null,
       team: teams && latest ? this.teamHud(latest, meServer) : null,
+      royale: royale && latest ? this.royaleHud(latest, meServer, tickNow) : null,
       feed: latest ? this.feedLines(latest, now) : [],
       sim: predictor.sim,
-      canPick: !!latest && canPick(meServer, latest.phase),
+      canPick: !!latest && canPick(meServer, latest.phase, latest.mode),
       warmup: latest?.phase === "warmup" ? warmupLeft(latest) : null,
       mapCard,
       debug: debugParts.join("  |  "),
@@ -827,7 +916,7 @@ export class Match {
     const all: (PlayerView & { id: string })[] = [];
     s.players.forEach((p, id) => all.push({ ...p, id }));
     all.sort((a, b) => a.slot - b.slot);
-    const placed = byPlace(all, s.phase === "ended");
+    const placed = byPlace(all, s.phase === "ended", s.mode === "royale");
     const mine = placed.find((p) => p.player.id === you);
     const left = secondsLeft(s);
     const running = s.phase === "playing";
@@ -841,6 +930,51 @@ export class Match {
       timeLeft: running && left !== null && !s.suddenDeath ? clock(Math.ceil(left)) : "",
       lowTime: running && left !== null && left <= 30,
       suddenDeath: s.suddenDeath,
+    };
+  }
+
+  /**
+   * The battle royale's HUD: who is still in, the zone (time to its next
+   * step, and the way back when we are outside), our three gun slots and
+   * the grenade stack. The slots and the magazines are the predicted ones,
+   * so a switch shows at once.
+   */
+  private royaleHud(s: Snapshot, me: PlayerView | null, tickNow: number): RoyaleHud {
+    let alive = 0;
+    s.players.forEach((p) => (alive += p.alive ? 1 : 0));
+    const zone = s.zone;
+    const running = s.phase === "playing" && zone.end > 0;
+    const stage: RoyaleHud["zone"] = !running ? "none" : tickNow < zone.start ? "waiting" : tickNow < zone.end ? "shrinking" : "closed";
+    const next = stage === "waiting" ? zone.start : zone.end;
+    const zoneTime = stage === "waiting" || stage === "shrinking" ? clock(Math.ceil((next - tickNow) / TICK_RATE)) : "";
+    const sim = this.predictor.sim ?? me;
+    const pos = sim ?? { x: 0, z: 0 };
+    const outside = running && !!me?.alive && outsideZone(zone, tickNow, pos.x, pos.z);
+    const c = running ? zoneAt(zone, tickNow) : null;
+    const arrow = outside && c ? this.scene.screenAngle(pos.x, pos.z, c.x, c.z) : 0;
+    const slots: RoyaleHud["slots"] = [];
+    for (let i = 0; i < ROYALE.gunSlots; i++) {
+      const w = sim ? gunAt(sim.kit, i) : NO_GUN;
+      const def = w === NO_GUN ? null : weaponDef(w);
+      slots.push({
+        weapon: w === NO_GUN ? -1 : w,
+        name: def?.name ?? "",
+        ammo: sim && def ? magAt(sim, i) : 0,
+        magazine: def?.magazine ?? 0,
+        hand: !!sim && sim.kit.hand === i,
+        reloading: !!sim && sim.kit.hand === i && sim.reloadTicks > 0,
+      });
+    }
+    return {
+      alive,
+      players: s.players.size,
+      zone: stage,
+      zoneTime,
+      shrink: running ? zoneProgress(zone, tickNow) : 0,
+      outside,
+      arrow,
+      slots,
+      grenades: sim?.kit.grenades ?? 0,
     };
   }
 
@@ -877,7 +1011,7 @@ export class Match {
         killerSlot: paintFor(k.killerSlot, k.killerTeam),
         victim: k.victimName,
         victimSlot: paintFor(k.victimSlot, k.victimTeam),
-        weapon: k.weapon === KILL_GRENADE ? "Grenade" : (WEAPONS[k.weapon]?.name ?? ""),
+        weapon: k.weapon === KILL_GRENADE ? "Grenade" : k.weapon === KILL_ZONE ? "Zone" : (WEAPONS[k.weapon]?.name ?? ""),
         byYou: !!k.killer && k.killer === you,
         onYou: k.victim === you,
         opacity: Math.min(1, (KILL_FEED_MS - age) / KILL_FEED_FADE_MS),

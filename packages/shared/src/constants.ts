@@ -76,6 +76,12 @@ export interface WeaponDef<K extends string = WeaponKey> {
   burst?: number;
   /** Seconds between the rounds of a burst. */
   burstInterval?: number;
+  /**
+   * False: a starting gun only (the battle royale's Pistol). It never shows
+   * in the loadout picker, has no number key and can't be picked (parsePick
+   * refuses it). Default true.
+   */
+  pickable?: boolean;
 }
 
 /**
@@ -91,6 +97,8 @@ export interface WeaponDef<K extends string = WeaponKey> {
  * 3. Add its assets: the model under apps/client/public/models/guns/, and
  *    its shot sound (SfxName and the SFX table in apps/client/src/audio.ts).
  * 4. Append its key to WEAPON_IDS in packages/shared/scripts/items.check.ts.
+ * 5. For the battle royale: give it a weight in LOOT below (or leave it out:
+ *    it then never drops from a crate).
  */
 const WEAPON_LIST = [
   //  name        damage  fireInterval  bulletSpeed  range  spread  pellets  magazine  reloadTime
@@ -101,11 +109,15 @@ const WEAPON_LIST = [
   { key: "revolver", name: "Revolver", damage: 34, fireInterval: 0.45, bulletSpeed: 70, range: 20, spread: 0, pellets: 1, magazine: 6, reloadTime: 2.2 },
   { key: "burst-pistol", name: "Burst pistol", damage: 12, fireInterval: 0.45, bulletSpeed: 42, range: 15, spread: 0.05, pellets: 1, magazine: 15, reloadTime: 1.2, burst: 3, burstInterval: 0.06 },
   { key: "dmr", name: "DMR",     damage: 40, fireInterval: 0.567, bulletSpeed: 80, range: 26, spread: 0.01, pellets: 1, magazine: 8, reloadTime: 2.0 },
+  // The battle royale's starting gun, weaker than the burst pistol and the revolver (44 dps against 75-80). Never in the picker.
+  { key: "pistol", name: "Pistol",  damage: 14, fireInterval: 0.32, bulletSpeed: 40, range: 14, spread: 0.06, pellets: 1, magazine: 10, reloadTime: 1.4, pickable: false },
 ] as const satisfies readonly WeaponDef<string>[];
 /** A gun's stable key ("rifle", "shotgun", ...). */
 export type WeaponKey = (typeof WEAPON_LIST)[number]["key"];
 export const WEAPONS: readonly WeaponDef[] = WEAPON_LIST;
 export const DEFAULT_WEAPON = 0;
+/** The battle royale's starting gun (WEAPONS index). */
+export const PISTOL = WEAPONS.findIndex((w) => w.key === "pistol");
 
 /** Dash (Space): a burst in the move direction, or the facing direction when standing still. */
 export const DASH = {
@@ -231,6 +243,11 @@ export interface GrenadeDef<K extends string = GrenadeKey> {
   cooldown: number;
   /** The landing telegraph's radius, metres. */
   radius: number;
+  /**
+   * Battle royale: the most of this type one player carries (grenades are
+   * counted there, not on a cooldown: see `takeGrenades` in royale.ts).
+   */
+  stack: number;
 }
 
 /** `Player.grenade` / `Grenade.kind` values: the index in GRENADES. */
@@ -256,13 +273,14 @@ export const GRENADE_FLASH = 3;
  *    apps/client/src/audio.ts), any new particles in vfx.ts.
  * 4. Append its key to GRENADE_IDS in packages/shared/scripts/items.check.ts
  *    (and a new effect or `affects` value to EFFECTS / AFFECTS there).
+ * 5. For the battle royale: its `stack`, and a weight in LOOT below.
  */
 const GRENADE_LIST = [
-  { key: "frag", name: "Frag", effect: "damage", affects: "enemies", cooldown: 8, radius: GRENADE.radius },
-  { key: "smoke", name: "Smoke", effect: "cloud", affects: "enemies", cooldown: 12, radius: SMOKE.radius },
-  { key: "stun", name: "Stun", effect: "stun", affects: "enemies", cooldown: 10, radius: STUN.radius },
-  { key: "flash", name: "Flash", effect: "flash", affects: "enemies", cooldown: 10, radius: 1.2 },
-  { key: "heal", name: "Heal", effect: "heal", affects: "allies", cooldown: 14, radius: HEAL.radius },
+  { key: "frag", name: "Frag", effect: "damage", affects: "enemies", cooldown: 8, radius: GRENADE.radius, stack: 3 },
+  { key: "smoke", name: "Smoke", effect: "cloud", affects: "enemies", cooldown: 12, radius: SMOKE.radius, stack: 2 },
+  { key: "stun", name: "Stun", effect: "stun", affects: "enemies", cooldown: 10, radius: STUN.radius, stack: 2 },
+  { key: "flash", name: "Flash", effect: "flash", affects: "enemies", cooldown: 10, radius: 1.2, stack: 2 },
+  { key: "heal", name: "Heal", effect: "heal", affects: "allies", cooldown: 14, radius: HEAL.radius, stack: 2 },
 ] as const satisfies readonly GrenadeDef<string>[];
 /** A grenade type's stable key ("frag", "smoke", ...). */
 export type GrenadeKey = (typeof GRENADE_LIST)[number]["key"];
@@ -352,6 +370,95 @@ export const TEAM_RED = 0;
 export const TEAM_BLUE = 1;
 export const NO_TEAM = 255;
 export const TEAM_NAMES = ["Red", "Blue"] as const;
+
+// --- Battle royale (see modes.ts and royale.ts): one life, crates, a closing zone ---
+/** Room name of the battle royale matchmaking. */
+export const ROYALE_ROOM_NAME = "royale";
+export const ROYALE_MIN_PLAYERS = 2;
+export const ROYALE_MAX_PLAYERS = 10;
+/** Seconds of countdown once ROYALE_MIN_PLAYERS are in (more can still join during it). */
+export const ROYALE_COUNTDOWN = 15;
+/** The pre-match: everyone on their start spot with the Pistol, nothing to pick. */
+export const ROYALE_WARMUP = 5;
+/** Seconds the placement table stays up before the rematch. */
+export const ROYALE_END_DELAY = 10;
+/**
+ * A royale that started with fewer players than this isn't counted in the
+ * stats (its row isn't written): with two, one kill would be a win, cheaper
+ * than a duel's 5 kills. From 3 up it is at least as hard as a 3-player FFA.
+ */
+export const ROYALE_MIN_RECORDED = 3;
+
+/** Gun slots, floor items and crates (royale only). */
+export const ROYALE = {
+  /** Guns carried at most. Slot 1 starts with the Pistol. */
+  gunSlots: 3,
+  /** Seconds from a switch (or a swap) until the new gun may fire; a reload in progress is cancelled. */
+  switchTime: 0.3,
+  /** Seconds between two throws from a grenade stack (counted grenades have no cooldown). */
+  throwGap: 1,
+  /** An item is picked up when the player's centre is this close to it. */
+  pickupRadius: 0.9,
+  /** A crate breaks open when a player's body touches this circle. */
+  crateRadius: 0.6,
+  /** Items on the floor at most; past it the oldest one goes. */
+  maxItems: 60,
+  /** A dead player's items land this far round where they fell. */
+  dropSpread: 1.1,
+} as const;
+
+/**
+ * The closing zone: a circle round the whole map that waits, then shrinks
+ * smoothly to nothing (ModeRules.royale holds the timings, so tests can
+ * shorten them). Outside it you take damage every tick, more as time goes on.
+ */
+export const ZONE = {
+  /** Seconds after the match starts before it shrinks. */
+  wait: 30,
+  /** Seconds after the match starts when it is closed (radius 0). */
+  close: 270,
+  /** Damage per second outside it when it starts shrinking, and once it is closed (linear in between). */
+  dpsStart: 2,
+  dpsEnd: 14,
+  /** Metres past the map's corners the starting circle reaches. */
+  margin: 2,
+} as const;
+
+/**
+ * Kinds of item on the floor (`FloorItem.kind`). Index = id on the wire:
+ * append-only, like WEAPONS and GRENADES. `item` says which one (a WEAPONS
+ * index for a gun, a GRENADES index for grenades) and `amount` how many (a
+ * gun's magazine, a stack's count). Healing items and shield charges (#34)
+ * append their kind here.
+ */
+export const ITEM_KINDS = ["gun", "grenade"] as const;
+export type ItemKind = (typeof ITEM_KINDS)[number];
+export const ITEM_GUN = 0;
+export const ITEM_GRENADE = 1;
+
+/** One line of the loot table: what a crate may drop, and how often (weights, not percentages). */
+export type LootEntry =
+  | { weight: number; kind: "gun"; key: WeaponKey }
+  | { weight: number; kind: "grenade"; key: GrenadeKey; amount: number };
+
+/**
+ * What a crate drops, one entry drawn by weight (`rollLoot` in royale.ts).
+ * The one place to tune the royale's loot. A gun drops with a full magazine.
+ */
+export const LOOT: readonly LootEntry[] = [
+  { weight: 12, kind: "gun", key: "rifle" },
+  { weight: 10, kind: "gun", key: "smg" },
+  { weight: 8, kind: "gun", key: "shotgun" },
+  { weight: 7, kind: "gun", key: "burst-pistol" },
+  { weight: 6, kind: "gun", key: "revolver" },
+  { weight: 5, kind: "gun", key: "dmr" },
+  { weight: 3, kind: "gun", key: "sniper" },
+  { weight: 9, kind: "grenade", key: "frag", amount: 2 },
+  { weight: 5, kind: "grenade", key: "smoke", amount: 1 },
+  { weight: 5, kind: "grenade", key: "stun", amount: 1 },
+  { weight: 4, kind: "grenade", key: "flash", amount: 1 },
+  { weight: 4, kind: "grenade", key: "heal", amount: 1 },
+];
 
 // --- Netcode ---
 /** How far in the past remote entities are rendered, in ms. */

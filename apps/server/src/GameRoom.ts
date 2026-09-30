@@ -1,8 +1,21 @@
-// The game room, for every mode. A duel, a free-for-all and a team
-// deathmatch run the same simulation (inputs, bullets, grenades, damage);
-// what differs is in the mode's rules (@bagarre/shared modes.ts): seats, win
-// condition, map pool, countdown, spawns, respawn delay, teams. `DuelRoom`,
-// `FfaRoom` and `TeamRoom` at the bottom only pick the rules.
+// The game room, for every mode. A duel, a free-for-all, a team deathmatch
+// and a battle royale run the same simulation (inputs, bullets, grenades,
+// damage); what differs is in the mode's rules (@bagarre/shared modes.ts):
+// seats, win condition, map pool, countdown, spawns, respawn delay, teams.
+// `DuelRoom`, `FfaRoom`, `TeamRoom` and `RoyaleRoom` at the bottom only pick
+// the rules.
+//
+// Battle royale (rules.royale): one life, so a death during the match is a
+// knock-out (`outTick`) with no respawn, and the last one standing wins
+// (`checkLastStanding`, at the end of the tick, so players knocked out on the
+// same tick are all out before anyone is ranked: rankRoyale). Everyone
+// carries gun slots and counted grenades (the kit, KitMode "slots" in the
+// shared step), found in crates and on the floor (floor.ts), and the zone
+// (`state.zone`, royale.ts' zoneAt) closes in and hurts whoever is outside.
+// No loadout picks, no joining once the match started (`closedToJoins`),
+// and a player who leaves mid-match is knocked out then: their seat stays in
+// `state.players` (not connected, `gone`) until the result is over, so their
+// place is shown and recorded.
 //
 // Teams (rules.teams): every seat gets a team (`Player.team`) when it is
 // taken, the smaller one (`pickTeam`). Friendly fire is one rule,
@@ -47,6 +60,10 @@ import {
   TEAM_BLUE,
   TEAM_RED,
   TEAM_RULES,
+  ROYALE_MIN_RECORDED,
+  ROYALE_RULES,
+  DEFAULT_GRENADE,
+  PISTOL,
   GRENADES,
   GRENADE_FUSE_TICKS,
   HIT_HISTORY_FRAMES,
@@ -60,6 +77,7 @@ import {
   INPUT_BURST,
   KILL_FEED_SIZE,
   KILL_GRENADE,
+  KILL_ZONE,
   MAX_HP,
   MAX_INPUT_QUEUE,
   MAX_MESSAGES_PER_SECOND,
@@ -91,6 +109,14 @@ import {
   isSkinId,
   randomSkin,
   rank,
+  rankRoyale,
+  NO_GUN,
+  emptyKit,
+  gunInHand,
+  outsideZone,
+  pickZone,
+  startKit,
+  zoneDamage,
   readSim,
   respawnPoint,
   shotPellets,
@@ -113,6 +139,8 @@ import {
   type GrenadeDef,
   type GrenadeEffect,
   type InputMessage,
+  type KitMode,
+  type KitSim,
   type MapDef,
   type ModeRules,
   type Phase,
@@ -122,6 +150,7 @@ import {
   type Vec2,
 } from "@bagarre/shared";
 import { guestName, recordMatch, resolveIdentity, type Identity, type MatchResult } from "./accounts.ts";
+import { Floor } from "./floor.ts";
 import { Bullet, GameState, Grenade, KillEvent, Player, Smoke } from "./state.ts";
 
 /** Server-only bookkeeping per seat. Never synced. */
@@ -146,6 +175,12 @@ interface PlayerInternal {
    * keeps it true and resumes from the synced counters.
    */
   baselined: boolean;
+  /**
+   * Battle royale: left mid-match (a leave, or the grace period ran out).
+   * Knocked out then, the seat kept until the result is over (`purgeGone`)
+   * so the place still shows and is recorded.
+   */
+  gone: boolean;
 }
 
 /** Server-only bookkeeping per bullet. */
@@ -257,6 +292,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       const pick = parsePick(raw);
       const player = this.state.players.get(client.sessionId);
       if (!pick || !player) return;
+      // Battle royale: no loadout, ever (everyone starts with the Pistol).
+      if (this.rules.royale) return;
       if (player.alive && this.state.phase === "playing") return;
       if (pick.weapon !== undefined) player.pick = pick.weapon;
       if (pick.grenade !== undefined) player.grenadePick = pick.grenade;
@@ -341,6 +378,22 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   private joinOrder: string[] = [];
   /** Last metadata written, to skip no-op writes. */
   private metaKey = "";
+  /** Battle royale: the crates and the items on the floor. */
+  private floor = new Floor(this.state, () => this.map);
+  /** Battle royale: players in the match when it started (below ROYALE_MIN_RECORDED it isn't recorded). */
+  private royaleStarters = 0;
+  /** Battle royale: someone was knocked out this tick; see who is left at its end (checkLastStanding). */
+  private knockedOut = false;
+
+  /** How the players of this mode carry their guns and grenades (the shared step's KitMode). */
+  protected get kitMode(): KitMode {
+    return this.rules.royale ? "slots" : "loadout";
+  }
+
+  /** What a fresh player carries: the royale's Pistol kit, or nothing in the other modes. */
+  private freshKit(): KitSim {
+    return this.rules.royale ? startKit() : emptyKit();
+  }
 
   /**
    * Runs before a seat is reserved (Colyseus 0.18 only calls the static
@@ -501,7 +554,16 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
    * `updateSeatLock`), so a spectator leaving never unlocks a full room.
    */
   override hasReachedMaxClients(): boolean {
-    return super.hasReachedMaxClients() || (!this.admitting && this.claimedSeats() >= this.rules.maxPlayers);
+    return super.hasReachedMaxClients() || (!this.admitting && (this.claimedSeats() >= this.rules.maxPlayers || this.closedToJoins()));
+  }
+
+  /**
+   * No new player may take a seat right now: a mode without drop-in (a duel,
+   * a battle royale) once its match started, until its result is up.
+   * Spectators still get in. (A duel is full then anyway.)
+   */
+  private closedToJoins(): boolean {
+    return !this.rules.dropIn && (this.state.phase === "warmup" || this.state.phase === "playing");
   }
 
   /**
@@ -511,7 +573,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
    * included, which would let quick match land in a full room.
    */
   private updateSeatLock() {
-    if (this.seats >= this.rules.maxPlayers) void this.lock();
+    if (this.seats >= this.rules.maxPlayers || this.closedToJoins()) void this.lock();
     else if (this.claimedSeats() < this.rules.maxPlayers && this.locked) void this.unlock();
   }
 
@@ -538,7 +600,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     // The seat lock settles races, so a player arriving with every seat taken
     // is a lost race: they watch rather than be thrown out (their client sees
     // it isn't in `state.players`).
-    if (!wantsSeat(options) || this.seats >= this.rules.maxPlayers) {
+    if (!wantsSeat(options) || this.seats >= this.rules.maxPlayers || this.closedToJoins()) {
       this.addSpectator(client, options);
       return;
     }
@@ -563,7 +625,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   private takeSeat(client: Client) {
     const id = client.sessionId;
     if (!this.spectators.has(id) || this.claimedSeats() >= this.rules.maxPlayers) return;
-    if (!this.rules.dropIn && this.state.phase !== "waiting") return;
+    if (!this.rules.dropIn && this.state.phase !== "waiting" && !(this.rules.royale && this.state.phase === "ended")) return;
     const options = this.spectators.get(id);
     this.spectators.delete(id);
     this.state.spectators = Math.min(255, this.spectators.size);
@@ -601,6 +663,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     player.name = name;
     player.account = hasUsername;
     player.skin = this.skinFor(identity);
+    // Battle royale: the Pistol, already while waiting.
+    if (this.rules.royale) player.weapon = PISTOL;
     if (this.rules.mode === "duel") {
       const spawn = duelSpawn(this.map, slot);
       writeSim(player, spawnSim(spawn.x, spawn.z, player.weapon));
@@ -613,13 +677,13 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       // lands here too), facing the hub. Teams: on the team's own side, out
       // of every enemy's sight.
       const spawn = ffaRespawnPoint(this.map, this.spawnsOf(player.team), this.livingEnemies(null, player.team));
-      writeSim(player, spawnSim(spawn.x, spawn.z, player.weapon));
+      writeSim(player, spawnSim(spawn.x, spawn.z, player.weapon, undefined, this.freshKit()));
       player.aim = this.hubAim(spawn);
     }
     this.state.players.set(client.sessionId, player);
     // A drop-in reached its 0 kills at the match start, like everyone else.
     const reachedAt = this.state.startTick;
-    this.internals.set(client.sessionId, { queue: [], tokens: INPUT_BURST, identity, deaths: 0, reachedAt, ping: null, baselined: false });
+    this.internals.set(client.sessionId, { queue: [], tokens: INPUT_BURST, identity, deaths: 0, reachedAt, ping: null, baselined: false, gone: false });
     this.joinOrder.push(client.sessionId);
   }
 
@@ -714,6 +778,26 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       return;
     }
     if (!this.state.players.has(id)) return; // No seat (a refused join).
+    // Battle royale, from the start of play to the end of the result:
+    // leaving is a knock-out, now (if still in). The seat stays, not
+    // connected and `gone`, so the place shows and is recorded; purgeGone
+    // frees it once the result is over.
+    if (this.rules.royale && (this.state.phase === "playing" || this.state.phase === "ended")) {
+      const p = this.state.players.get(id)!;
+      const internal = this.internals.get(id);
+      p.connected = false;
+      if (internal) {
+        internal.gone = true;
+        internal.queue.length = 0;
+      }
+      if (this.state.phase === "playing" && p.alive) {
+        this.knockOut(p);
+        // Now, not at the next tick: the room may be empty (and gone) by then.
+        this.checkLastStanding();
+      }
+      this.syncListing();
+      return;
+    }
     this.state.players.delete(id);
     this.updateSeatLock();
     this.internals.delete(id);
@@ -786,6 +870,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
 
   private setPhase(phase: Phase) {
     this.state.phase = phase;
+    // A mode without drop-in closes its seats while the match is played.
+    this.updateSeatLock();
     if (phase !== "waiting") this.state.countdown = 0;
     if (phase !== "warmup") this.state.warmupEnd = 0;
     // The final places and the tiebreak only mean something on the result.
@@ -857,7 +943,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     let i = 0;
     this.state.players.forEach((p) => {
       const spawn = starts ? starts[i++ % starts.length] : duelSpawn(map, p.slot);
-      writeSim(p, spawnSim(spawn.x, spawn.z, p.weapon, readSim(p)));
+      writeSim(p, spawnSim(spawn.x, spawn.z, p.weapon, readSim(p), this.freshKit()));
     });
   }
 
@@ -868,6 +954,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
    * playing.
    */
   private startMatch() {
+    this.purgeGone();
     this.pickMap();
     this.clearProjectiles();
     this.state.winner = "";
@@ -901,6 +988,12 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
         p.aim = this.hubAim(spawn);
       });
     }
+    // Battle royale: a crate on every crate spot, no zone until play starts.
+    if (this.rules.royale) {
+      this.floor.reset(this.map.royale?.crates ?? []);
+      this.state.zone.end = 0;
+      this.knockedOut = false;
+    }
     // Not started yet: the clock, the time limit and the tiebreaks begin
     // with `playing` (beginPlay).
     this.state.startTick = 0;
@@ -931,6 +1024,16 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     });
     this.teamDamage = [0, 0];
     this.teamReachedAt = [this.state.startTick, this.state.startTick];
+    // Battle royale: the zone waits `zoneWait`, then closes by `zoneClose`,
+    // round a centre drawn from the match id.
+    const royale = this.rules.royale;
+    if (royale) {
+      // Who plays it (a leave during warmup doesn't count): a small one isn't recorded.
+      this.royaleStarters = this.seats;
+      const t = this.state.startTick;
+      const z = pickZone(this.map, this.matchId, t + ticks(royale.zoneWait), t + ticks(Math.max(royale.zoneWait, royale.zoneClose)));
+      Object.assign(this.state.zone, z);
+    }
     this.setPhase("playing");
   }
 
@@ -957,11 +1060,13 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
    * the new type's cooldown), no stun, no flash.
    */
   private spawnAt(p: Player, x: number, z: number) {
-    p.weapon = p.pick;
-    p.grenade = p.grenadePick;
+    // Battle royale: the Pistol and no grenades, whatever was picked (nothing can be).
+    p.weapon = this.rules.royale ? PISTOL : p.pick;
+    p.grenade = this.rules.royale ? DEFAULT_GRENADE : p.grenadePick;
     p.flashEnd = 0;
     p.flashTicks = 0;
-    writeSim(p, spawnSim(x, z, p.weapon, readSim(p)));
+    p.outTick = 0;
+    writeSim(p, spawnSim(x, z, p.weapon, readSim(p), this.freshKit()));
     p.hp = MAX_HP;
     p.alive = true;
     p.respawnTicks = 0;
@@ -1019,6 +1124,16 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       }
     });
 
+    // Battle royale: crates broken open and items picked up, where the
+    // players now stand. Only the living and connected take anything.
+    if (this.rules.royale && this.state.phase === "playing") {
+      const takers: { id: string; p: Player }[] = [];
+      this.state.players.forEach((p, id) => {
+        if (p.alive && p.connected) takers.push({ id, p });
+      });
+      this.floor.step(takers);
+    }
+
     // 2. Move bullets and grenades, resolve hits and blasts. The poses are
     //    recorded first: final for this tick, and untouched by combat yet.
     this.recordHistory();
@@ -1032,9 +1147,15 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
         if (player.shieldTicks === 0) player.shieldHp = 0;
       }
       if (player.alive) return;
+      // Battle royale: one life. Knocked out stays out (a death while
+      // waiting for the match is practice, and respawns as usual).
+      if (player.outTick > 0) return;
       player.respawnTicks--;
       if (player.respawnTicks <= 0) this.respawn(id, player);
     });
+
+    // The zone hurts whoever is outside it, a little more as it closes.
+    if (this.rules.royale && this.state.phase === "playing") this.stepZone();
 
     // 4. The match clock: countdown before, time limit during, rematch after.
     if (this.state.phase === "waiting") this.stepCountdown();
@@ -1048,6 +1169,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       // room back to waiting): a match never starts against an empty seat.
       if (this.matchResetTicks > 0) this.matchResetTicks--;
       if (this.matchResetTicks <= 0) {
+        // Battle royale: the seats of those who left go now.
+        this.purgeGone();
         // Teams: leavers may have left them lopsided; even them out first.
         if (this.rules.teams) this.rebalance();
         if (this.seats < this.rules.minPlayers) this.setPhase("waiting");
@@ -1055,6 +1178,10 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
         else if (!this.rules.startNeedsAll) this.setPhase("waiting");
       }
     }
+
+    // Battle royale: knock-outs this tick (every one of them, so players out
+    // on the same tick are ranked together) may leave one standing.
+    if (this.knockedOut) this.checkLastStanding();
 
     this.broadcastPatch();
   }
@@ -1124,15 +1251,25 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       player.grenadeSeen = Math.max(player.grenadeSeen, input.grenade);
       player.shieldSeen = Math.max(player.shieldSeen, input.shield);
       player.reloadSeen = Math.max(player.reloadSeen, input.reload);
+      player.kit.switchSeen = Math.max(player.kit.switchSeen, input.switch ?? 0);
+      player.kit.swapSeen = Math.max(player.kit.swapSeen, input.swap ?? 0);
     }
     // Moving, and (not in warmup) shooting, throwing and the shield: the
     // same rule and the same function the client predicts with. It enforces
     // the fire interval, magazine, reload and ability cooldowns.
     const can = playerCan(player.alive, this.state.phase);
-    const res = stepPlayer(this.map, readSim(player), input, player.weapon, can, player.grenade);
+    const res = stepPlayer(this.map, readSim(player), input, player.weapon, can, player.grenade, this.kitMode);
     writeSim(player, res.sim);
+    // Slots (royale): the gun in hand is the kit's, switched by the step
+    // itself; `weapon` follows it for the shot, the kill feed and the views.
+    if (this.kitMode === "slots") {
+      const hand = gunInHand(player.kit);
+      if (hand !== NO_GUN) player.weapon = hand;
+    }
     if (!can.act) return;
     player.aim = input.aim;
+    // F: swap the gun in hand for one on the floor (royale, while playing).
+    if (res.swap && this.rules.royale && this.state.phase === "playing") this.floor.swap(id, player);
 
     if (res.fired) this.spawnShot(id, player, input);
     if (res.grenade) this.spawnGrenade(id, player, res.grenade);
@@ -1400,11 +1537,16 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     target.deaths = Math.min(0xff, target.deaths + 1);
     const shooter = attackerId === targetId ? undefined : this.state.players.get(attackerId);
     this.addToFeed(shooter ? attackerId : "", shooter, targetId, target, weapon);
+    // Battle royale: out for good, their loot on the floor. Who is left is
+    // looked at once the whole tick is done (checkLastStanding).
+    if (this.rules.royale) this.knockOut(target);
     if (!shooter) return;
 
     shooter.kills = Math.min(0xff, shooter.kills + 1);
     const shooterInternal = this.internals.get(attackerId);
     if (shooterInternal) shooterInternal.reachedAt = this.state.tick;
+    // Battle royale: no kill target, the last one standing wins.
+    if (this.rules.royale) return;
     if (this.rules.teams) {
       // The kill counts for the team, and the team's kills are what win.
       const score = this.addTeamKill(shooter.team);
@@ -1445,7 +1587,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       this.endTeamMatch();
       return;
     }
-    const { order, reason } = rank(this.standings(), this.matchId);
+    // Battle royale: the order of knock-outs (rankRoyale), not the kills.
+    const { order, reason } = this.rules.royale ? rankRoyale(this.royaleStandings(), this.matchId) : rank(this.standings(), this.matchId);
     order.forEach(({ entry, place }) => (this.state.players.get(entry.id)!.place = place));
     this.state.winner = order[0]?.entry.id ?? "";
     this.state.tiebreak = reason;
@@ -1453,6 +1596,12 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     this.setPhase("ended");
     this.matchResetTicks = ticks(this.rules.endDelay);
     this.clearProjectiles();
+    // Battle royale: the floor and the zone go with the match.
+    if (this.rules.royale) {
+      this.floor.clear();
+      this.state.zone.end = 0;
+      this.knockedOut = false;
+    }
     this.recordStats();
   }
 
@@ -1465,12 +1614,89 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     return out;
   }
 
+  /** Every seat's standing for `rankRoyale`: when they were knocked out (0: still in), kills, damage. */
+  private royaleStandings() {
+    const out: { id: string; outTick: number; kills: number; damage: number }[] = [];
+    this.state.players.forEach((p, id) => out.push({ id, outTick: p.alive ? 0 : p.outTick || this.state.tick, kills: p.kills, damage: p.damage }));
+    return out;
+  }
+
+  // --- Battle royale (rules.royale) ---------------------------------------------------
+
+  /**
+   * Out of the match for good (killed, the zone, or left): the tick is kept
+   * (`outTick`, the place follows from it), and the guns and grenades drop
+   * where they fell. What they carried is cleared, so nothing is left
+   * twice. Nobody respawns (see the tick's timers).
+   */
+  private knockOut(p: Player) {
+    if (p.outTick > 0) return;
+    p.alive = false;
+    p.respawnTicks = 0;
+    p.shieldTicks = 0;
+    p.shieldHp = 0;
+    p.outTick = this.state.tick;
+    this.floor.scatter(p, p.x, p.z);
+    const sim = readSim(p);
+    writeSim(p, { ...sim, kit: { ...startKit(), switchSeen: sim.kit.switchSeen, swapSeen: sim.kit.swapSeen } });
+    p.weapon = PISTOL;
+    this.knockedOut = true;
+  }
+
+  /**
+   * The match ends when one player is left standing (connected or not: a
+   * dropped player is still in until their grace period runs out), or none:
+   * the last ones out went together. Never on who is connected: dead players
+   * stay and watch.
+   */
+  private checkLastStanding() {
+    this.knockedOut = false;
+    if (!this.rules.royale || this.state.phase !== "playing") return;
+    let alive = 0;
+    this.state.players.forEach((p) => (alive += p.alive ? 1 : 0));
+    if (alive <= 1) this.endMatch();
+  }
+
+  /**
+   * The zone, once a tick: whoever stands outside it takes `zoneDamage`
+   * (whole HP, growing as it closes), through the usual damage path (the
+   * shield first). A death there shows in the kill feed like a self-kill
+   * (no killer), as "Zone".
+   */
+  private stepZone() {
+    const zone = this.state.zone;
+    const tick = this.state.tick;
+    const dmg = zoneDamage(zone, tick);
+    if (dmg <= 0) return;
+    const hurt: { id: string; p: Player }[] = [];
+    this.state.players.forEach((p, id) => {
+      if (p.alive && outsideZone(zone, tick, p.x, p.z)) hurt.push({ id, p });
+    });
+    for (const { id, p } of hurt) this.damage("", id, p, dmg, KILL_ZONE);
+  }
+
+  /** Frees the seats of the players who left a royale match (kept for their place until the result was over). */
+  private purgeGone() {
+    const gone = [...this.internals].filter(([, i]) => i.gone).map(([id]) => id);
+    if (gone.length === 0) return;
+    for (const id of gone) {
+      this.state.players.delete(id);
+      this.internals.delete(id);
+      this.joinOrder = this.joinOrder.filter((s) => s !== id);
+    }
+    this.updateSeatLock();
+    this.syncListing();
+  }
+
   /**
    * Records the finished match for the account players (guests are
    * skipped), with the places set on the players. A win is first place (the
-   * one winner); every other place is a loss.
+   * one winner); every other place is a loss. A battle royale that started
+   * with fewer than ROYALE_MIN_RECORDED players isn't recorded (one kill
+   * would be a win).
    */
   private recordStats(winningTeam = NO_TEAM) {
+    if (this.rules.royale && this.royaleStarters < ROYALE_MIN_RECORDED) return;
     const results: MatchResult[] = [];
     this.state.players.forEach((p, id) => {
       const internal = this.internals.get(id);
@@ -1670,4 +1896,9 @@ export class FfaRoom extends GameRoom {
 /** Team deathmatch: red against blue, up to 4v4, first team to TEAM_KILLS_TO_WIN or the most after TEAM_TIME_LIMIT. Room "tdm". */
 export class TeamRoom extends GameRoom {
   static override rules = TEAM_RULES;
+}
+
+/** Battle royale: 2-10 players, one life, crates and a closing zone; the last one standing wins. Room "royale". */
+export class RoyaleRoom extends GameRoom {
+  static override rules = ROYALE_RULES;
 }

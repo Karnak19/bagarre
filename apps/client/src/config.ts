@@ -8,9 +8,9 @@ export interface DevSearch {
   /**
    * Dev-only: skip the menu and quick-match at once (test scripts, quick
    * testing); `?play=ffa` quick-matches a free for all, `?play=tdm` a team
-   * deathmatch. One-shot, dropped after use.
+   * deathmatch, `?play=royale` a battle royale. One-shot, dropped after use.
    */
-  play?: true | "ffa" | "tdm";
+  play?: true | "ffa" | "tdm" | "royale";
   /** Ask for this map (dev servers only; the server ignores it in production). */
   map?: string;
   /** Extra round-trip latency in ms, split half each way. */
@@ -36,7 +36,7 @@ const str = (v: unknown) => (typeof v === "string" && v !== "" ? v : typeof v ==
 export function validateDevSearch(raw: Record<string, unknown>): DevSearch {
   const out: DevSearch = {};
   // `?play` arrives as "" (URLSearchParams) or true / "" (the router's JSON-ish parser).
-  if ("play" in raw && raw.play !== false && raw.play !== undefined) out.play = raw.play === "ffa" || raw.play === "tdm" ? raw.play : true;
+  if ("play" in raw && raw.play !== false && raw.play !== undefined) out.play = raw.play === "ffa" || raw.play === "tdm" || raw.play === "royale" ? raw.play : true;
   const map = str(raw.map);
   if (map) out.map = map;
   const lag = Number(raw.lag);

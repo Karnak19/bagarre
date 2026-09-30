@@ -8,7 +8,7 @@
 // sender's connection (4002) on the first bad payload, and we'd rather drop
 // the message and keep the player in the match.
 
-import { isWeaponId } from "./combat.ts";
+import { isPickableWeapon } from "./combat.ts";
 import { TEAM_BLUE, TEAM_RED } from "./constants.ts";
 import { isGrenadeType } from "./grenades.ts";
 import type { InputMessage, PickMessage, PingMessage, TeamMessage } from "./protocol.ts";
@@ -32,7 +32,12 @@ function record(raw: unknown): Fields | null {
 const finiteIn = (v: unknown, limit: number): v is number => typeof v === "number" && Number.isFinite(v) && Math.abs(v) <= limit;
 const counter = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= MAX_COUNTER;
 
-/** MSG_INPUT. Every field is required. Extra fields are ignored (not copied). */
+/**
+ * MSG_INPUT. Every field is required but the battle royale's `slot`,
+ * `switch` and `swap`, which read as 0 when missing (a client of the other
+ * modes may leave them out); present, they must be valid. Extra fields are
+ * ignored (not copied).
+ */
 export function parseInput(raw: unknown): InputMessage | null {
   const m = record(raw);
   if (!m) return null;
@@ -42,11 +47,13 @@ export function parseInput(raw: unknown): InputMessage | null {
   if (typeof fire !== "boolean") return null;
   if (!finiteIn(gx, TARGET_LIMIT) || !finiteIn(gz, TARGET_LIMIT)) return null;
   if (!counter(dash) || !counter(grenade) || !counter(shield) || !counter(reload)) return null;
-  return { seq, mx, mz, aim, fire, gx, gz, dash, grenade, shield, reload };
+  const { slot = 0, switch: sw = 0, swap = 0 } = m;
+  if (!(slot === 0 || slot === 1 || slot === 2) || !counter(sw) || !counter(swap)) return null;
+  return { seq, mx, mz, aim, fire, gx, gz, dash, grenade, shield, reload, slot, switch: sw, swap };
 }
 
 /**
- * MSG_PICK: a weapon id that exists, a grenade type that exists, or both.
+ * MSG_PICK: a weapon id that exists and can be picked, a grenade type that exists, or both.
  * A field that is there must be valid (a bad grenade drops the weapon pick
  * sent with it too); a message with neither is refused.
  */
@@ -56,7 +63,8 @@ export function parsePick(raw: unknown): PickMessage | null {
   const hasWeapon = m.weapon !== undefined;
   const hasGrenade = m.grenade !== undefined;
   if (!hasWeapon && !hasGrenade) return null;
-  if (hasWeapon && !isWeaponId(m.weapon)) return null;
+  // Only a gun the picker offers: never a starting-only one (the royale's Pistol).
+  if (hasWeapon && !isPickableWeapon(m.weapon)) return null;
   if (hasGrenade && !isGrenadeType(m.grenade)) return null;
   const out: PickMessage = {};
   if (hasWeapon) out.weapon = m.weapon as number;
