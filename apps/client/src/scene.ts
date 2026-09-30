@@ -12,7 +12,7 @@ import {
   type MapDef,
   type SmokeVeil,
 } from "@bagarre/shared";
-import { buildArena, disposeArena } from "./arenaView.ts";
+import { buildArena, disposeArena, type ArenaDressing } from "./arenaView.ts";
 import { skinModel, skinModelNow, type Assets } from "./assets.ts";
 import { Character } from "./character.ts";
 import { grenadeView, gunView } from "./items.ts";
@@ -491,6 +491,11 @@ export class GameScene {
    * theme. Also drops every drawn bullet and grenade, without sparks: they
    * belonged to the old map.
    */
+  /** What the current arena is dressed with (arenaView's ArenaDressing), for the dev handle and tests. */
+  get dressing(): ArenaDressing | null {
+    return (this.arena.userData.dressing as ArenaDressing | undefined) ?? null;
+  }
+
   setMap(map: MapDef) {
     if (this.map?.id === map.id) return;
     this.map = map;

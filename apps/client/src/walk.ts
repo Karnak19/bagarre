@@ -89,6 +89,16 @@ export class Walk {
     this.ui.patch({ mode });
   }
 
+  /** Jumps the free camera over the ground point (x, z), at its current zoom (dev handle, screenshots). */
+  lookAt(x: number, z: number) {
+    const camera = this.camera;
+    if (!camera) return;
+    this.setMode("free");
+    camera.x.now = camera.x.to = x;
+    camera.z.now = camera.z.to = z;
+    camera.snap();
+  }
+
   /** Removes the controls and gives the scene the game's own camera back. */
   stop() {
     if (!this.camera) return;

@@ -26,6 +26,12 @@ const KIND_COLOR: Record<ObstacleKind, string> = {
   container: "#4f7fb3",
   wall: "#a2503c",
   barrels: "#c8453a",
+  dumpster: "#4e8a5a",
+  rock: "#8d96a3",
+  wagon: "#3d6a9a",
+  trench: "#b8a067",
+  gastank: "#d8cfb8",
+  tank: "#9fb3c2",
 };
 const SLOT_COLOR = ["#ff8a3d", "#3fa2ff"];
 const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;

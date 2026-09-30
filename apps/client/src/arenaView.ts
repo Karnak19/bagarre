@@ -17,13 +17,44 @@ export function buildArena(group: THREE.Group, props: Map<string, THREE.Object3D
   buildFloor(group, map);
   if (!props || !hasAll(props)) {
     buildPlaceholder(group, map);
+    group.userData.dressing = { placeholder: true, props: {}, cover: bakedStats(group), decor: { meshes: 0, triangles: 0 } } satisfies ArenaDressing;
     return;
   }
   const solid: THREE.Object3D[] = [];
   for (const w of outerWalls(map)) solid.push(...wall(props, map.theme.wall, w));
   for (const b of map.obstacles) solid.push(...cover(props, b));
-  group.add(bake(solid, true));
-  group.add(bake(decor(props, map), false));
+  const trees = decor(props, map);
+  const used: Record<string, number> = {};
+  for (const o of [...solid, ...trees]) used[o.name] = (used[o.name] ?? 0) + 1;
+  const solidGroup = bake(solid, true);
+  const decorGroup = bake(trees, false);
+  group.add(solidGroup, decorGroup);
+  group.userData.dressing = { placeholder: false, props: used, cover: bakedStats(solidGroup), decor: bakedStats(decorGroup) } satisfies ArenaDressing;
+}
+
+/**
+ * What `buildArena` dressed the map with, for the dev handle and the tests:
+ * the placeholder boxes or the props, how many of each prop were placed,
+ * and the baked meshes (one draw call each, plus one shadow pass for the
+ * cover) and their triangles.
+ */
+export interface ArenaDressing {
+  placeholder: boolean;
+  props: Record<string, number>;
+  cover: { meshes: number; triangles: number };
+  decor: { meshes: number; triangles: number };
+}
+
+function bakedStats(group: THREE.Group): { meshes: number; triangles: number } {
+  let meshes = 0;
+  let triangles = 0;
+  group.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    meshes++;
+    triangles += (m.geometry.getIndex()?.count ?? m.geometry.getAttribute("position").count) / 3;
+  });
+  return { meshes, triangles };
 }
 
 /** Frees what `buildArena` made. The group itself is left empty. */
@@ -35,6 +66,7 @@ export function disposeArena(group: THREE.Group) {
     if (m.userData.ownMaterial) for (const mat of Array.isArray(m.material) ? m.material : [m.material]) mat.dispose();
   });
   group.clear();
+  delete group.userData.dressing;
 }
 
 const NEEDED = ["BrickWall_2", "Crate", "Container_Small", "SackTrench_Small", "Barrier_Single", "ExplodingBarrel"];
@@ -188,6 +220,23 @@ function cover(props: Map<string, THREE.Object3D>, b: Obstacle): THREE.Object3D[
       return [place(props.get("Container_Small")!, b.x, b.z, b.w, b.d, b.h, b.x < 0 ? 1 : 3)];
     case "barrels":
       return grid(props.get("ExplodingBarrel")!, b, 1, b.h);
+    case "dumpster":
+      // One dumpster, long side along the box's. Falls back to a container.
+      return [place(pick(props, "TrashContainer", "Container_Small"), b.x, b.z, b.w, b.d, b.h, b.w >= b.d ? 0 : 1)];
+    case "wagon":
+      return [place(pick(props, "Container_Long", "Container_Small"), b.x, b.z, b.w, b.d, b.h, b.w >= b.d ? (b.z < 0 ? 0 : 2) : b.x < 0 ? 1 : 3)];
+    case "tank": {
+      // WaterTank_Floor lies along its own Z: turn it when the box is long along X.
+      const t = props.get("WaterTank_Floor");
+      if (!t) return [place(props.get("Container_Small")!, b.x, b.z, b.w, b.d, b.h)];
+      return [place(t, b.x, b.z, b.w, b.d, b.h, b.w >= b.d ? 1 : 0)];
+    }
+    case "trench":
+      return fill(props, props.has("SackTrench") ? "SackTrench" : "SackTrench_Small", b, b.h);
+    case "gastank":
+      return grid(pick(props, "GasTank", "ExplodingBarrel"), b, 1, b.h);
+    case "rock":
+      return rocks(props, b);
     case "crate": {
       // A stack of ~1.5 m crates, with a box on top of the big ones.
       const out = grid(props.get("Crate")!, b, 1.5, b.h, true);
@@ -200,6 +249,42 @@ function cover(props: Map<string, THREE.Object3D>, b: Obstacle): THREE.Object3D[
       return out;
     }
   }
+}
+
+/** The prop `name`, or `fallback` when props.glb predates it (an older cached file). */
+function pick(props: Map<string, THREE.Object3D>, name: string, fallback: string): THREE.Object3D {
+  return props.get(name) ?? props.get(fallback)!;
+}
+
+const ROCKS = ["Rock_Snow_4", "Rock_Snow_6", "Rock_Snow_7"];
+/** A stable small hash of a position (same rocks on every load and every client). */
+function hashAt(x: number, z: number): number {
+  let h = Math.imul(Math.round(x * 10), 73856093) ^ Math.imul(Math.round(z * 10), 19349663);
+  h = Math.imul(h ^ (h >>> 13), 0x5bd1e995);
+  return (h ^ (h >>> 15)) >>> 0;
+}
+
+/**
+ * Snowy boulders filling a box: one per ~1.6 m cell, so a long box is a row
+ * of rocks at their own proportions rather than one stretched rock. Each
+ * cell's shape and facing come from its position. Falls back to crates.
+ */
+function rocks(props: Map<string, THREE.Object3D>, b: Box): THREE.Object3D[] {
+  if (!ROCKS.every((r) => props.has(r))) return grid(props.get("Crate")!, b, 1.5, b.h, true);
+  const nx = Math.max(1, Math.round(b.w / 1.6));
+  const nz = Math.max(1, Math.round(b.d / 1.6));
+  const cw = b.w / nx;
+  const cd = b.d / nz;
+  const out: THREE.Object3D[] = [];
+  for (let i = 0; i < nx; i++)
+    for (let j = 0; j < nz; j++) {
+      const x = b.x - b.w / 2 + cw * (i + 0.5);
+      const z = b.z - b.d / 2 + cd * (j + 0.5);
+      const h = hashAt(x, z);
+      // Heights vary a little (80-100 % of the box) so a row doesn't look cut flat.
+      out.push(place(props.get(ROCKS[h % ROCKS.length])!, x, z, cw, cd, b.h * (0.8 + 0.2 * ((h >>> 8) % 5) / 4), (h >>> 4) % 4));
+    }
+  return out;
 }
 
 /**
@@ -250,10 +335,20 @@ function flat(g: THREE.BufferGeometry, m: THREE.Matrix4): THREE.BufferGeometry {
     }
     out.setAttribute(name, new THREE.BufferAttribute(arr, 3));
   }
-  if (!out.getAttribute("normal")) out.computeVertexNormals();
   const idx = g.getIndex();
   if (idx) out.setIndex(Array.from(idx.array as ArrayLike<number>));
   else out.setIndex(Array.from({ length: out.getAttribute("position").count }, (_, i) => i));
+  if (!out.getAttribute("normal")) {
+    // Flat-shaded props (the nature models) ship without normals: one
+    // normal per face, computed after the transform so a stretched rock
+    // still lights right. Kept indexed, like every other piece, for mergeGeometries.
+    out.applyMatrix4(m);
+    const faces = out.toNonIndexed();
+    out.dispose();
+    faces.computeVertexNormals();
+    faces.setIndex(Array.from({ length: faces.getAttribute("position").count }, (_, i) => i));
+    return faces;
+  }
   out.applyMatrix4(m);
   // Mirrored scale would flip winding; props are never mirrored here.
   return out;

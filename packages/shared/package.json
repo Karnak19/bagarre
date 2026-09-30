@@ -13,7 +13,7 @@
     "lint": "oxlint src scripts",
     "maps:validate": "bun scripts/validate.ts",
     "maps:preview": "bun scripts/preview.ts",
-    "check": "bun scripts/modes.check.ts && bun scripts/skins.check.ts && bun scripts/grenades.check.ts && bun scripts/items.check.ts"
+    "check": "bun scripts/modes.check.ts && bun scripts/skins.check.ts && bun scripts/grenades.check.ts && bun scripts/items.check.ts && bun scripts/royale.check.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
