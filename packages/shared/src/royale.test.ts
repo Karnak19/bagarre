@@ -9,11 +9,11 @@
 
 import { describe, expect, test } from "bun:test";
 import { playerCan, spawnSim, stepPlayer } from "./combat.ts";
-import { GRENADES, GRENADE_FRAG, GRENADE_SMOKE, LOOT, PISTOL, PLAYER_RADIUS, ROYALE, TICK_RATE, WEAPONS, ZONE, ticks } from "./constants.ts";
+import { GRENADES, GRENADE_FRAG, GRENADE_SMOKE, ITEM_GRENADE, ITEM_GUN, LOOT, PISTOL, PLAYER_RADIUS, ROYALE, TICK_RATE, WEAPONS, ZONE, ticks } from "./constants.ts";
 import { MAPS, ROYALE_MAPS } from "./maps/index.ts";
 import { lotOf, rankRoyale, ROYALE_RULES, type RoyaleStanding } from "./modes.ts";
 import { circleOverlapsBox } from "./physics.ts";
-import type { InputMessage, PlayerSim, ZoneView } from "./protocol.ts";
+import type { FloorItemView, InputMessage, PlayerSim, ZoneView } from "./protocol.ts";
 import {
   NO_GUN,
   carriedGuns,
@@ -27,6 +27,7 @@ import {
   rollLoot,
   startKit,
   swapGun,
+  swapTarget,
   takeGrenades,
   takeGun,
   useGrenade,
@@ -348,6 +349,52 @@ describe("gun slots", () => {
   });
   test("still full after a swap", () => {
     expect(takeGun(sw.sim, DMR, 8)).toBeNull();
+  });
+
+  // Which floor gun F takes (swapTarget): the server's F and the HUD's prompt both ask it.
+  const gunItem = (item: number, x: number, blockedFor = ""): FloorItemView => ({ x, z: 0, kind: ITEM_GUN, item, amount: WEAPONS[item].magazine, blockedFor });
+  const floor = (...its: [string, FloorItemView][]) => new Map(its);
+  const reach = ROYALE.pickupRadius;
+  const tgt = (items: Map<string, FloorItemView>, kit = held.kit, pid = "me") => swapTarget(kit, 0, 0, items, pid)?.id ?? null;
+  test("swapTarget: a gun in reach, not carried", () => {
+    expect(tgt(floor(["a", gunItem(SNIPER, 0.5)]))).toBe("a");
+  });
+  test("swapTarget: the pickup radius is the reach, edge included", () => {
+    expect(tgt(floor(["a", gunItem(SNIPER, reach)]))).toBe("a");
+    expect(tgt(floor(["a", gunItem(SNIPER, reach + 0.01)]))).toBeNull();
+  });
+  test("swapTarget: the nearest gun wins, whatever the order", () => {
+    expect(tgt(floor(["far", gunItem(SNIPER, 0.8)], ["near", gunItem(DMR, 0.3)]))).toBe("near");
+  });
+  test("swapTarget: a tie goes to the first one met", () => {
+    expect(tgt(floor(["a", gunItem(SNIPER, 0.5)], ["b", gunItem(DMR, -0.5)]))).toBe("a");
+  });
+  test("swapTarget: only guns count", () => {
+    const frag: FloorItemView = { x: 0.1, z: 0, kind: ITEM_GRENADE, item: GRENADE_FRAG, amount: 2, blockedFor: "" };
+    expect(tgt(floor(["g", frag], ["a", gunItem(SNIPER, 0.6)]))).toBe("a");
+  });
+  test("swapTarget: a gun blocked for us (dropped under our feet) is skipped", () => {
+    expect(tgt(floor(["mine", gunItem(SNIPER, 0.1, "me")], ["a", gunItem(DMR, 0.6)]))).toBe("a");
+  });
+  test("swapTarget: blocked for someone else doesn't matter", () => {
+    expect(tgt(floor(["theirs", gunItem(SNIPER, 0.1, "other")]))).toBe("theirs");
+  });
+  test("swapTarget: right after a swap, the gun we dropped isn't offered back", () => {
+    expect(tgt(floor(["mine", gunItem(SNIPER, 0.1, "me")]))).toBeNull();
+  });
+  test("swapTarget: the nearest gun already carried: F does nothing (the server never looked further)", () => {
+    expect(tgt(floor(["carried", gunItem(SMG, 0.2)], ["a", gunItem(SNIPER, 0.6)]))).toBeNull();
+  });
+  test("swapTarget: nothing when the hand isn't a gun slot", () => {
+    expect(tgt(floor(["a", gunItem(SNIPER, 0.5)]), { ...held.kit, hand: 5 })).toBeNull();
+  });
+  test("swapTarget: nothing on the floor", () => {
+    expect(tgt(floor())).toBeNull();
+  });
+  test("swapTarget's pick is one swapGun accepts", () => {
+    const t0 = swapTarget(held.kit, 0, 0, floor(["a", gunItem(SNIPER, 0.5)]), "me");
+    expect(t0).not.toBeNull();
+    expect(swapGun(held, t0!.item.item, t0!.item.amount)).not.toBeNull();
   });
 
   // Counted grenades in the step (royale) against the cooldown (the other modes).

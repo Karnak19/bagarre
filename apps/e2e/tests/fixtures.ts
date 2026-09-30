@@ -70,7 +70,8 @@ export interface PlayerState {
   knockedOut: boolean;
   /** Battle royale: crates still standing, items on the floor, and the zone's end tick (0: none). */
   crates: { id: string; x: number; z: number }[];
-  items: { id: string; x: number; z: number; kind: number; item: number; amount: number }[];
+  /** `blockedFor`: who dropped it under their feet and hasn't stepped off it yet ("": nobody). */
+  items: { id: string; x: number; z: number; kind: number; item: number; amount: number; blockedFor: string }[];
   zoneEnd: number;
   /** Our gun in hand as the prediction has it (a switch shows here first). */
   predictedWeapon: number | null;
@@ -110,6 +111,8 @@ export interface PlayerState {
     mags: number[];
     grenades: number;
     outTick: number;
+    /** Battle royale: the last F press counter the server consumed (an F press counts once the server saw it). */
+    swapSeen: number;
     /** Battle royale: healing items and shield charges carried, the heal in progress (255: none), its steps left, and how the last one ended (HEAL_STOP). */
     bandages: number;
     medkits: number;
@@ -197,6 +200,7 @@ export class Player {
           mags: [0, 1, 2].map((i) => Number((p.kit as Record<string, number>)?.[`mag${i}`] ?? 0)),
           grenades: Number((p.kit as Record<string, number>)?.grenades ?? 0),
           outTick: Number(p.outTick ?? 0),
+          swapSeen: Number((p.kit as Record<string, number>)?.swapSeen ?? 0),
           bandages: Number((p.kit as Record<string, number>)?.bandages ?? 0),
           medkits: Number((p.kit as Record<string, number>)?.medkits ?? 0),
           shields: Number((p.kit as Record<string, number>)?.shields ?? 0),
@@ -209,7 +213,7 @@ export class Player {
       const crates: PlayerState["crates"] = [];
       latest?.crates?.forEach((c: { x: number; z: number }, id: string) => crates.push({ id, x: c.x, z: c.z }));
       const items: PlayerState["items"] = [];
-      latest?.items?.forEach((it: { x: number; z: number; kind: number; item: number; amount: number }, id: string) => items.push({ id, ...it }));
+      latest?.items?.forEach((it: Omit<PlayerState["items"][number], "id">, id: string) => items.push({ id, ...it }));
       players.sort((a, c) => a.slot - c.slot);
       return {
         screen: s.screen,

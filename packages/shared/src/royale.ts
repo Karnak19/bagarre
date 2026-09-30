@@ -8,6 +8,8 @@
 //   so the client predicts it exactly and fires the right gun at once. A
 //   pickup (`takeGun`) or an F swap (`swapGun`) is the server's, and reaches
 //   the prediction with the next snapshot, like any server-side change.
+//   `swapTarget` is which floor gun an F press takes: the server swaps with
+//   it, and the client's HUD shows it before the press.
 // - Grenade stacks: one type at a time, counted (`takeGrenades`). The step
 //   spends one per throw.
 // - The zone: `zoneAt` is its circle at a tick, `zoneDamage` what standing
@@ -41,7 +43,7 @@ import {
 } from "./constants.ts";
 import type { MapDef } from "./maps/types.ts";
 import { fnv1a } from "./modes.ts";
-import type { KitSim, PlayerSim, ZoneView } from "./protocol.ts";
+import type { FloorItemView, KitSim, MapLike, PlayerSim, ZoneView } from "./protocol.ts";
 
 /** An empty gun slot (`KitSim.gun0`..`gun2`). */
 export const NO_GUN = 255;
@@ -164,6 +166,29 @@ export function swapGun(sim: PlayerSim, weapon: number, mag: number): { sim: Pla
   setSlot(s.kit, sim.kit.hand, weapon, mag);
   drawGun(s);
   return { sim: s, dropped: old };
+}
+
+/**
+ * The floor gun an F press swaps with, for a player at (x, z) carrying
+ * `kit`: the nearest gun within ROYALE.pickupRadius that isn't blocked for
+ * them (`blockedFor`, they dropped it and haven't stepped off it yet; the
+ * first one met wins a tie). Null when there is none, when that nearest gun
+ * is one already carried (F then does nothing, even with another gun
+ * further off), or when the hand isn't a gun slot: exactly when `swapGun`
+ * would refuse it. The server's F (floor.ts) swaps with this one, and the
+ * HUD's swap prompt names it, so the two never disagree. It doesn't check
+ * for a free slot: with one, walking over a gun already picks it up.
+ */
+export function swapTarget<T extends FloorItemView>(kit: KitSim, x: number, z: number, items: MapLike<T>, pid: string): { id: string; item: T } | null {
+  let best: { id: string; item: T; d: number } | null = null;
+  items.forEach((item, id) => {
+    if (item.kind !== ITEM_GUN || item.blockedFor === pid) return;
+    const d = Math.hypot(x - item.x, z - item.z);
+    if (d <= ROYALE.pickupRadius && (!best || d < best.d)) best = { id, item, d };
+  });
+  const pick = best as { id: string; item: T; d: number } | null;
+  if (!pick || carriesGun(kit, pick.item.item) || !isGunSlot(kit.hand)) return null;
+  return { id: pick.id, item: pick.item };
 }
 
 /**

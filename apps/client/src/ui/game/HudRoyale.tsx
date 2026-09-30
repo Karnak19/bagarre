@@ -3,19 +3,22 @@
 // timer), the arrow back to the zone while we stand outside it, the three
 // gun slots in place of the single weapon box, the healing items (keys 4
 // and 5) next to them, and the heal's progress, or how it ended, over the
-// ability bar (above all when the zone's damage cancelled it).
+// ability bar (above all when the zone's damage cancelled it), and the swap
+// prompt ("F  Swap Pistol → Rifle") while F would take a gun off the floor.
 //
 // Like the rest of the HUD, nothing renders per frame: the panel re-renders
 // when the count or the timer's seconds change, the slots on a switch, a shot
 // or a pickup, and the arrow's angle is written to the DOM from a store
 // subscription.
 
+import { Kbd } from "@astryxdesign/core/Kbd";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { Text } from "@astryxdesign/core/Text";
 import { HEAL_ITEMS, healProgress, ticks, weaponDef } from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
 import { useRef } from "react";
 import { countRender } from "../../renders.ts";
+import type { RoyaleHud } from "../../hud.ts";
 import { jsonEqual, useEngine, useSelector, useStoreEffect } from "../hooks.ts";
 import { shared } from "../styles.ts";
 
@@ -72,6 +75,27 @@ const styles = stylex.create({
   healDone: { color: "#6dff9a" },
   healCancel: { color: "#ffb4a6", boxShadow: "inset 0 0 0 1px var(--color-border-red)" },
   healZone: { color: "#ffffff", backgroundColor: "rgba(120, 24, 16, 0.8)", boxShadow: "inset 0 0 0 1px var(--color-border-red)" },
+  // Just above the slots and the ability bar (about 92 px tall from 16 px up), where the heal
+  // status goes; over it while that shows (swapHigh).
+  swap: {
+    position: "absolute",
+    bottom: "116px",
+    left: "50%",
+    transform: "translateX(-50%)",
+    paddingBlock: "3px",
+    paddingInline: "8px",
+    whiteSpace: "nowrap",
+    fontSize: "13px",
+    fontWeight: 600,
+    opacity: 0,
+    transitionProperty: "opacity",
+    transitionDuration: { default: "120ms", "@media (prefers-reduced-motion: reduce)": "0s" },
+    transitionTimingFunction: "ease-out",
+  },
+  swapOn: { opacity: 1 },
+  swapHigh: { bottom: "166px" },
+  swapFrom: { color: "var(--color-text-secondary)" },
+  swapTo: { color: "var(--bagarre-gold)" },
 });
 
 /** Players still in and the zone's timer, at the top right. */
@@ -239,5 +263,49 @@ export function HealStatus() {
     <VStack xstyle={[styles.panel, styles.healStatus, look]} role="status" data-testid="hud-heal-status" data-state={r.kind}>
       <Text color="inherit">{r.note}</Text>
     </VStack>
+  );
+}
+
+/**
+ * While F would swap guns: the key, the gun in hand and the one on the floor
+ * it takes ("F  Swap Pistol → Rifle"), from the HUD model's `swap` (the same
+ * pick as the server's, swapTarget). Re-renders only when the guns change.
+ * Always mounted, faded in and out (opacity only); it keeps the last names
+ * while it fades out. `data-state` "on" / "off" for the tests.
+ */
+export function SwapPrompt() {
+  countRender("hud.swap");
+  const { hud } = useEngine();
+  const swap = useSelector(hud, (m) => m?.royale?.swap ?? null, jsonEqual);
+  // The heal status (HealStatus) shows: sit over it.
+  const high = useSelector(hud, (m) => !!m?.royale && (m.royale.healing >= 0 || m.royale.healNote !== ""));
+  const last = useRef<RoyaleHud["swap"]>(null);
+  if (swap) last.current = swap;
+  const shown = swap ?? last.current;
+  const from = shown ? weaponDef(shown.from).name : "";
+  const to = shown ? weaponDef(shown.to).name : "";
+  return (
+    <HStack
+      gap={1.5}
+      align="center"
+      xstyle={[styles.panel, styles.swap, !!swap && styles.swapOn, high && styles.swapHigh]}
+      data-testid="hud-swap"
+      data-state={swap ? "on" : "off"}
+      data-from={swap ? weaponDef(swap.from).key : undefined}
+      data-to={swap ? weaponDef(swap.to).key : undefined}
+      aria-hidden={!swap}
+    >
+      <Kbd keys="F" />
+      <Text as="span" color="inherit">
+        Swap{" "}
+        <Text as="span" color="inherit" xstyle={styles.swapFrom}>
+          {from}
+        </Text>{" "}
+        →{" "}
+        <Text as="span" color="inherit" xstyle={styles.swapTo}>
+          {to}
+        </Text>
+      </Text>
+    </HStack>
   );
 }

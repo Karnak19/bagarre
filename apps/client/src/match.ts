@@ -37,7 +37,9 @@ import {
   carriedGuns,
   cycleSlot,
   findMap,
+  freeGunSlot,
   gunAt,
+  gunInHand,
   healProgress,
   healsOf,
   isGrenadeType,
@@ -49,6 +51,7 @@ import {
   ownsCloud,
   smokeCover,
   smokeVeil,
+  swapTarget,
   weaponDef,
   zoneAt,
   zoneProgress,
@@ -991,6 +994,13 @@ export class Match {
         reloading: !!sim && sim.kit.hand === i && sim.reloadTicks > 0,
       });
     }
+    // F's target, the same pick as the server's (swapTarget): only while
+    // playing, alive, with all three slots full. Items come with the latest
+    // snapshot and the kit with the prediction, so it changes on a snapshot
+    // or a step, never between two.
+    const target =
+      s.phase === "playing" && me?.alive && sim && freeGunSlot(sim.kit) === -1 ? swapTarget(sim.kit, sim.x, sim.z, s.items, this.net.sessionId) : null;
+    const swap = target && sim ? { from: gunInHand(sim.kit), to: target.item.item } : null;
     return {
       alive,
       players: s.players.size,
@@ -1006,6 +1016,7 @@ export class Match {
       healing: sim && sim.kit.heal !== NO_HEAL ? sim.kit.heal : -1,
       healNote: note?.text ?? "",
       stopKind: note?.kind ?? "",
+      swap,
     };
   }
 

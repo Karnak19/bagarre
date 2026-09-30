@@ -17,6 +17,8 @@
 // An item a player just dropped (a grenade swap, an F swap) lies under their
 // feet: they can't pick it back up until they have stepped off it, or a
 // walk-over swap would bounce the two stacks back and forth every tick.
+// That player is the item's synced `blockedFor`, so the client's swap prompt
+// skips it too (swapTarget).
 
 import {
   ITEM_GRENADE,
@@ -36,6 +38,7 @@ import {
   readSim,
   rollLoot,
   swapGun,
+  swapTarget,
   takeGrenades,
   takeGun,
   carriedGuns,
@@ -54,9 +57,6 @@ export class Floor {
   private nextId = 0;
   /** A drop every crate gives instead of a random one (null: the loot table). Only the e2e server sets it. */
   force: ItemDrop | null = null;
-  /** Item id -> players who must step off it before they may take it (they dropped it). */
-  private blocked = new Map<string, Set<string>>();
-
   constructor(
     private readonly state: GameState,
     private readonly map: () => MapDef,
@@ -68,7 +68,6 @@ export class Floor {
   clear() {
     this.state.items.clear();
     this.state.crates.clear();
-    this.blocked.clear();
   }
 
   /** A new match: the floor cleared, and a crate on every crate spot of the map. */
@@ -100,15 +99,14 @@ export class Floor {
     it.kind = item.kind;
     it.item = item.item;
     it.amount = item.amount;
+    it.blockedFor = droppedBy ?? "";
     const id = String(this.nextId++);
     this.state.items.set(id, it);
-    if (droppedBy) this.blocked.set(id, new Set([droppedBy]));
     return id;
   }
 
   private remove(id: string) {
     this.state.items.delete(id);
-    this.blocked.delete(id);
   }
 
   /**
@@ -156,24 +154,17 @@ export class Floor {
     }
 
     // Stepping off what you dropped makes it yours to take again.
-    for (const [id, who] of this.blocked) {
-      const it = this.state.items.get(id);
-      if (!it) {
-        this.blocked.delete(id);
-        continue;
-      }
-      for (const pid of who) {
-        const q = players.find((e) => e.id === pid);
-        if (!q || Math.hypot(q.p.x - it.x, q.p.z - it.z) > ROYALE.pickupRadius) who.delete(pid);
-      }
-      if (who.size === 0) this.blocked.delete(id);
-    }
+    this.state.items.forEach((it) => {
+      if (!it.blockedFor) return;
+      const q = players.find((e) => e.id === it.blockedFor);
+      if (!q || Math.hypot(q.p.x - it.x, q.p.z - it.z) > ROYALE.pickupRadius) it.blockedFor = "";
+    });
 
     // Pickups, one item at a time, nearest player first.
     for (const [id, it] of Array.from(this.state.items.entries())) {
       const near = players
         .map((e) => ({ ...e, d: Math.hypot(e.p.x - it.x, e.p.z - it.z) }))
-        .filter((e) => e.d <= ROYALE.pickupRadius && !this.blocked.get(id)?.has(e.id))
+        .filter((e) => e.d <= ROYALE.pickupRadius && it.blockedFor !== e.id)
         .sort((a, b) => a.d - b.d || (a.id < b.id ? -1 : 1));
       for (const e of near) if (this.take(e.id, e.p, id, it)) break;
     }
@@ -211,22 +202,17 @@ export class Floor {
   }
 
   /**
-   * F: swap the gun in hand for the nearest gun on the floor within reach
-   * that isn't carried already (swapGun). The old gun drops under the
-   * player's feet (theirs to take back once they step off). Returns whether
-   * it swapped. With a free slot the walk-over pickup has already taken any
+   * F: swap the gun in hand for the floor gun `swapTarget` picks (the
+   * nearest in reach not blocked for them, if it isn't carried already; the
+   * HUD's prompt names the same one). The old gun drops under the player's
+   * feet (theirs to take back once they step off). Returns whether it
+   * swapped. With a free slot the walk-over pickup has already taken any
    * gun in reach, so F only matters with all three slots full.
    */
   swap(pid: string, p: Player): boolean {
-    let best: { id: string; it: FloorItem; d: number } | null = null;
-    this.state.items.forEach((it, id) => {
-      if (it.kind !== ITEM_GUN || this.blocked.get(id)?.has(pid)) return;
-      const d = Math.hypot(p.x - it.x, p.z - it.z);
-      if (d <= ROYALE.pickupRadius && (!best || d < best.d)) best = { id, it, d };
-    });
-    const pick = best as { id: string; it: FloorItem; d: number } | null;
+    const pick = swapTarget(p.kit, p.x, p.z, this.state.items, pid);
     if (!pick) return false;
-    const r = swapGun(readSim(p), pick.it.item, pick.it.amount);
+    const r = swapGun(readSim(p), pick.item.item, pick.item.amount);
     if (!r) return false;
     writeSim(p, r.sim);
     p.weapon = gunInHand(p.kit);

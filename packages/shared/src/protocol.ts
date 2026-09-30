@@ -396,6 +396,12 @@ export interface FloorItemView {
   item: number;
   /** How many: a gun's magazine, a stack's count. */
   amount: number;
+  /**
+   * The player (session id) who dropped it under their own feet (a grenade
+   * swap, an F swap) and hasn't stepped off it yet: they can't take it back
+   * until they do. "" for everyone else's items and once they step off.
+   */
+  blockedFor: string;
 }
 
 /** A crate still standing (`RoomStateView.crates`); walking into it breaks it open. */

@@ -115,7 +115,7 @@ function capture(state: RoomStateView): Omit<Snapshot, "t" | "epoch"> {
   const smokes = new Map<string, SmokeView>();
   state.smokes?.forEach((c, id) => smokes.set(id, { x: c.x, z: c.z, start: c.start, end: c.end, owner: c.owner, team: c.team }));
   const items = new Map<string, FloorItemView>();
-  state.items?.forEach((it, id) => items.set(id, { x: it.x, z: it.z, kind: it.kind, item: it.item, amount: it.amount }));
+  state.items?.forEach((it, id) => items.set(id, { x: it.x, z: it.z, kind: it.kind, item: it.item, amount: it.amount, blockedFor: it.blockedFor ?? "" }));
   const crates = new Map<string, CrateView>();
   state.crates?.forEach((c, id) => crates.set(id, { x: c.x, z: c.z }));
   const z = state.zone;

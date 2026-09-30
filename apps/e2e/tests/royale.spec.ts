@@ -1,4 +1,4 @@
-import { HEAL_BANDAGE, HEAL_MEDKIT, HEAL_STOP, ITEM_HEAL, ITEM_SHIELD, NO_HEAL, PISTOL, ROYALE_RULES, SHIELD } from "@bagarre/shared";
+import { HEAL_BANDAGE, HEAL_MEDKIT, HEAL_STOP, ITEM_GUN, ITEM_HEAL, ITEM_SHIELD, NO_HEAL, PISTOL, ROYALE_RULES, SHIELD, WEAPONS } from "@bagarre/shared";
 import { ROYALE_MAP, expect, kill, place, setHp, setLoot, setZone, test, type Player } from "./fixtures.ts";
 
 const RIFLE = 0;
@@ -222,4 +222,85 @@ test("battle royale: a leaver is knocked out and placed, the zone closes and hur
   expect(byId[idc]).toBe(3);
   expect([byId[ida], byId[idb]].sort()).toEqual([1, 2]);
   await expect(a.testId("placement-row")).toHaveCount(3);
+});
+
+test("battle royale: with all three slots full, standing by a gun shows the F swap prompt, F swaps, and the dropped gun isn't offered back until stepped off", async ({ players }) => {
+  const { players: all, code } = await players.royale(2);
+  const [a, b] = all;
+  await Promise.all(all.map((p) => p.expectState("phase", "playing")));
+  const [ida, idb] = await Promise.all(all.map(async (p) => (await p.state()).you));
+  const SMG = WEAPONS.findIndex((w) => w.key === "smg");
+  const SNIPER = WEAPONS.findIndex((w) => w.key === "sniper");
+  const DMR = WEAPONS.findIndex((w) => w.key === "dmr");
+  const [c1, c2, c3, c4, c5] = (await a.state()).crates;
+  const prompt = a.testId("hud-swap");
+  const gunsOf = async (p: Player) => p.me(await p.state())?.guns;
+  /** A gun lying on the floor near (x, z), as A's page sees it. */
+  const floorGun = async (weapon: number, x: number, z: number) =>
+    (await a.state()).items.find((it) => it.kind === ITEM_GUN && it.item === weapon && Math.hypot(it.x - x, it.z - z) < 1.5);
+  await expect(prompt).toHaveAttribute("data-state", "off");
+
+  // A rifle in slot 2: one slot still free.
+  await setLoot(code, RIFLE);
+  await place(code, ida, c1.x + 0.3, c1.z);
+  await expect.poll(() => gunsOf(a), { message: "A picked up the rifle" }).toEqual([PISTOL, RIFLE, NO_GUN]);
+
+  // With a free slot, F has nothing to do: standing on a second rifle (carried already, so it stays on the floor), no prompt.
+  await place(code, ida, c2.x + 0.3, c2.z);
+  await expect.poll(() => floorGun(RIFLE, c2.x, c2.z), { message: "the second rifle lies on the floor" }).toBeTruthy();
+  await expect.poll(async () => a.me(await a.state())!.x, { message: "A stands by it" }).toBeCloseTo(c2.x + 0.3, 1);
+  await expect(prompt).toHaveAttribute("data-state", "off");
+  // And B, with two slots free, walks over a DMR: it goes straight into a slot, never a prompt.
+  await setLoot(code, DMR);
+  await place(code, idb, c5.x + 0.3, c5.z);
+  await expect.poll(() => gunsOf(b), { message: "B picked up the DMR" }).toEqual([PISTOL, DMR, NO_GUN]);
+  await expect(b.testId("hud-swap")).toHaveAttribute("data-state", "off");
+
+  // An SMG fills slot 3.
+  await setLoot(code, SMG);
+  await place(code, ida, c3.x + 0.3, c3.z);
+  await expect.poll(() => gunsOf(a), { message: "A picked up the SMG" }).toEqual([PISTOL, RIFLE, SMG]);
+  await expect(prompt).toHaveAttribute("data-state", "off");
+
+  // Full, by a sniper: it stays on the floor, and the prompt names the gun in hand and the one F takes.
+  await setLoot(code, SNIPER);
+  await place(code, ida, c4.x + 0.3, c4.z);
+  await expect.poll(() => floorGun(SNIPER, c4.x, c4.z), { message: "the sniper lies on the floor" }).toBeTruthy();
+  await expect(prompt).toHaveAttribute("data-state", "on");
+  await expect(prompt).toHaveAttribute("data-from", "pistol");
+  await expect(prompt).toHaveAttribute("data-to", "sniper");
+  await expect(prompt).toContainText("Swap Pistol → Sniper");
+
+  // Walking away hides it; coming back shows it again.
+  await place(code, ida, c3.x + 0.3, c3.z);
+  await expect(prompt).toHaveAttribute("data-state", "off");
+  await place(code, ida, c4.x + 0.3, c4.z);
+  await expect(prompt).toHaveAttribute("data-state", "on");
+  await expect(prompt).toHaveAttribute("data-to", "sniper");
+
+  // F: the sniper comes into the hand, the Pistol drops under A's feet. A can't take that one back
+  // before stepping off it (the server's rule), so the prompt hides instead of offering it.
+  await a.focusGame();
+  await a.page.keyboard.press("KeyF");
+  await expect.poll(() => gunsOf(a), { message: "A swapped the Pistol for the sniper" }).toEqual([SNIPER, RIFLE, SMG]);
+  await expect(a.testId("hud-slot-1")).toHaveAttribute("data-weapon", "sniper");
+  const pistol = await floorGun(PISTOL, c4.x, c4.z);
+  expect(pistol?.blockedFor).toBe(ida);
+  await expect(prompt).toHaveAttribute("data-state", "off");
+  // F again does nothing: the Pistol is still blocked for A. (Wait for the server to see the
+  // press, or a starved page could send it only once A is back on the Pistol below.)
+  const presses = a.me(await a.state())!.swapSeen;
+  await a.page.keyboard.press("KeyF");
+  await expect.poll(async () => a.me(await a.state())?.swapSeen, { message: "the server saw the second F" }).toBe(presses + 1);
+  expect(await gunsOf(a)).toEqual([SNIPER, RIFLE, SMG]);
+  await expect(prompt).toHaveAttribute("data-state", "off");
+
+  // Stepped off and back: now F would take the Pistol back, and the prompt says so.
+  await place(code, ida, c3.x + 0.3, c3.z);
+  await expect.poll(async () => (await floorGun(PISTOL, c4.x, c4.z))?.blockedFor, { message: "the Pistol is A's to take again" }).toBe("");
+  await place(code, ida, pistol!.x, pistol!.z);
+  await expect(prompt).toHaveAttribute("data-state", "on");
+  await expect(prompt).toHaveAttribute("data-from", "sniper");
+  await expect(prompt).toHaveAttribute("data-to", "pistol");
+  await expect(prompt).toContainText("Swap Sniper → Pistol");
 });

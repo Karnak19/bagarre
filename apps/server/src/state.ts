@@ -169,6 +169,8 @@ export const FloorItem = schema(
     kind: t.uint8().default(0),
     item: t.uint8().default(0),
     amount: t.uint8().default(0),
+    /** Who dropped it under their feet and hasn't stepped off it yet (a session id; "": nobody). See floor.ts. */
+    blockedFor: t.string().default(""),
   },
   "FloorItem",
 );
