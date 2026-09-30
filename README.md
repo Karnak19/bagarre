@@ -76,6 +76,11 @@ The first run may need the browser: `bunx playwright install chromium` in
   countdown and the respawn delay. A 0.5 s death or a 2 s countdown can fall
   between two frames of a starved CI page, so a spec that checks one holds it
   open, checks, then lets it go (`setCountdown()`, `setRespawn()`).
+  The battle royale's rules are short too (a 2 s countdown, the zone
+  waiting 60 s and closed at 90 s), and two more calls drive it:
+  `POST /loot` makes a room's crates drop a given gun instead of a random
+  item (`setLoot()`), `POST /zone` moves the running zone's shrink to start
+  and end some seconds from now (`setZone()`).
 - `tests/fixtures.ts` holds the fixtures. `players.open()` is a new player
   (its own browser context); `players.duel()`, `players.teams(n)` and `players.host()` /
   `players.join()` open a private game by its link, so tests running in
@@ -319,7 +324,11 @@ TypeScript: React never runs per frame and there is no React Three Fiber.
   `data-red`, `data-blue`, `data-you`), `hud-team-red`, `hud-team-blue`,
   `hud-team-you`, `hud-team-time`, `scoreboard-team` (with `data-team`,
   `data-score`, `data-you`, `data-won`), `scoreboard-team-heading` and
-  `result-teams`. Spectating adds `spectate-bar`,
+  `result-teams`. The battle royale adds `play-royale`, `private-royale`,
+  `royale-countdown`, `royale-players`, `hud-royale` (with `data-alive`,
+  `data-zone`), `hud-royale-alive`, `hud-zone-time`, `hud-zone-arrow`,
+  `hud-slots`, `hud-slot-{1,2,3}` (with `data-weapon`, `data-active`,
+  `data-ammo`), the grenade slot's `data-count` and `result-stats`. Spectating adds `spectate-bar`,
   `spectate-watching`, `spectate-mode` (and `spectate-mode-{follow,overview,free}`),
   `spectate-hints`, `spectate-count`, `spectate-join`, `spectate-leave`,
   `spectate-players`, `spectate-player`, `spectate-status` and the players'
@@ -484,14 +493,82 @@ makes a private one. The open games list shows the mode and the team counts
 The e2e spec is `apps/e2e/tests/teams.spec.ts`, the smoke checks
 `apps/server/smoke-teams.ts`.
 
+## Battle royale
+
+Last one standing, 2 to 10 players, every one for themselves, one life
+each. The rules are `ROYALE_RULES` in `packages/shared/src/modes.ts` (with
+`royale: RoyaleRules`, the zone's timings), the numbers `ROYALE`, `ZONE` and
+`LOOT` in `constants.ts`, and the pure rules (gun slots, grenade stacks, the
+zone, the loot draw) in `packages/shared/src/royale.ts`.
+`bun run check` in `packages/shared` runs their self-check
+(`scripts/royale.check.ts`: the ranking, the zone over time, the stacks, the
+slots, the loot, the maps' crate spots).
+
+- **Start**: a 15 s countdown once 2 are in (more can join during it), then
+  a 5 s pre-match (the warmup) with nothing to pick: everyone has the
+  **Pistol** (a weak starting gun, `pickable: false`: it is in no loadout
+  picker and can't be picked in the other modes) and no grenades. Nobody can
+  join once it started (the room locks itself, `closedToJoins`); watching
+  still works.
+- **Crates**: the map lists crate spots (`MapDef.royale.crates`, only
+  Bastion so far). A crate stands on each at the start; walking into one
+  breaks it and drops one item drawn from `LOOT` by weight: a gun with a
+  full magazine, or a stack of grenades.
+- **Items on the floor** (`state.items`: kind, which one, how many) are the
+  server's (`apps/server/src/floor.ts`): each tick every item goes to the
+  nearest living player who can take it, so two players on one item never
+  both get it. At most `ROYALE.maxItems` (the oldest goes); cleared with the
+  match. What a player just dropped can't be taken back before they step off it.
+- **Three gun slots** (`Player.kit`, a child schema, KitSim in
+  `protocol.ts`): 1-3 or the mouse wheel switch (the wheel skips empty
+  slots), a switch waits 0.3 s before the gun fires and cancels a reload,
+  and every gun keeps its own magazine. Walking over a gun fills a free slot
+  (not one you carry already); with all three full, **F** swaps it with the
+  gun in hand, which drops. A switch is an input (`InputMessage.slot` and
+  the `switch` press counter) that the shared step applies, so the client
+  predicts it and fires the new gun at once; a pickup or a swap reaches the
+  prediction in the next snapshot's kit.
+- **Grenades** are counted, one type at a time, up to the type's `stack`
+  (frag 3, the others 2). The same type adds up, another type swaps in and
+  the old stack drops. A throw uses one, with a 1 s gap between two.
+- **The zone** (`state.zone`: start and end centre and radius, start and end
+  tick) covers the whole map, waits 30 s, then shrinks smoothly to nothing at
+  4:30, round a centre drawn from the match id inside `MapDef.royale.zone`.
+  Outside it you lose HP every tick (2 per second at first, 14 once closed:
+  `zoneDamage`, whole HP from the integral of that rate). Server and client
+  compute the circle with the same `zoneAt`. A zone death reads "Zone" in
+  the kill feed, with no killer.
+- **Knocked out** (killed, the zone, or leaving): no respawn, your guns (not
+  the Pistol) and grenades drop where you fell, and you watch the rest from
+  your seat: the camera on your killer (or the nearest player still in after
+  a zone death), Q / E to cycle through the players still in, the
+  spectator's other keys and the Esc menu to leave. A player who leaves, or
+  whose connection grace runs out, is knocked out then; their seat stays
+  until the result is over, so their place is shown and recorded.
+- **The end**: when one player is left standing (checked at the end of the
+  tick, so players out on the same tick are ranked together), or none.
+  Places are the order of knock-out, the last one out 2nd (`rankRoyale`);
+  players out on the same tick are split by kills, then damage, then the lot.
+- **Stats**: like FFA, 1st place is a win and every other place a loss,
+  kept on `bagarre_matches` with `mode: "royale"`. A royale that started
+  with fewer than 3 players isn't recorded (`ROYALE_MIN_RECORDED`): with two,
+  one kill would be a win. The result card says which.
+
+In a game the HUD shows who is still in and the zone's timer (top right),
+the three slots with their magazines in place of the weapon box, the grenade
+count, and an arrow back to the zone when you are outside; the ground shows
+the zone's edge with a tint outside, the crates and the items. On the menu,
+**Battle royale** quick-matches one and **Private royale** makes a private
+one; in dev, `?play=royale`. The e2e spec is `apps/e2e/tests/royale.spec.ts`.
+
 ### Rooms and modes
 
 One room class plays every mode: `GameRoom` (`apps/server/src/GameRoom.ts`),
 driven by the mode's rules (`ModeRules` in `packages/shared/src/modes.ts`:
 seats, start threshold, teams, kill target, time limit, countdown, warmup, respawn
-delay, result delay, drop-in, map pool). `DuelRoom`, `FfaRoom` and `TeamRoom`
-only pick the rules, and are registered as the `duel`, `ffa` and `tdm` room
-types. The simulation
+delay, result delay, drop-in, map pool, royale). `DuelRoom`, `FfaRoom`,
+`TeamRoom` and `RoyaleRoom` only pick the rules, and are registered as the
+`duel`, `ffa`, `tdm` and `royale` room types. The simulation
 (inputs, bullets, grenades, damage) is shared; the mode shows up in a few
 places only: spawns, respawns, what a leave does, and the end conditions.
 `GameRoom.pinnedTo(mapId)` pins a room class to one map of its own pool
@@ -609,7 +686,8 @@ match menu ("Stop watching"), M mutes. The overlay is
 | **Space**          | Dash: a short burst in the move direction (facing if still)   |
 | **Q**              | Grenade: lobbed at the cursor, max 10 m, flies over cover     |
 | **E**              | Shield: a bubble that soaks damage before your HP             |
-| **1**-**7**        | Pick a weapon, while dead or between matches (see below)      |
+| **1**-**7**        | Pick a weapon, while dead or between matches (see below). Battle royale: **1**-**3** and the wheel switch gun slots |
+| **F**              | Battle royale: swap the gun in hand for the one on the floor  |
 | **G**              | Next grenade type (frag, smoke, stun, flash, heal), same rules |
 | **Tab** (hold)     | Scoreboard                                                    |
 | **M**              | Mute / unmute sound (remembered between visits)               |
@@ -756,14 +834,18 @@ looks, in the client. Nothing is matched by position.
   (`apps/client/src/items.ts`: model, scale, muzzle flash, shot sound, How to
   play line), add its model under `public/models/guns/` and its sound to
   `audio.ts`. The number keys, the HUD and How to play follow `WEAPONS`
-  (up to 9 guns, keys 1-9).
+  (up to 9 guns, keys 1-9; a `pickable: false` gun, like the royale's
+  Pistol, has no key and never shows in the picker, and goes after the
+  others). To have crates drop it in the battle royale, give it a weight in
+  `LOOT`.
 - **Grenade:** append a line to `GRENADES` with a new `key`, its `effect`
   (`damage`, `cloud`, `stun`, `flash`, `heal`) and who it `affects`
   (`enemies` or `allies`). Then give it an
   entry in `GRENADE_VIEW` (`items.ts`: icon, telegraph colour, blast sound,
   blast drawing, How to play line). A new effect also needs its tuning
   block, a `GrenadeEffect` member and a handler in `blastEffects`
-  (`apps/server/src/GameRoom.ts`).
+  (`apps/server/src/GameRoom.ts`). Its `stack` is how many one player
+  carries in the battle royale; a weight in `LOOT` makes crates drop it.
 - **Ids are append-only.** An item's index is its id on the wire (picks,
   `Player.weapon` / `Player.grenade`, `Grenade.kind`, the kill feed): never
   reorder, rename or remove one. Append the new key to `WEAPON_IDS` or

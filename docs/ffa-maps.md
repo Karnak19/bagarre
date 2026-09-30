@@ -147,6 +147,12 @@ interface FfaMapDef extends MapDef {
 - `spawns`: 16 per map, **not** in pairs (the MapDef comment about
   `spawns[2k + 1]` is for duels). Balance is measured (spawn spread and team
   balance, below), not built in by mirroring.
+- `royale` (optional, on any MapDef): the battle royale's crate spots and
+  the rectangle its zone may close on (`RoyaleMapData` in `maps/types.ts`).
+  Only Bastion has them for now (19 crates, the zone closing round the
+  Rampart), so it is the royale pool (`ROYALE_MAPS`). Crates stand on open
+  floor, clear of cover and at least 3 m from every spawn (crates are not
+  spawns); `scripts/royale.check.ts` checks both.
 - `decor` is empty for now. The zone looks come from the obstacle kinds; a
   flat-decor pass (papers in the Square, pallets on the quays, tyres and
   cones outside the walls) can come after playtesting.
