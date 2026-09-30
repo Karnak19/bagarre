@@ -278,7 +278,9 @@ server, and a game's link can be shared.
   mouse; the menu itself works at phone width.
 
 Production hosting needs an SPA rewrite: every path (`/game/...` included)
-must serve `index.html`. Vite's dev server and `vite preview` already do.
+must serve `index.html`, or the page's own copy of it (see
+[Link previews and search](#link-previews-and-search)). Vite's dev server
+and `vite preview` already do, and so does `apps/client/Caddyfile`.
 
 The flow (screens, joining and leaving, the per-game flags) lives in
 `apps/client/src/app.ts` and the open games data in `lobby.ts`, both plain
@@ -292,6 +294,46 @@ and favoured weapons; `/maps/<id>` walks around one: the real arena with the
 spectator's free camera (WASD, drag, wheel, 2 / 3), built in the browser
 alone, with no server and no room (`src/walk.ts`, `src/ui/maps/`).
 See [Client UI](#client-ui) below.
+
+## Link previews and search
+
+A link pasted in Discord, Slack or X shows a card with a title, a line of
+text and an image. Their bots don't run JavaScript, so those tags have to be
+in the HTML the server sends, not set by the app once it runs.
+
+- `apps/client/seo/meta.ts` holds every page's text and the site's origin
+  (`SITE_ORIGIN`, https://bagarre.basilevernouillet.com, the start of every
+  absolute URL). `pageFor(pathname)` gives a page's title, description,
+  share image and whether search engines should skip it: the home page and
+  the Maps list, one page per map (its name, blurb, size, modes and weapons,
+  and its own image), one generic invite for every `/game/<code>` and one
+  "watch a live match" for every `/game/<code>/watch` (the code is never put
+  in the page), and `/reset-password`. The game pages and the reset page
+  are `noindex`. The indexable pages also carry the game as schema.org
+  `VideoGame` data (JSON-LD).
+- `apps/client/seo/plugin.ts` (a Vite plugin) puts those tags in place of
+  the `<!-- seo -->` marker of `index.html`. `vite build` writes one copy of
+  the built `index.html` per page, same hashed bundles:
+  `dist/index.html`, `dist/maps.html`, `dist/maps/<id>.html`,
+  `dist/game.html`, `dist/watch.html` and `dist/reset-password.html`, plus
+  `robots.txt` (everything allowed but `/game/` and `/reset-password`) and
+  `sitemap.xml` (`/`, `/maps` and every map), both built from the map list.
+  `vite dev` fills the marker per request, and `vite preview` serves each
+  path its copy, so dev, preview, the e2e suite and production send the same
+  HTML. In production the Caddyfile does the same mapping
+  (`/game/*/watch` to `watch.html`, `/game/*` to `game.html`, then
+  `{path}.html`, then `index.html`).
+- The share images are 1200 × 630 PNGs in `apps/client/public/og/`
+  (`og.png`, and `maps/<id>.png` per map), drawn by the game itself:
+  `bun run og:render` in `apps/client` boots the client in headless Chromium
+  (Playwright), hides the UI, frames the menu's scene (or the map, whole, for
+  a map image), lays the BAGARRE logo over it in Black Ops One and shrinks
+  the screenshot to 256 colours (under 200 KB each). It needs ImageMagick
+  (`magick`) on the PATH. `bun run og:render -- site yard` redraws only
+  those. A map with no image yet falls back to `og.png`.
+
+`apps/e2e/tests/seo.spec.ts` fetches the raw HTML (no JavaScript) of each
+kind of page and checks the tags, the images and the two text files.
 
 ## Client UI
 
@@ -969,8 +1011,10 @@ apps/
                       stores: app.ts (flow), lobby.ts, auth.ts (account), hud.ts, scoreboard.ts (model);
                       routes/ (TanStack Router pages), ui/ (React + Astryx views, theme/)
     public/           models (glTF, meshopt-compressed), particle atlas and sounds, see ASSETS.md;
-                      music/ (Suno, non-commercial, see its CREDITS.md)
-    scripts/          asset rebuild scripts (assets/, sfx/, music/)
+                      music/ (Suno, non-commercial, see its CREDITS.md); og/ (link preview images)
+    seo/              each page's title, description and link preview tags (meta.ts), and the
+                      Vite plugin that writes them into the HTML, robots.txt and sitemap.xml (plugin.ts)
+    scripts/          asset rebuild scripts (assets/, sfx/, music/, og/: the link preview images)
   server/             @bagarre/server: Colyseus on Bun
     src/              the Colyseus room for every mode (GameRoom: DuelRoom, FfaRoom, TeamRoom), synced state schema,
                       accounts (db.ts, accounts.ts, auth.ts), bootstrap and the GET /games route (app.ts)

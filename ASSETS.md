@@ -98,3 +98,7 @@ The raw packs are not in the repo. To rebuild the files above:
 - Particle atlas: `apps/client/scripts/assets/build-atlas.py` (Pillow), or
   `bun run assets:atlas <pack dir> public/vfx/particles.png` from `apps/client`.
   The cell order must match `Cell` in `apps/client/src/vfx.ts`.
+- Link preview images (`public/og/og.png` and `public/og/maps/<id>.png`,
+  1200 × 630): `bun run og:render` from `apps/client` (see the README's
+  [Link previews and search](README.md#link-previews-and-search)). Rerun it
+  after adding a map or changing how one looks.
