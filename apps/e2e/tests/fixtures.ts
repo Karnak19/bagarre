@@ -581,9 +581,12 @@ export class Players {
   /** A private battle royale by link with `n` players (on Bastion); resolves once they are all in the room. */
   async royale(n: number): Promise<{ players: Player[]; code: string; invite: string }> {
     const { host, invite, code } = await this.host("royale", "A");
+    // The countdown starts as soon as two are in and a started match takes no more seats: hold it until everyone is here.
+    await setCountdown(code, 120);
     const players = [host];
     for (let i = 1; i < n; i++) players.push(await this.join(invite, String.fromCharCode(65 + i), ROYALE_MAP));
     for (const p of players) await expect.poll(async () => (await p.state()).players.length).toBe(n);
+    await setCountdown(code, 1);
     return { players, code, invite };
   }
 
