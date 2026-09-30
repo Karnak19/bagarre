@@ -19,11 +19,14 @@
 
 import {
   GRENADES,
+  HEAL_ITEMS,
+  HEAL_STOP,
   INTERP_DELAY_MS,
   KILL_GRENADE,
   KILL_ZONE,
   MAX_HP,
   NO_GUN,
+  NO_HEAL,
   ROYALE,
   NO_TEAM,
   SHIELD,
@@ -35,6 +38,8 @@ import {
   cycleSlot,
   findMap,
   gunAt,
+  healProgress,
+  healsOf,
   isGrenadeType,
   magAt,
   ordinal,
@@ -75,6 +80,8 @@ import { Spectator } from "./spectate/spectator.ts";
 
 /** The spectator's Follow zoom: the game's own in a duel, a little wider on the bigger FFA and team maps. */
 const FOLLOW_VIEW_HEIGHT = { duel: 22, ffa: 26, tdm: 26, royale: 26 } as const;
+/** How long the HUD says how a heal ended. */
+const HEAL_NOTE_MS = 3500;
 /** How the players of a mode carry their guns (the shared step's KitMode). */
 const kitOf = (mode: string): KitMode => (mode === "royale" ? "slots" : "loadout");
 /** CSS colour of a paint index (paint.ts). */
@@ -211,6 +218,9 @@ export class Match {
   private opponentsDrawn: Vec2[] = [];
   /** Fire button state on the previous tick, for the empty-click on a fresh press. */
   private wasFiring = false;
+  /** Battle royale: the heal in progress as last predicted (NO_HEAL: none), and the line saying how the last one ended, until `until`. */
+  private lastHeal = NO_HEAL;
+  private healNote: { text: string; kind: string; until: number } | null = null;
   private disposed = false;
   /**
    * The spectator view (camera, player list), made on the first snapshot
@@ -468,6 +478,7 @@ export class Match {
       p.reload = Math.max(p.reload, me.reloadSeen);
       p.switch = Math.max(p.switch, me.kit.switchSeen);
       p.swap = Math.max(p.swap, me.kit.swapSeen);
+      p.use = Math.max(p.use, me.kit.useSeen);
       this.input.slot = me.kit.hand;
     }
   }
@@ -548,9 +559,16 @@ export class Match {
       if (prev.shieldHp > 0 && p.shieldHp === 0 && prev.shieldTicks > 1) this.sfx("shield_break", at);
       if (prev.alive && !p.alive) this.sfx("death", at);
       if (!prev.alive && p.alive) this.sfx("respawn", at);
-      // Battle royale: something picked up (a gun in a new slot, grenades).
-      if (mine && p.alive && prev.alive && samePhase && (carriedGuns(p).length > carriedGuns(prev).length || p.kit.grenades > prev.kit.grenades))
-        this.sfx("weapon_pick");
+      // Battle royale: something picked up (a gun in a new slot, grenades, healing items, shield charges).
+      const more =
+        carriedGuns(p).length > carriedGuns(prev).length ||
+        p.kit.grenades > prev.kit.grenades ||
+        p.kit.bandages > prev.kit.bandages ||
+        p.kit.medkits > prev.kit.medkits ||
+        p.kit.shields > prev.kit.shields;
+      if (mine && p.alive && prev.alive && samePhase && more) this.sfx("weapon_pick");
+      // A healing item finished: its chime, for everyone near.
+      if (prev.kit.heal !== NO_HEAL && p.kit.heal === NO_HEAL && p.kit.healStop === HEAL_STOP.done && p.alive) this.sfx("heal_chime", at);
 
       // The opponent's own actions (ours come from the prediction). Shots are
       // read from the ammo count, not from new bullets: a fast bullet can hit
@@ -679,6 +697,7 @@ export class Match {
           gz: target.z,
           ...input.presses,
           slot: input.slot,
+          heal: input.heal,
         };
         const before = predictor.sim;
         const res = predictor.apply(msg, this.canNow(meServer, latest, now));
@@ -732,6 +751,10 @@ export class Match {
       viewer = pos;
       const shield = meServer.shieldTicks > 0 ? meServer.shieldHp / SHIELD.absorb : 0;
       mine.setShield(shield);
+      // Healing: the ring fills round us, from the predicted heal (it slows us down, so it's predicted).
+      const kit = predictor.sim?.kit;
+      mine.setHealing(meServer.alive && kit && kit.heal !== NO_HEAL ? healProgress(kit) : -1);
+      this.watchHeal(kit?.heal ?? NO_HEAL, kit?.healStop ?? 0, now);
       // Our own plate: the bar alone, at the predicted position like the body.
       scene.plates.set(sessionId, pos.x, pos.z, meServer.name, paintOf(meServer), meServer.hp / MAX_HP, shield, meServer.alive, meServer.connected, false);
       if (!watching) {
@@ -789,6 +812,8 @@ export class Match {
       if (s.stunTicks > 0) m.stunned(now);
       const shield = s.shieldTicks > 0 ? s.shieldHp / SHIELD.absorb : 0;
       m.setShield(shield);
+      // Their heal in progress, as a ring filling round them (everyone sees who is healing).
+      m.setHealing(s.alive && s.kit.heal !== NO_HEAL ? healProgress(s.kit) : -1);
       // Their plate follows the interpolated body, and shows what it shows (hits land when drawn).
       const fade = veil === "hidden" ? 0 : veil === "faded" ? FADED_OPACITY : 1;
       scene.plates.set(id, s.x, s.z, s.name, paintOf(s), s.hp / MAX_HP, shield, s.alive, s.connected, showNames, fade);
@@ -897,7 +922,7 @@ export class Match {
       opponent: opp,
       ffa: ffa && latest ? this.ffaHud(latest) : null,
       team: teams && latest ? this.teamHud(latest, meServer) : null,
-      royale: royale && latest ? this.royaleHud(latest, meServer, tickNow) : null,
+      royale: royale && latest ? this.royaleHud(latest, meServer, tickNow, now) : null,
       feed: latest ? this.feedLines(latest, now) : [],
       sim: predictor.sim,
       canPick: !!latest && canPick(meServer, latest.phase, latest.mode),
@@ -939,7 +964,7 @@ export class Match {
    * the grenade stack. The slots and the magazines are the predicted ones,
    * so a switch shows at once.
    */
-  private royaleHud(s: Snapshot, me: PlayerView | null, tickNow: number): RoyaleHud {
+  private royaleHud(s: Snapshot, me: PlayerView | null, tickNow: number, now: number): RoyaleHud {
     let alive = 0;
     s.players.forEach((p) => (alive += p.alive ? 1 : 0));
     const zone = s.zone;
@@ -948,6 +973,7 @@ export class Match {
     const next = stage === "waiting" ? zone.start : zone.end;
     const zoneTime = stage === "waiting" || stage === "shrinking" ? clock(Math.ceil((next - tickNow) / TICK_RATE)) : "";
     const sim = this.predictor.sim ?? me;
+    const note = this.healNote && now < this.healNote.until && me?.alive ? this.healNote : null;
     const pos = sim ?? { x: 0, z: 0 };
     const outside = running && !!me?.alive && outsideZone(zone, tickNow, pos.x, pos.z);
     const c = running ? zoneAt(zone, tickNow) : null;
@@ -975,7 +1001,37 @@ export class Match {
       arrow,
       slots,
       grenades: sim?.kit.grenades ?? 0,
+      heals: HEAL_ITEMS.map((h, i) => ({ key: h.key, name: h.name, count: sim ? healsOf(sim.kit, i) : 0, max: h.stack })),
+      shields: sim?.kit.shields ?? 0,
+      healing: sim && sim.kit.heal !== NO_HEAL ? sim.kit.heal : -1,
+      healNote: note?.text ?? "",
+      stopKind: note?.kind ?? "",
     };
+  }
+
+  /**
+   * Battle royale: a heal just ended (the predicted one, or a snapshot that
+   * says the server cancelled it): the HUD says how for a few seconds, and a
+   * cancel clicks. Above all for the zone, whose damage cancels a heal
+   * without anyone shooting.
+   */
+  private watchHeal(heal: number, stop: number, now: number) {
+    const was = this.lastHeal;
+    this.lastHeal = heal;
+    if (was === NO_HEAL || heal !== NO_HEAL || stop === 0) return;
+    const name = HEAL_ITEMS[was]?.name ?? "Heal";
+    const lines: Record<number, [string, string]> = {
+      [HEAL_STOP.done]: ["done", `${name} used: healed`],
+      [HEAL_STOP.hurt]: ["hurt", `${name} cancelled: you took damage`],
+      [HEAL_STOP.zone]: ["zone", `${name} cancelled: the zone is hurting you. Get back in`],
+      [HEAL_STOP.fire]: ["fire", `${name} cancelled: you fired`],
+      [HEAL_STOP.throw]: ["throw", `${name} cancelled: you threw a grenade`],
+      [HEAL_STOP.switch]: ["switch", `${name} cancelled: you switched guns`],
+    };
+    const line = lines[stop];
+    if (!line) return;
+    this.healNote = { kind: line[0], text: line[1], until: now + HEAL_NOTE_MS };
+    if (stop !== HEAL_STOP.done) this.sfx("empty_click");
   }
 
   /** Team score, clock and our team for the team deathmatch HUD. */

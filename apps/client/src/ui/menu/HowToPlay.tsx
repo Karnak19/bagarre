@@ -12,6 +12,9 @@ import {
   GRENADE,
   GRENADES,
   KILLS_TO_WIN,
+  HEAL_BANDAGE,
+  HEAL_ITEMS,
+  HEAL_MEDKIT,
   ROYALE,
   ROYALE_MAX_PLAYERS,
   SHIELD,
@@ -82,8 +85,11 @@ export function HowToPlay() {
         Battle royale: up to {ROYALE_MAX_PLAYERS} players, one life each. Everyone starts with the Pistol and no grenades;
         walk into crates for guns and grenades, and over what the fallen drop. You carry {ROYALE.gunSlots} guns ({k("1")}-
         {k("3")} or the wheel to switch, {k("F")} to swap the one in hand for one on the floor) and one grenade type at a
-        time, counted. The zone closes in over {Math.round(ZONE.close / 60)} minutes and hurts anyone outside it. The last one
-        standing wins; your place is the order you went out in.
+        time, counted. Health doesn't come back on its own: {k("4")} uses a bandage (+{HEAL_ITEMS[HEAL_BANDAGE].amount} HP,{" "}
+        {HEAL_ITEMS[HEAL_BANDAGE].duration} s), {k("5")} a medkit (back to full, {HEAL_ITEMS[HEAL_MEDKIT].duration} s). You walk at
+        half speed meanwhile, and any damage, a shot, a throw or a switch cancels it (the item is kept). The shield ({k("E")})
+        uses a charge, up to {ROYALE.shieldStack}. The zone closes in over {Math.round(ZONE.close / 60)} minutes and hurts
+        anyone outside it. The last one standing wins; your place is the order you went out in.
       </Text>
 
       <Section>Controls</Section>

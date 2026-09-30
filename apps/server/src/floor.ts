@@ -2,14 +2,15 @@
 // about (`state.crates`, `state.items`), all owned by the server. GameRoom
 // calls it once per tick while a royale match is played (`step`: crates
 // broken open, items picked up), on an F press (`swap`), when someone is
-// knocked out (`scatter`: their guns and grenades where they fell), and at
+// knocked out (`scatter`: their guns, grenades, healing items and shield
+// charges where they fell), and at
 // the start and the end of a match (`reset`, `clear`).
 //
 // Who gets an item is decided here and nowhere else: items are handled one
 // at a time, each one goes to the nearest player who can take it, and a taken
 // item is gone before the next player is looked at. So two players stepping
 // on the same item in the same tick never both get it. The rules of what
-// can be taken (a free gun slot, the grenade stack's maximum) are the shared
+// can be taken (a free gun slot, a stack's maximum) are the shared
 // ones (royale.ts); this file only moves things between the floor and the
 // players.
 //
@@ -20,6 +21,13 @@
 import {
   ITEM_GRENADE,
   ITEM_GUN,
+  ITEM_HEAL,
+  ITEM_SHIELD,
+  carriedStack,
+  carriedStacks,
+  setCarriedStack,
+  stackMax,
+  takeStack,
   PISTOL,
   PLAYER_RADIUS,
   ROYALE,
@@ -105,12 +113,14 @@ export class Floor {
 
   /**
    * A player is knocked out at (x, z): their guns (not the Pistol: everyone
-   * has one) and their grenades drop round that spot, each on open floor.
+   * has one), their grenades, healing items and shield charges drop round
+   * that spot, each on open floor.
    */
   scatter(p: Player, x: number, z: number) {
     const drops: ItemDrop[] = [];
     for (const g of carriedGuns(readSim(p))) if (g.weapon !== PISTOL) drops.push({ kind: ITEM_GUN, item: g.weapon, amount: g.mag });
     if (p.kit.grenades > 0) drops.push({ kind: ITEM_GRENADE, item: p.grenade, amount: p.kit.grenades });
+    drops.push(...carriedStacks(p.kit));
     drops.forEach((d, i) => {
       const at = this.spotNear(x, z, (i / Math.max(1, drops.length)) * 2 * Math.PI);
       this.drop(d, at.x, at.z);
@@ -186,6 +196,15 @@ export class Floor {
       if (r.left > 0) it.amount = r.left;
       else this.remove(id);
       if (r.dropped && r.dropped.count > 0) this.drop({ kind: ITEM_GRENADE, item: r.dropped.type, amount: r.dropped.count }, p.x, p.z, pid);
+      return true;
+    }
+    if (it.kind === ITEM_HEAL || it.kind === ITEM_SHIELD) {
+      // Healing items and shield charges: each its own stack, up to its maximum.
+      const r = takeStack(carriedStack(p.kit, it.kind, it.item), stackMax(it.kind, it.item), it.amount);
+      if (r.taken === 0) return false;
+      setCarriedStack(p.kit, it.kind, it.item, r.have);
+      if (r.left > 0) it.amount = r.left;
+      else this.remove(id);
       return true;
     }
     return false;

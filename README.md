@@ -78,8 +78,8 @@ The first run may need the browser: `bunx playwright install chromium` in
   open, checks, then lets it go (`setCountdown()`, `setRespawn()`).
   The battle royale's rules are short too (a 2 s countdown, the zone
   waiting 60 s and closed at 90 s), and two more calls drive it:
-  `POST /loot` makes a room's crates drop a given gun instead of a random
-  item (`setLoot()`), `POST /zone` moves the running zone's shrink to start
+  `POST /loot` makes a room's crates drop a given gun, or any floor item
+  (healing items, shield charges), instead of a random item (`setLoot()`), `POST /zone` moves the running zone's shrink to start
   and end some seconds from now (`setZone()`).
 - `tests/fixtures.ts` holds the fixtures. `players.open()` is a new player
   (its own browser context); `players.duel()`, `players.teams(n)` and `players.host()` /
@@ -328,7 +328,10 @@ TypeScript: React never runs per frame and there is no React Three Fiber.
   `royale-countdown`, `royale-players`, `hud-royale` (with `data-alive`,
   `data-zone`), `hud-royale-alive`, `hud-zone-time`, `hud-zone-arrow`,
   `hud-slots`, `hud-slot-{1,2,3}` (with `data-weapon`, `data-active`,
-  `data-ammo`), the grenade slot's `data-count` and `result-stats`. Spectating adds `spectate-bar`,
+  `data-ammo`), the grenade and shield slots' `data-count`, `hud-heals`,
+  `hud-heal-{bandage,medkit}` (with `data-count`, `data-active`),
+  `hud-heal-status` (with `data-state`: `healing`, or how it ended: `done`,
+  `hurt`, `zone`, `fire`, `throw`, `switch`) and `result-stats`. Spectating adds `spectate-bar`,
   `spectate-watching`, `spectate-mode` (and `spectate-mode-{follow,overview,free}`),
   `spectate-hints`, `spectate-count`, `spectate-join`, `spectate-leave`,
   `spectate-players`, `spectate-player`, `spectate-status` and the players'
@@ -498,12 +501,14 @@ The e2e spec is `apps/e2e/tests/teams.spec.ts`, the smoke checks
 Last one standing, 2 to 10 players, every one for themselves, one life
 each. The rules are `ROYALE_RULES` in `packages/shared/src/modes.ts` (with
 `royale: RoyaleRules`, the zone's timings), the numbers `ROYALE`, `ZONE` and
-`LOOT` in `constants.ts`, and the pure rules (gun slots, grenade stacks, the
-zone, the loot draw) in `packages/shared/src/royale.ts`.
-`bun run check` in `packages/shared` runs their self-check
+`LOOT`, and one definition per healing item (`HEAL_ITEMS`) in
+`constants.ts`, and the pure rules (gun slots, grenade stacks, healing and
+shield charges, the zone, the loot draw) in `packages/shared/src/royale.ts`.
+`bun run check` in `packages/shared` runs their self-checks
 (`scripts/royale.check.ts`: the ranking, the zone over time, the stacks, the
-slots, the loot, the maps' crate spots; `scripts/royale-maps.check.ts`: the
-royale map's layout, see [docs/royale-maps.md](docs/royale-maps.md)).
+slots, the loot, the maps' crate spots; `scripts/heal.check.ts`: the heals,
+what cancels them, the stacks and the shield charges; `scripts/royale-maps.check.ts`:
+the royale map's layout, see [docs/royale-maps.md](docs/royale-maps.md)).
 
 - **Start**: a 15 s countdown once 2 are in (more can join during it), then
   a 5 s pre-match (the warmup) with nothing to pick: everyone has the
@@ -516,7 +521,8 @@ royale map's layout, see [docs/royale-maps.md](docs/royale-maps.md)).
 - **Crates**: the map lists crate spots (`MapDef.royale.crates`, 23 on
   Ironvale). A crate stands on each at the start; walking into one
   breaks it and drops one item drawn from `LOOT` by weight: a gun with a
-  full magazine, or a stack of grenades.
+  full magazine, a stack of grenades, bandages (common), a medkit (rare) or
+  a shield charge.
 - **Items on the floor** (`state.items`: kind, which one, how many) are the
   server's (`apps/server/src/floor.ts`): each tick every item goes to the
   nearest living player who can take it, so two players on one item never
@@ -534,6 +540,23 @@ royale map's layout, see [docs/royale-maps.md](docs/royale-maps.md)).
 - **Grenades** are counted, one type at a time, up to the type's `stack`
   (frag 3, the others 2). The same type adds up, another type swaps in and
   the old stack drops. A throw uses one, with a 1 s gap between two.
+- **Healing**: health never comes back on its own. **4** uses a bandage
+  (+25 HP in 1.5 s, up to 5 carried), **5** a medkit (back to 100 in 4 s, up
+  to 2); never past 100, and not at full health. Meanwhile you walk at half
+  speed and can't dash, and a ring fills round you that everyone sees. A
+  shot, a throw, a gun switch (or F swap), or damage to your HP (the zone's
+  included; what the shield soaks doesn't count) cancels it: nothing healed,
+  the item kept. The heal is an input (`InputMessage.heal` and the `use`
+  press counter) the shared step runs, with the heal in progress in the kit
+  (`kit.heal`, `kit.healTicks`) and health in `PlayerSim`, so the client
+  predicts the slowdown and never jitters; the server cancels on damage.
+  On the tick a heal completes it comes first: every input of a tick runs
+  before bullets, blasts and the zone, so a heal is never applied twice
+  and never used up without healing. The HUD says how each heal ended.
+- **Shield charges**: the shield (E) uses a charge instead of its 10 s
+  cooldown, up to 3 carried, none at the start. The next one can only go up
+  1 s after the last bubble ended (`ROYALE.shieldGap`), so charges never
+  chain into one long bubble. Raising it doesn't cancel a heal.
 - **The zone** (`state.zone`: start and end centre and radius, start and end
   tick) covers the whole map, waits 30 s, then shrinks smoothly to nothing at
   4:30, round a centre drawn from the match id inside `MapDef.royale.zone`.
@@ -542,7 +565,7 @@ royale map's layout, see [docs/royale-maps.md](docs/royale-maps.md)).
   compute the circle with the same `zoneAt`. A zone death reads "Zone" in
   the kill feed, with no killer.
 - **Knocked out** (killed, the zone, or leaving): no respawn, your guns (not
-  the Pistol) and grenades drop where you fell, and you watch the rest from
+  the Pistol), grenades, healing items and shield charges drop where you fell, and you watch the rest from
   your seat: the camera on your killer (or the nearest player still in after
   a zone death), Q / E to cycle through the players still in, the
   spectator's other keys and the Esc menu to leave. A player who leaves, or
@@ -558,8 +581,9 @@ royale map's layout, see [docs/royale-maps.md](docs/royale-maps.md)).
   one kill would be a win. The result card says which.
 
 In a game the HUD shows who is still in and the zone's timer (top right),
-the three slots with their magazines in place of the weapon box, the grenade
-count, and an arrow back to the zone when you are outside; the ground shows
+the three slots with their magazines in place of the weapon box, the
+bandages and medkits, the grenade and shield charge counts, the heal in
+progress (or how it ended), and an arrow back to the zone when you are outside; the ground shows
 the zone's edge with a tint outside, the crates and the items. On the menu,
 **Battle royale** quick-matches one and **Private royale** makes a private
 one; in dev, `?play=royale`. The e2e spec is `apps/e2e/tests/royale.spec.ts`.
@@ -691,6 +715,7 @@ match menu ("Stop watching"), M mutes. The overlay is
 | **E**              | Shield: a bubble that soaks damage before your HP             |
 | **1**-**7**        | Pick a weapon, while dead or between matches (see below). Battle royale: **1**-**3** and the wheel switch gun slots |
 | **F**              | Battle royale: swap the gun in hand for the one on the floor  |
+| **4** / **5**      | Battle royale: use a bandage / a medkit                       |
 | **G**              | Next grenade type (frag, smoke, stun, flash, heal), same rules |
 | **Tab** (hold)     | Scoreboard                                                    |
 | **M**              | Mute / unmute sound (remembered between visits)               |

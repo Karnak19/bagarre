@@ -1,5 +1,5 @@
-import { PISTOL, ROYALE_RULES } from "@bagarre/shared";
-import { ROYALE_MAP, expect, kill, place, setLoot, setZone, test, type Player } from "./fixtures.ts";
+import { HEAL_BANDAGE, HEAL_MEDKIT, HEAL_STOP, ITEM_HEAL, ITEM_SHIELD, NO_HEAL, PISTOL, ROYALE_RULES, SHIELD } from "@bagarre/shared";
+import { ROYALE_MAP, expect, kill, place, setHp, setLoot, setZone, test, type Player } from "./fixtures.ts";
 
 const RIFLE = 0;
 const NO_GUN = 255;
@@ -118,6 +118,66 @@ test("a short battle royale: the Pistol, a crate, a gun, a switch, a knock-out s
   expect((await a.state()).items.length).toBe(0);
 });
 
+test("battle royale: a bandage heals a hurt player, firing cancels a medkit and keeps it, a shield charge raises the shield", async ({ players }) => {
+  const { players: all, code } = await players.royale(2);
+  const [a] = all;
+  await Promise.all(all.map((p) => p.expectState("phase", "playing")));
+  const ida = (await a.state()).you;
+  const meA = async () => a.me(await a.state())!;
+  const [c1, c2, c3] = (await a.state()).crates;
+
+  // Nothing to start with: no healing item, no shield charge (E does nothing).
+  await expect(a.testId("hud-heal-bandage")).toHaveAttribute("data-count", "0");
+  await expect(a.testId("hud-heal-medkit")).toHaveAttribute("data-count", "0");
+  await expect(a.testId("hud-shield")).toHaveAttribute("data-count", "0");
+
+  // A crate drops two bandages: walking over them fills the stack.
+  await setLoot(code, { kind: ITEM_HEAL, item: HEAL_BANDAGE, amount: 2 });
+  await place(code, ida, c1.x + 0.3, c1.z);
+  await expect.poll(async () => (await meA()).bandages, { message: "A picked up the bandages" }).toBe(2);
+  await expect(a.testId("hud-heal-bandage")).toHaveAttribute("data-count", "2");
+
+  // Hurt, A uses one (4): it heals 25 once it completes, and only then is it used up.
+  await setHp(code, ida, 50);
+  await expect.poll(async () => (await meA()).hp).toBe(50);
+  await a.focusGame();
+  await a.page.keyboard.press("Digit4");
+  await expect.poll(async () => (await meA()).hp, { message: "the bandage healed A", timeout: 8000 }).toBe(75);
+  const healed = await meA();
+  expect(healed.bandages).toBe(1);
+  expect(healed.healStop).toBe(HEAL_STOP.done);
+  await expect(a.testId("hud-heal-bandage")).toHaveAttribute("data-count", "1");
+
+  // A medkit (4 s), then a shot mid-heal: cancelled, nothing healed, the medkit kept.
+  await setLoot(code, { kind: ITEM_HEAL, item: HEAL_MEDKIT, amount: 1 });
+  await place(code, ida, c2.x + 0.3, c2.z);
+  await expect.poll(async () => (await meA()).medkits, { message: "A picked up a medkit" }).toBe(1);
+  await a.focusGame();
+  await a.page.keyboard.press("Digit5");
+  await expect.poll(async () => (await meA()).heal, { message: "A is using the medkit" }).toBe(HEAL_MEDKIT);
+  await expect(a.testId("hud-heal-status")).toHaveAttribute("data-state", "healing");
+  await expect(a.testId("hud-heal-medkit")).toHaveAttribute("data-active", "");
+  await a.bot({ on: true, fire: true, mx: 0, mz: 0 });
+  await expect.poll(async () => (await meA()).healStop, { message: "the shot cancelled the heal" }).toBe(HEAL_STOP.fire);
+  await a.bot({ on: false, fire: false });
+  const cancelled = await meA();
+  expect(cancelled.heal).toBe(NO_HEAL);
+  expect(cancelled.medkits).toBe(1);
+  expect(cancelled.hp).toBe(75);
+  await expect(a.testId("hud-heal-status")).toHaveAttribute("data-state", "fire");
+
+  // A shield charge: E uses it and the bubble goes up.
+  await setLoot(code, { kind: ITEM_SHIELD, item: 0, amount: 1 });
+  await place(code, ida, c3.x + 0.3, c3.z);
+  await expect.poll(async () => (await meA()).shields, { message: "A picked up a shield charge" }).toBe(1);
+  await expect(a.testId("hud-shield")).toHaveAttribute("data-count", "1");
+  await a.focusGame();
+  await a.page.keyboard.press("KeyE");
+  await expect.poll(async () => (await meA()).shieldHp, { message: "A's shield is up" }).toBe(SHIELD.absorb);
+  expect((await meA()).shields).toBe(0);
+  await expect(a.testId("hud-shield")).toHaveAttribute("data-count", "0");
+});
+
 test("battle royale: a leaver is knocked out and placed, the zone closes and hurts whoever is outside", async ({ players }) => {
   const { players: all, code } = await players.royale(3);
   const [a, b, c] = all;
@@ -133,10 +193,26 @@ test("battle royale: a leaver is knocked out and placed, the zone closes and hur
   expect(left.alive).toBe(false);
   await expect(a.testId("hud-royale-alive")).toContainText("2 of 3");
 
-  // Stand A and B far apart on open floor (Ironvale's north-west and south-east ring road), and close the zone now: both end up outside.
+  // A takes a medkit from a crate first, and is hurt.
+  await setLoot(code, { kind: ITEM_HEAL, item: HEAL_MEDKIT, amount: 1 });
+  const crate = (await a.state()).crates[0];
+  await place(code, ida, crate.x + 0.3, crate.z);
+  await expect.poll(async () => a.me(await a.state())?.medkits, { message: "A picked up a medkit" }).toBe(1);
+  await setHp(code, ida, 60);
+
+  // Stand A and B far apart on open floor (Ironvale's north-west and
+  // south-east ring road), A starts the medkit, and the zone closes now: both
+  // end up outside, and the zone's damage cancels A's heal (the HUD says it
+  // was the zone), the medkit kept.
   await place(code, ida, -24, -26);
   await place(code, idb, 24, 26);
+  await a.focusGame();
+  await a.page.keyboard.press("Digit5");
+  await expect.poll(async () => a.me(await a.state())?.heal, { message: "A is using the medkit" }).toBe(HEAL_MEDKIT);
   await setZone(code, 0, 2);
+  await expect.poll(async () => a.me(await a.state())?.healStop, { message: "the zone cancelled A's heal" }).toBe(HEAL_STOP.zone);
+  await expect(a.testId("hud-heal-status")).toHaveAttribute("data-state", "zone");
+  expect(a.me(await a.state())?.medkits).toBe(1);
   await expect(a.testId("hud-zone-arrow")).toBeVisible();
   await expect.poll(async () => a.me(await a.state())?.hp ?? 100, { message: "the zone hurts A" }).toBeLessThan(100);
   // Nobody can stay in a closed zone: the match ends on the zone, a zone death has no killer.

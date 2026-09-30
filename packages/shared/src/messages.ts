@@ -12,6 +12,7 @@ import { isPickableWeapon } from "./combat.ts";
 import { TEAM_BLUE, TEAM_RED } from "./constants.ts";
 import { isGrenadeType } from "./grenades.ts";
 import type { InputMessage, PickMessage, PingMessage, TeamMessage } from "./protocol.ts";
+import { isHealItem } from "./royale.ts";
 
 /** Largest press counter or input seq (they are synced as uint32). */
 export const MAX_COUNTER = 0xffffffff;
@@ -34,7 +35,7 @@ const counter = (v: unknown): v is number => typeof v === "number" && Number.isI
 
 /**
  * MSG_INPUT. Every field is required but the battle royale's `slot`,
- * `switch` and `swap`, which read as 0 when missing (a client of the other
+ * `switch`, `swap`, `heal` and `use`, which read as 0 when missing (a client of the other
  * modes may leave them out); present, they must be valid. Extra fields are
  * ignored (not copied).
  */
@@ -47,9 +48,10 @@ export function parseInput(raw: unknown): InputMessage | null {
   if (typeof fire !== "boolean") return null;
   if (!finiteIn(gx, TARGET_LIMIT) || !finiteIn(gz, TARGET_LIMIT)) return null;
   if (!counter(dash) || !counter(grenade) || !counter(shield) || !counter(reload)) return null;
-  const { slot = 0, switch: sw = 0, swap = 0 } = m;
+  const { slot = 0, switch: sw = 0, swap = 0, heal = 0, use = 0 } = m;
   if (!(slot === 0 || slot === 1 || slot === 2) || !counter(sw) || !counter(swap)) return null;
-  return { seq, mx, mz, aim, fire, gx, gz, dash, grenade, shield, reload, slot, switch: sw, swap };
+  if (!isHealItem(heal) || !counter(use)) return null;
+  return { seq, mx, mz, aim, fire, gx, gz, dash, grenade, shield, reload, slot, switch: sw, swap, heal, use };
 }
 
 /**
