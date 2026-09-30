@@ -506,7 +506,10 @@ function RoyaleWaitingCard() {
     },
     shallowEqual,
   );
-  const canStart = players >= ROYALE_MIN_PLAYERS;
+  // The client's only copy of the start threshold, for display: the server enforces it (acceptsStart, ready()).
+  const need = Math.max(0, ROYALE_MIN_PLAYERS - players);
+  const canStart = need === 0;
+  const missing = need === 1 ? "one more player" : `${need} more players`;
   const count = `${players}/${ROYALE_MAX_PLAYERS} players`;
   const start = useRef<HTMLButtonElement>(null);
   // Made host while the card is up (the host left): Start takes the focus, so Enter presses it.
@@ -534,7 +537,6 @@ function RoyaleWaitingCard() {
   ) : (
     "Waiting for players…"
   );
-  const need = ROYALE_MIN_PLAYERS - players;
   const sub = host.you
     ? canStart
       ? `${count}. You're the host: others can still join until you start, not after.`
@@ -565,7 +567,7 @@ function RoyaleWaitingCard() {
             // disabled), and the same element throughout, so the card's focus lands on it and Enter
             // presses it as soon as enough players are in.
             isDisabled={!canStart}
-            tooltip={canStart ? "Starts the match now: nobody can join after" : `It takes ${ROYALE_MIN_PLAYERS} players to start`}
+            tooltip={canStart ? "Starts the match now: nobody can join after" : `Needs ${missing} to start`}
             data-autofocus=""
             data-testid="royale-start"
             data-ready={canStart}
@@ -577,7 +579,7 @@ function RoyaleWaitingCard() {
           />
           {!canStart && (
             <Text type="supporting" color="secondary" data-testid="royale-start-hint">
-              It takes {ROYALE_MIN_PLAYERS} players to start: waiting for {need === 1 ? "one more" : `${need} more`}.
+              Start needs {missing}: send them the invite link.
             </Text>
           )}
         </VStack>

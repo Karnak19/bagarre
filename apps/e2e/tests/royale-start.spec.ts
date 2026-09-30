@@ -33,7 +33,7 @@ test("battle royale: the host sees Start, the others wait for them; nobody else 
   await expect(start).toHaveAttribute("data-ready", "false");
   await expect(start).toBeDisabled();
   await expect(start).toBeFocused();
-  await expect(a.testId("royale-start-hint")).toContainText(`${ROYALE_MIN_PLAYERS} players to start`);
+  await expect(a.testId("royale-start-hint")).toContainText(`needs ${ROYALE_MIN_PLAYERS - 1 === 1 ? "one more player" : `${ROYALE_MIN_PLAYERS - 1} more players`}`);
   await start.click({ force: true });
   await a.page.keyboard.press("Enter");
   await sendStart(a);

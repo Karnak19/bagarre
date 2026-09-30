@@ -1,6 +1,5 @@
 // Keys that belong to the app, not the game: Esc (match menu), Tab (hold the
-// scoreboard), M / the weapon number keys / G on the waiting and result cards,
-// and Enter for the battle royale host's Start (the game itself has no Enter). The game's own
+// scoreboard), and M / the weapon number keys / G on the waiting and result cards. The game's own
 // keys are input.ts'. Plain DOM listeners, outside React: they must see the
 // state as it is when the key goes down, before any dialog reacts to it
 // (hence the capture phase).
@@ -15,19 +14,12 @@
 //   only holds the scoreboard while the game has the input, so Tab moves
 //   focus as usual everywhere else.
 
-import { ROYALE_MIN_PLAYERS } from "@bagarre/shared";
 import type { App, GameView } from "./app.ts";
 import { isMuted, setMuted } from "./audio.ts";
 import type { Input } from "./input.ts";
 import { weaponOfKey } from "./items.ts";
 import type { Readable } from "./store.ts";
 import { ui } from "./uiState.ts";
-
-/** A control that answers Enter itself (a button, a link, a text field...): Enter is left to it. */
-const isControl = (e: Event) => {
-  const t = e.composedPath()[0] ?? e.target;
-  return t instanceof HTMLElement && !!t.closest("button, a[href], input, textarea, select, [role=button], [contenteditable]");
-};
 
 const isEditable = (e: Event) => {
   const t = e.composedPath()[0] ?? e.target;
@@ -65,17 +57,6 @@ export function installAppKeys({ app, input, view }: { app: App; input: Input; v
       if (input.enabled || panel || e.repeat) return;
       const card = v?.card;
       const weapon = weaponOfKey(e.code);
-      // Battle royale host, waiting: Enter presses Start. The card's focus is on Start already
-      // (Enter on it is the button's own); this covers the focus being nowhere, and leaves
-      // any other focused control its own Enter.
-      if ((e.code === "Enter" || e.code === "NumpadEnter") && card === "waiting" && !isControl(e)) {
-        const snap = v?.snapshot;
-        if (snap?.mode === "royale" && snap.host !== "" && snap.host === v?.you && snap.players.size >= ROYALE_MIN_PLAYERS) {
-          e.preventDefault();
-          app.startMatch();
-        }
-        return;
-      }
       if (e.code === "KeyM") setMuted(!isMuted());
       else if (weapon !== null && (card === "waiting" || card === "result")) app.pick(weapon);
       else if (e.code === "KeyG" && (card === "waiting" || card === "result")) app.cycleGrenade();
