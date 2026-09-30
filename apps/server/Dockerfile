@@ -9,7 +9,7 @@
 # starts (see src/db.ts): no migration files or tools in the image. PGlite,
 # the embedded Postgres used in dev and tests, is left out of the binary.
 
-FROM oven/bun:1.4.0 AS build
+FROM oven/bun:1.4.2 AS build
 WORKDIR /repo
 
 # Manifests first, so the install layer is cached until a dependency changes.

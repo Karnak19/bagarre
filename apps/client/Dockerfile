@@ -4,7 +4,7 @@
 # VITE_* values are public (they end up in the browser bundle), which is why
 # they are build args and not runtime env.
 
-FROM oven/bun:1.4.0 AS build
+FROM oven/bun:1.4.2 AS build
 WORKDIR /repo
 
 COPY package.json bun.lock bunfig.toml ./
