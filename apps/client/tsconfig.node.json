@@ -3,5 +3,5 @@
   // "bun" (unplugin), which brings Bun's and Node's globals: they stay here,
   // out of tsconfig.json's browser code.
   "extends": "../../tsconfig.base.json",
-  "include": ["vite.config.ts"]
+  "include": ["vite.config.ts", "seo"]
 }

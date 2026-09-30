@@ -23,13 +23,28 @@
 		file_server
 	}
 
-	# Everything else (index.html, models, sounds) revalidates. SPA fallback:
-	# /game/<code> and any other route serve index.html.
+	# Everything else (the pages, models, sounds, share images) revalidates.
+	# Each page has its own copy of index.html with its own title and link
+	# preview tags (seo/plugin.ts writes them at build time): /maps/<id> is
+	# /maps/<id>.html, /maps is /maps.html, every /game/<code> is the same
+	# /game.html and every /game/<code>/watch the same /watch.html (the code is
+	# never put in the page). Any other route falls back to index.html (SPA).
+	# `route` keeps these rewrites in the order written.
 	handle {
 		root * /srv
 		encode zstd gzip
 		header Cache-Control "no-cache"
-		try_files {path} /index.html
+		route {
+			# One URL per page: /maps/ would otherwise hit the dist/maps/
+			# directory (no index.html there) and 404.
+			@trailing path_regexp trailing ^(.+)/$
+			redir @trailing {re.trailing.1} 308
+			@watch path_regexp ^/game/[^/]+/watch/?$
+			rewrite @watch /watch.html
+			@game path /game/*
+			rewrite @game /game.html
+			try_files {path} {path}.html /index.html
+		}
 		file_server
 	}
 }

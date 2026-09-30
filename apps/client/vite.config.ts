@@ -2,6 +2,7 @@ import stylex from "@stylexjs/unplugin/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+import { seo } from "./seo/plugin.ts";
 
 export default defineConfig({
   plugins: [
@@ -15,6 +16,8 @@ export default defineConfig({
     // component's own value, both classes land and the wrong one can win.
     stylex({ devMode: "full", debug: false }),
     react(),
+    // Each page's title, description and link preview tags, in the HTML itself (seo/).
+    seo(),
   ],
   // .env.local lives at the repo root, shared with the game server.
   // Only VITE_* variables reach the browser.

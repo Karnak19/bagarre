@@ -9,11 +9,12 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p . && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.test.json",
     "test": "bun test ./src",
-    "lint": "oxlint src scripts vite.config.ts --ignore-pattern 'src/ui/theme/bagarre.*' --ignore-pattern src/routeTree.gen.ts",
+    "lint": "oxlint src seo scripts vite.config.ts --ignore-pattern 'src/ui/theme/bagarre.*' --ignore-pattern src/routeTree.gen.ts",
     "assets:models": "bun scripts/assets/build-models.ts",
     "assets:atlas": "python3 scripts/assets/build-atlas.py",
     "sfx:build": "bash scripts/sfx/build.sh",
     "music:build": "bash scripts/music/build.sh",
+    "og:render": "bun scripts/og/render.ts",
     "theme:build": "astryx theme build src/ui/theme/bagarre.source.ts -o src/ui/theme/bagarre.css",
     "astryx": "astryx"
   },
@@ -36,6 +37,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/three": "^0.186.0",
+    "@playwright/test": "^1.63.0",
     "@vitejs/plugin-react": "^6.1.1",
     "typescript": "^7.0.2",
     "vite": "^8.3.1"
