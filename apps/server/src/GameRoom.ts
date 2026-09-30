@@ -9,8 +9,9 @@
 // knock-out (`outTick`) with no respawn, and the last one standing wins
 // (`checkLastStanding`, at the end of the tick, so players knocked out on the
 // same tick are all out before anyone is ranked: rankRoyale). Everyone
-// carries gun slots and counted grenades (the kit, KitMode "slots" in the
-// shared step), found in crates and on the floor (floor.ts), and the zone
+// carries gun slots, counted grenades, healing items and shield charges (the
+// kit, KitMode "slots" in the shared step, which also runs the heals), found
+// in crates and on the floor (floor.ts), and the zone
 // (`state.zone`, royale.ts' zoneAt) closes in and hurts whoever is outside.
 // No loadout picks, no joining once the match started (`closedToJoins`),
 // and a player who leaves mid-match is knocked out then: their seat stays in
@@ -117,6 +118,9 @@ import {
   pickZone,
   startKit,
   zoneDamage,
+  HEAL_STOP,
+  cancelHeal,
+  keepCounters,
   readSim,
   respawnPoint,
   shotPellets,
@@ -1253,6 +1257,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       player.reloadSeen = Math.max(player.reloadSeen, input.reload);
       player.kit.switchSeen = Math.max(player.kit.switchSeen, input.switch ?? 0);
       player.kit.swapSeen = Math.max(player.kit.swapSeen, input.swap ?? 0);
+      player.kit.useSeen = Math.max(player.kit.useSeen, input.use ?? 0);
     }
     // Moving, and (not in warmup) shooting, throwing and the shield: the
     // same rule and the same function the client predicts with. It enforces
@@ -1269,7 +1274,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     if (!can.act) return;
     player.aim = input.aim;
     // F: swap the gun in hand for one on the floor (royale, while playing).
-    if (res.swap && this.rules.royale && this.state.phase === "playing") this.floor.swap(id, player);
+    // A new gun in hand cancels a heal, like a switch does in the step.
+    if (res.swap && this.rules.royale && this.state.phase === "playing" && this.floor.swap(id, player)) cancelHeal(player.kit, HEAL_STOP.switch);
 
     if (res.fired) this.spawnShot(id, player, input);
     if (res.grenade) this.spawnGrenade(id, player, res.grenade);
@@ -1523,6 +1529,10 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     }
     if (left <= 0) return;
     target.hp = Math.max(0, target.hp - left);
+    // Battle royale: damage to HP (what the shield soaked doesn't count)
+    // cancels a heal in progress, the zone's included. Inputs run before
+    // any damage in a tick, so a heal due this tick has already completed.
+    cancelHeal(target.kit, weapon === KILL_ZONE ? HEAL_STOP.zone : HEAL_STOP.hurt);
     if (target.hp > 0) return;
 
     target.alive = false;
@@ -1625,9 +1635,10 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
 
   /**
    * Out of the match for good (killed, the zone, or left): the tick is kept
-   * (`outTick`, the place follows from it), and the guns and grenades drop
-   * where they fell. What they carried is cleared, so nothing is left
-   * twice. Nobody respawns (see the tick's timers).
+   * (`outTick`, the place follows from it), and everything they carried
+   * (guns, grenades, healing items, shield charges) drops where they fell.
+   * What they carried is cleared, so nothing is left twice. Nobody respawns
+   * (see the tick's timers).
    */
   private knockOut(p: Player) {
     if (p.outTick > 0) return;
@@ -1638,7 +1649,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     p.outTick = this.state.tick;
     this.floor.scatter(p, p.x, p.z);
     const sim = readSim(p);
-    writeSim(p, { ...sim, kit: { ...startKit(), switchSeen: sim.kit.switchSeen, swapSeen: sim.kit.swapSeen } });
+    writeSim(p, { ...sim, kit: keepCounters(startKit(), sim.kit) });
     p.weapon = PISTOL;
     this.knockedOut = true;
   }

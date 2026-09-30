@@ -293,7 +293,7 @@ export const SHIELD = {
   duration: 2.5,
   /** Damage the bubble soaks before HP is touched. */
   absorb: 40,
-  /** Seconds from activation until the next one is allowed. */
+  /** Seconds from activation until the next one is allowed (battle royale: charges instead, see ROYALE.shieldStack). */
   cooldown: 10,
 } as const;
 
@@ -405,7 +405,55 @@ export const ROYALE = {
   maxItems: 60,
   /** A dead player's items land this far round where they fell. */
   dropSpread: 1.1,
+  /** Walking speed multiplier while a healing item is being used (HEAL_ITEMS). */
+  healSpeedScale: 0.5,
+  /** Shield charges carried at most (royale only: the shield is counted there, not on SHIELD.cooldown). */
+  shieldStack: 3,
+  /**
+   * Seconds between the end of one shield bubble and the next one: a charge
+   * can't go up until SHIELD.duration + this after the last one, so three
+   * charges never chain into one long bubble.
+   */
+  shieldGap: 1,
 } as const;
+
+/** Battle royale: ticks from a shield charge going up until the next may (the bubble, then ROYALE.shieldGap). */
+export const SHIELD_CHARGE_TICKS = ticks(SHIELD.duration + ROYALE.shieldGap);
+
+/**
+ * A healing item (battle royale only): used with its key, it heals `amount`
+ * HP (never past MAX_HP) once `duration` has run, if nothing cancelled it
+ * (see `stepPlayer` and `HEAL_STOP` in royale.ts). A cancelled heal keeps the
+ * item; it is only used up when the heal completes.
+ */
+export interface HealItemDef<K extends string = HealKey> {
+  /** Stable key (test ids, the HUD, the loot table). Never renamed. */
+  key: K;
+  name: string;
+  /** HP given when it completes (MAX_HP: back to full), capped at MAX_HP. */
+  amount: number;
+  /** Seconds it takes; the player walks at ROYALE.healSpeedScale meanwhile. */
+  duration: number;
+  /** The most of it one player carries. */
+  stack: number;
+}
+
+/**
+ * Index = healing item id (`FloorItem.item` of an ITEM_HEAL, `InputMessage.heal`,
+ * `KitSim.heal`), and its key is the number key after the gun slots: 4 is
+ * the first, 5 the second. Ids are frozen: append only.
+ */
+const HEAL_LIST = [
+  { key: "bandage", name: "Bandage", amount: 25, duration: 1.5, stack: 5 },
+  { key: "medkit", name: "Medkit", amount: MAX_HP, duration: 4, stack: 2 },
+] as const satisfies readonly HealItemDef<string>[];
+/** A healing item's stable key ("bandage", "medkit"). */
+export type HealKey = (typeof HEAL_LIST)[number]["key"];
+export const HEAL_ITEMS: readonly HealItemDef[] = HEAL_LIST;
+export const HEAL_BANDAGE = 0;
+export const HEAL_MEDKIT = 1;
+/** `KitSim.heal` when no heal is in progress. */
+export const NO_HEAL = 255;
 
 /**
  * The closing zone: a circle round the whole map that waits, then shrinks
@@ -428,18 +476,24 @@ export const ZONE = {
  * Kinds of item on the floor (`FloorItem.kind`). Index = id on the wire:
  * append-only, like WEAPONS and GRENADES. `item` says which one (a WEAPONS
  * index for a gun, a GRENADES index for grenades) and `amount` how many (a
- * gun's magazine, a stack's count). Healing items and shield charges (#34)
- * append their kind here.
+ * gun's magazine, a stack's count). Healing items (a HEAL_ITEMS index) and
+ * shield charges came after (#34).
  */
-export const ITEM_KINDS = ["gun", "grenade"] as const;
+export const ITEM_KINDS = ["gun", "grenade", "heal", "shield"] as const;
 export type ItemKind = (typeof ITEM_KINDS)[number];
 export const ITEM_GUN = 0;
 export const ITEM_GRENADE = 1;
+/** A stack of healing items: `item` is a HEAL_ITEMS index. */
+export const ITEM_HEAL = 2;
+/** Shield charges: `item` is always 0. */
+export const ITEM_SHIELD = 3;
 
 /** One line of the loot table: what a crate may drop, and how often (weights, not percentages). */
 export type LootEntry =
   | { weight: number; kind: "gun"; key: WeaponKey }
-  | { weight: number; kind: "grenade"; key: GrenadeKey; amount: number };
+  | { weight: number; kind: "grenade"; key: GrenadeKey; amount: number }
+  | { weight: number; kind: "heal"; key: HealKey; amount: number }
+  | { weight: number; kind: "shield"; amount: number };
 
 /**
  * What a crate drops, one entry drawn by weight (`rollLoot` in royale.ts).
@@ -458,6 +512,10 @@ export const LOOT: readonly LootEntry[] = [
   { weight: 5, kind: "grenade", key: "stun", amount: 1 },
   { weight: 4, kind: "grenade", key: "flash", amount: 1 },
   { weight: 4, kind: "grenade", key: "heal", amount: 1 },
+  // Bandages are common, medkits rare.
+  { weight: 14, kind: "heal", key: "bandage", amount: 2 },
+  { weight: 3, kind: "heal", key: "medkit", amount: 1 },
+  { weight: 7, kind: "shield", amount: 1 },
 ];
 
 // --- Netcode ---

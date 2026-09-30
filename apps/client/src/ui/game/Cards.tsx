@@ -508,8 +508,8 @@ function RoyaleWaitingCard() {
         </VStack>
       </HStack>
       <Text color="secondary" xstyle={styles.sub}>
-        One life. Everyone starts with the Pistol: find guns and grenades in crates, stay inside the zone. The last one
-        standing wins.
+        One life. Everyone starts with the Pistol: find guns, grenades, bandages, medkits and shield charges in crates,
+        stay inside the zone. The last one standing wins.
       </Text>
       <Text as="p" xstyle={shared.eyebrow}>
         Players

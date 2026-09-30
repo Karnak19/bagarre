@@ -12,15 +12,25 @@
 //   spends one per throw.
 // - The zone: `zoneAt` is its circle at a tick, `zoneDamage` what standing
 //   outside costs on that tick. Both read the synced ZoneView only.
+// - Healing items and shield charges: counted stacks (`takeStack`), used
+//   by the step (the heal on `InputMessage.use`, a charge on the shield
+//   press). See "Healing" below for the rules and their order.
 // - The loot: `rollLoot` draws one LOOT line by weight.
 //
 // `scripts/royale.check.ts` runs their self-checks (`bun run check`).
 
 import {
   GRENADES,
+  HEAL_BANDAGE,
+  HEAL_ITEMS,
+  HEAL_MEDKIT,
   ITEM_GRENADE,
   ITEM_GUN,
+  ITEM_HEAL,
+  ITEM_SHIELD,
   LOOT,
+  MAX_HP,
+  NO_HEAL,
   PISTOL,
   ROYALE,
   TICK_RATE,
@@ -44,7 +54,30 @@ export const isGunSlot = (v: unknown): v is GunSlot => v === 0 || v === 1 || v =
 
 /** Nothing carried: the other modes' kit, which nothing reads. */
 export function emptyKit(): KitSim {
-  return { hand: 0, gun0: NO_GUN, gun1: NO_GUN, gun2: NO_GUN, mag0: 0, mag1: 0, mag2: 0, grenades: 0, switchSeen: 0, swapSeen: 0 };
+  return {
+    hand: 0,
+    gun0: NO_GUN,
+    gun1: NO_GUN,
+    gun2: NO_GUN,
+    mag0: 0,
+    mag1: 0,
+    mag2: 0,
+    grenades: 0,
+    switchSeen: 0,
+    swapSeen: 0,
+    bandages: 0,
+    medkits: 0,
+    shields: 0,
+    heal: NO_HEAL,
+    healTicks: 0,
+    healStop: 0,
+    useSeen: 0,
+  };
+}
+
+/** A fresh kit that keeps the press counters of `seen` (they track the client's running totals). */
+export function keepCounters(kit: KitSim, seen: KitSim): KitSim {
+  return { ...kit, switchSeen: seen.switchSeen, swapSeen: seen.swapSeen, useSeen: seen.useSeen };
 }
 
 /** The royale's start: the Pistol in slot 1 (in hand), the other slots empty, no grenades. */
@@ -202,6 +235,139 @@ export function useGrenade(count: number): number {
   return Math.max(0, count - 1);
 }
 
+// --- Healing and shield charges ------------------------------------------------------
+//
+// The rules, all applied by `stepPlayer` (combat.ts) in slots mode, so the
+// client predicts them (the slowdown above all) exactly like the server:
+// - A heal starts on a `use` press for an item carried, below MAX_HP, with
+//   none in progress, the trigger up and no burst running. Not in warmup.
+// - While it runs the player walks at ROYALE.healSpeedScale and can't dash.
+//   It counts down one step per input, like a stun.
+// - It completes when its steps run out: `amount` HP, capped at MAX_HP, and
+//   only then is the item used up.
+// - A shot, a throw or a gun switch (the step's), an F swap or damage to HP
+//   (the server's: damage the shield soaks doesn't count) cancel it: nothing
+//   healed, the item kept. The shield doesn't cancel it.
+// - Same tick: a heal that is due completes first. The step runs the
+//   countdown before the shot or throw of that input, and the server applies
+//   every input of a tick before bullets, blasts and the zone. So a heal
+//   never lands twice, and it's never used up without healing.
+
+/** How a heal ended (`KitSim.healStop`; 0 before the first one). */
+export const HEAL_STOP = {
+  done: 1,
+  /** Damage to HP (bullets, blasts). */
+  hurt: 2,
+  /** Damage from standing outside the zone. */
+  zone: 3,
+  fire: 4,
+  throw: 5,
+  /** A gun switch, or an F swap. */
+  switch: 6,
+} as const;
+
+/** A HEAL_ITEMS index. */
+export const isHealItem = (v: unknown): v is number => v === HEAL_BANDAGE || v === HEAL_MEDKIT;
+
+/** How many of that healing item the kit carries. */
+export function healsOf(kit: KitSim, item: number): number {
+  return item === HEAL_BANDAGE ? kit.bandages : item === HEAL_MEDKIT ? kit.medkits : 0;
+}
+
+function setHeals(kit: KitSim, item: number, n: number) {
+  if (item === HEAL_BANDAGE) kit.bandages = n;
+  else if (item === HEAL_MEDKIT) kit.medkits = n;
+}
+
+/** A heal is in progress. */
+export const healing = (kit: KitSim) => kit.heal !== NO_HEAL;
+
+/** How far the heal in progress is, 0..1 (0 with none). */
+export function healProgress(kit: KitSim): number {
+  const def = HEAL_ITEMS[kit.heal];
+  if (!def) return 0;
+  return 1 - kit.healTicks / ticks(def.duration);
+}
+
+/**
+ * Whether a heal with `item` may start now (the step's own checks on its
+ * copy: the rest, like the trigger and the phase, is the step's).
+ */
+export function canStartHeal(s: PlayerSim, item: number): boolean {
+  return isHealItem(item) && !healing(s.kit) && healsOf(s.kit, item) > 0 && s.hp < MAX_HP;
+}
+
+/** Starts a heal with `item`, in place (check canStartHeal first). */
+export function startHeal(s: PlayerSim, item: number) {
+  s.kit.heal = item;
+  s.kit.healTicks = ticks(HEAL_ITEMS[item].duration);
+  s.kit.healStop = 0;
+}
+
+/**
+ * One step of the heal in progress, in place: the countdown, and the heal
+ * once it runs out (the item used up, `amount` HP up to MAX_HP). Returns the
+ * HP it gave (0 while still running, or with none).
+ */
+export function tickHeal(s: PlayerSim): number {
+  if (!healing(s.kit)) return 0;
+  s.kit.healTicks = Math.max(0, s.kit.healTicks - 1);
+  if (s.kit.healTicks > 0) return 0;
+  const item = s.kit.heal;
+  const before = s.hp;
+  s.hp = Math.min(MAX_HP, s.hp + HEAL_ITEMS[item].amount);
+  setHeals(s.kit, item, Math.max(0, healsOf(s.kit, item) - 1));
+  s.kit.heal = NO_HEAL;
+  s.kit.healStop = HEAL_STOP.done;
+  return s.hp - before;
+}
+
+/** Cancels the heal in progress, in place (on anything shaped like a kit, the schema too): nothing healed, the item kept. */
+export function cancelHeal(kit: KitSim, why: number): boolean {
+  if (kit.heal === NO_HEAL) return false;
+  kit.heal = NO_HEAL;
+  kit.healTicks = 0;
+  kit.healStop = why;
+  return true;
+}
+
+/** The most of a floor stack's kind one player carries (healing items, shield charges; 0 for the others). */
+export function stackMax(kind: number, item: number): number {
+  if (kind === ITEM_HEAL) return HEAL_ITEMS[item]?.stack ?? 0;
+  if (kind === ITEM_SHIELD) return ROYALE.shieldStack;
+  return 0;
+}
+
+/**
+ * Walking over a stack of `amount` (healing items, shield charges) with
+ * `have` of them: taken up to `max`, the rest stays on the floor. `taken` 0:
+ * nothing happens (already at the maximum).
+ */
+export function takeStack(have: number, max: number, amount: number): { have: number; left: number; taken: number } {
+  const taken = Math.max(0, Math.min(max - have, amount));
+  return { have: have + taken, left: amount - taken, taken };
+}
+
+/** What a kit carries of a stack kind (ITEM_HEAL with its item, ITEM_SHIELD). */
+export function carriedStack(kit: KitSim, kind: number, item: number): number {
+  return kind === ITEM_HEAL ? healsOf(kit, item) : kind === ITEM_SHIELD ? kit.shields : 0;
+}
+
+/** Sets what a kit carries of a stack kind, in place. */
+export function setCarriedStack(kit: KitSim, kind: number, item: number, n: number) {
+  if (kind === ITEM_HEAL) setHeals(kit, item, n);
+  else if (kind === ITEM_SHIELD) kit.shields = n;
+}
+
+/** The healing items and shield charges a kit carries, as floor stacks (what a knock-out drops). */
+export function carriedStacks(kit: KitSim): ItemDrop[] {
+  const out: ItemDrop[] = [];
+  if (kit.bandages > 0) out.push({ kind: ITEM_HEAL, item: HEAL_BANDAGE, amount: kit.bandages });
+  if (kit.medkits > 0) out.push({ kind: ITEM_HEAL, item: HEAL_MEDKIT, amount: kit.medkits });
+  if (kit.shields > 0) out.push({ kind: ITEM_SHIELD, item: 0, amount: kit.shields });
+  return out;
+}
+
 // --- The zone --------------------------------------------------------------------------
 
 /** A circle on the ground. */
@@ -301,13 +467,15 @@ export interface ItemDrop {
   amount: number;
 }
 
-/** The floor item a loot line gives (a gun with a full magazine, a stack). */
+/** The floor item a loot line gives (a gun with a full magazine, a stack of grenades, healing items or shield charges). */
 export function lootItem(e: LootEntry): ItemDrop {
   if (e.kind === "gun") {
     const id = WEAPONS.findIndex((w) => w.key === e.key);
     return { kind: ITEM_GUN, item: id, amount: WEAPONS[id].magazine };
   }
-  return { kind: ITEM_GRENADE, item: GRENADES.findIndex((g) => g.key === e.key), amount: e.amount };
+  if (e.kind === "grenade") return { kind: ITEM_GRENADE, item: GRENADES.findIndex((g) => g.key === e.key), amount: e.amount };
+  if (e.kind === "heal") return { kind: ITEM_HEAL, item: HEAL_ITEMS.findIndex((h) => h.key === e.key), amount: e.amount };
+  return { kind: ITEM_SHIELD, item: 0, amount: e.amount };
 }
 
 /** A crate's drop: the LOOT line `r` (in [0, 1), e.g. Math.random()) lands on, by weight. */

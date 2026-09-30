@@ -77,6 +77,18 @@ export interface RoyaleHud {
   slots: { weapon: number; name: string; ammo: number; magazine: number; hand: boolean; reloading: boolean }[];
   /** Grenades left of the type in hand (`me.grenade`). */
   grenades: number;
+  /** Healing items (HEAL_ITEMS order: keys 4 and 5) and shield charges carried. Predicted. */
+  heals: { key: string; name: string; count: number; max: number }[];
+  shields: number;
+  /** The heal in progress: its HEAL_ITEMS index (-1: none). Its progress is `sim.kit`'s, written per frame. */
+  healing: number;
+  /**
+   * Why the last heal stopped, while it is fresh (a few seconds): "" when
+   * there is nothing to say, else the line to show ("Healed +25", "Heal
+   * cancelled: the zone hurts"). `stopKind` is its HEAL_STOP key.
+   */
+  healNote: string;
+  stopKind: string;
 }
 
 export interface HudModel {

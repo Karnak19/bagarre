@@ -1,12 +1,12 @@
 import { schema, t, type SchemaType } from "@colyseus/schema";
-import { DEFAULT_GRENADE, DEFAULT_MAP_ID, DEFAULT_WEAPON, MAX_HP, NO_GUN, NO_TEAM, WEAPONS } from "@bagarre/shared";
+import { DEFAULT_GRENADE, DEFAULT_MAP_ID, DEFAULT_WEAPON, MAX_HP, NO_GUN, NO_HEAL, NO_TEAM, WEAPONS } from "@bagarre/shared";
 
 /**
  * What a player carries in the battle royale (KitSim in @bagarre/shared):
  * three gun slots with their magazines, the slot in hand, the grenade
- * count, and the switch / swap press counters. A child of Player, so the
- * royale's items (healing and shield charges next, #34) never push Player
- * near the 63-field cap. Part of the prediction's state like the rest of
+ * count, the healing items and shield charges, the heal in progress, and the
+ * switch / swap / use press counters. A child of Player, so the royale's
+ * items never push Player near the 63-field cap. Part of the prediction's state like the rest of
  * PlayerSim, hence synced in full. Unused (empty) in the other modes.
  */
 export const Kit = schema(
@@ -21,6 +21,14 @@ export const Kit = schema(
     grenades: t.uint8().default(0),
     switchSeen: t.uint32().default(0),
     swapSeen: t.uint32().default(0),
+    // Healing items and shield charges (#34), and the heal in progress.
+    bandages: t.uint8().default(0),
+    medkits: t.uint8().default(0),
+    shields: t.uint8().default(0),
+    heal: t.uint8().default(NO_HEAL),
+    healTicks: t.uint16().default(0),
+    healStop: t.uint8().default(0),
+    useSeen: t.uint32().default(0),
   },
   "Kit",
 );
@@ -157,7 +165,7 @@ export const FloorItem = schema(
   {
     x: t.float32().default(0),
     z: t.float32().default(0),
-    /** ITEM_KINDS index, then which one (WEAPONS / GRENADES index), then how many (magazine, stack). */
+    /** ITEM_KINDS index, then which one (WEAPONS / GRENADES / HEAL_ITEMS index, 0 for shield charges), then how many (magazine, stack). */
     kind: t.uint8().default(0),
     item: t.uint8().default(0),
     amount: t.uint8().default(0),

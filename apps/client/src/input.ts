@@ -21,7 +21,9 @@ function isEditable(e: Event) {
  * mouse wheel cycles through the guns carried (`onCycle`, which the match
  * turns into a slot from its predicted kit), and F asks for a swap with the
  * gun on the floor. A slot choice is an input like a shot: `slot` plus the
- * `switch` press counter, checked by the shared step on both sides.
+ * `switch` press counter, checked by the shared step on both sides. 4 and 5
+ * use a healing item (the bandage, the medkit: `heal` plus the `use`
+ * counter), checked the same way. None of them is ever a loadout pick there.
  */
 export class Input {
   private keys = new Set<string>();
@@ -34,9 +36,11 @@ export class Input {
    * Running press totals, sent in every input (see InputMessage). Bumped on
    * key-down only, so auto-repeat while holding the key doesn't count.
    */
-  readonly presses = { dash: 0, grenade: 0, shield: 0, reload: 0, switch: 0, swap: 0 };
+  readonly presses = { dash: 0, grenade: 0, shield: 0, reload: 0, switch: 0, swap: 0, use: 0 };
   /** The gun slot asked for by the latest switch (InputMessage.slot, 0-2). */
   slot = 0;
+  /** The healing item asked for by the latest 4 or 5 (InputMessage.heal, a HEAL_ITEMS index). */
+  heal = 0;
   /** Battle royale: 1-3 are gun slots, the wheel cycles them, F swaps. */
   slotMode = false;
   /** Called with 1 (down) or -1 (up) when the wheel turns in slot mode. */
@@ -73,7 +77,9 @@ export class Input {
       else if (e.code === "KeyM") this.onMute();
       else if (this.slotMode && /^Digit[1-3]$/.test(e.code)) this.selectSlot(Number(e.code.slice(5)) - 1);
       else if (this.slotMode && e.code === "KeyF") this.presses.swap++;
-      // The other number keys do nothing in slot mode (4 and 5 are the royale's items next, #34).
+      // 4 and 5 use a healing item, right after the gun slots.
+      else if (this.slotMode && (e.code === "Digit4" || e.code === "Digit5")) this.useHeal(e.code === "Digit4" ? 0 : 1);
+      // The other number keys do nothing in slot mode.
       else if (weapon !== null && !this.slotMode) this.onPick(weapon);
       else if (e.code === "KeyG") this.onGrenadeCycle();
     });
@@ -109,6 +115,12 @@ export class Input {
   selectSlot(slot: number) {
     this.slot = slot;
     this.presses.switch++;
+  }
+
+  /** Asks for a heal with `item` (a HEAL_ITEMS index): sent with the next input, started by the step if it can. */
+  useHeal(item: number) {
+    this.heal = item;
+    this.presses.use++;
   }
 
   private down(...codes: string[]) {

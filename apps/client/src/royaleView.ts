@@ -1,14 +1,15 @@
 // The battle royale's things in the 3D scene: the zone's edge on the ground
 // with a light tint outside it, the crates still standing, and the items on
 // the floor (a gun lying on a gold disc, grenades on a disc in their type's
-// colour). GameScene owns one and match.ts feeds it every frame from the
+// colour, healing items as a small box on a green disc, shield charges as a
+// blue orb). GameScene owns one and match.ts feeds it every frame from the
 // latest snapshot; outside a royale it is simply empty.
 //
 // The zone's circle comes from the shared `zoneAt` on the synced numbers, at
 // the server tick the client is at right now, so the edge drawn is the one
 // the server hurts players with.
 
-import { ITEM_GUN, type CrateView, type FloorItemView } from "@bagarre/shared";
+import { HEAL_MEDKIT, ITEM_GRENADE, ITEM_GUN, ITEM_HEAL, ITEM_SHIELD, type CrateView, type FloorItemView } from "@bagarre/shared";
 import * as THREE from "three";
 import { grenadeView } from "./items.ts";
 
@@ -59,6 +60,12 @@ export class RoyaleView {
   private readonly crateGeo = new THREE.BoxGeometry(CRATE_SIZE, CRATE_SIZE, CRATE_SIZE);
   private readonly crateMat = new THREE.MeshStandardMaterial({ color: 0x9a6b3c, roughness: 0.9 });
   private readonly ballGeo = new THREE.SphereGeometry(0.16, 12, 10);
+  // Healing items and shield charges: plain shapes, no model.
+  private readonly bandageGeo = new THREE.BoxGeometry(0.34, 0.1, 0.22);
+  private readonly medkitGeo = new THREE.BoxGeometry(0.42, 0.26, 0.3);
+  private readonly bandageMat = new THREE.MeshStandardMaterial({ color: 0xf1e9dc, roughness: 0.8 });
+  private readonly medkitMat = new THREE.MeshStandardMaterial({ color: 0xd8342c, roughness: 0.6 });
+  private readonly shieldMat = new THREE.MeshStandardMaterial({ color: 0x7fc8ff, emissive: 0x2a6fb0, roughness: 0.3 });
 
   constructor(
     private readonly crateModel: THREE.Object3D | null,
@@ -155,7 +162,9 @@ export class RoyaleView {
   private makeItem(it: FloorItemView): THREE.Group {
     const g = new THREE.Group();
     const gun = it.kind === ITEM_GUN;
-    const disc = new THREE.Mesh(this.discGeo, this.discMat(gun ? 0xffd24a : grenadeView(it.item).telegraph));
+    const color =
+      it.kind === ITEM_GRENADE ? grenadeView(it.item).telegraph : it.kind === ITEM_HEAL ? 0x6dff9a : it.kind === ITEM_SHIELD ? 0x7fc8ff : 0xffd24a;
+    const disc = new THREE.Mesh(this.discGeo, this.discMat(color));
     disc.rotation.x = -Math.PI / 2;
     disc.position.y = 0.03;
     g.add(disc);
@@ -163,6 +172,14 @@ export class RoyaleView {
     if (gun) {
       const t = this.gunModels[it.item];
       body = t ? fitted(t, GUN_LENGTH) : new THREE.Mesh(new THREE.BoxGeometry(GUN_LENGTH, 0.15, 0.2), this.crateMat);
+    } else if (it.kind === ITEM_HEAL) {
+      const medkit = it.item === HEAL_MEDKIT;
+      body = new THREE.Mesh(medkit ? this.medkitGeo : this.bandageGeo, medkit ? this.medkitMat : this.bandageMat);
+      body.position.y = medkit ? 0.13 : 0.05;
+      body.castShadow = true;
+    } else if (it.kind === ITEM_SHIELD) {
+      body = new THREE.Mesh(this.ballGeo, this.shieldMat);
+      body.position.y = 0.2;
     } else {
       body = this.grenadeModel ? fitted(this.grenadeModel, 0.35) : new THREE.Mesh(this.ballGeo, this.discMat(grenadeView(it.item).telegraph));
     }

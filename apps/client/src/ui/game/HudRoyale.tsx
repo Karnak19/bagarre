@@ -1,7 +1,9 @@
 // The battle royale's own HUD pieces, mounted by Hud.tsx when the HUD model
 // has `royale`: the panel at the top right (players still in, the zone's
-// timer), the arrow back to the zone while we stand outside it, and the three
-// gun slots in place of the single weapon box.
+// timer), the arrow back to the zone while we stand outside it, the three
+// gun slots in place of the single weapon box, the healing items (keys 4
+// and 5) next to them, and the heal's progress, or how it ended, over the
+// ability bar (above all when the zone's damage cancelled it).
 //
 // Like the rest of the HUD, nothing renders per frame: the panel re-renders
 // when the count or the timer's seconds change, the slots on a switch, a shot
@@ -10,7 +12,7 @@
 
 import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { Text } from "@astryxdesign/core/Text";
-import { ticks, weaponDef } from "@bagarre/shared";
+import { HEAL_ITEMS, healProgress, ticks, weaponDef } from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
 import { useRef } from "react";
 import { countRender } from "../../renders.ts";
@@ -52,6 +54,24 @@ const styles = stylex.create({
   slotAmmo: { fontSize: "18px", fontWeight: 700 },
   reload: { height: "4px", marginBlockStart: "3px", borderRadius: "2px", overflow: "hidden", backgroundColor: "rgba(255, 255, 255, 0.12)" },
   reloadFill: { height: "100%", width: 0, backgroundColor: "var(--bagarre-gold)" },
+  heal: { minWidth: "74px", paddingInline: "10px", textAlign: "center" },
+  healNone: { opacity: 0.4 },
+  healOn: { boxShadow: "inset 0 0 0 2px #6dff9a" },
+  healFill: { height: "100%", width: 0, backgroundColor: "#6dff9a" },
+  healStatus: {
+    position: "absolute",
+    bottom: "118px",
+    left: "50%",
+    transform: "translateX(-50%)",
+    minWidth: "200px",
+    textAlign: "center",
+    fontSize: "13px",
+    fontWeight: 600,
+  },
+  healing: { color: "#6dff9a", boxShadow: "inset 0 0 0 1px rgba(109, 255, 154, 0.6)" },
+  healDone: { color: "#6dff9a" },
+  healCancel: { color: "#ffb4a6", boxShadow: "inset 0 0 0 1px var(--color-border-red)" },
+  healZone: { color: "#ffffff", backgroundColor: "rgba(120, 24, 16, 0.8)", boxShadow: "inset 0 0 0 1px var(--color-border-red)" },
 });
 
 /** Players still in and the zone's timer, at the top right. */
@@ -152,5 +172,72 @@ export function GunSlots() {
         </VStack>
       ))}
     </HStack>
+  );
+}
+
+/** The healing items (4 the bandage, 5 the medkit), each with its count; the one in use outlined. */
+export function HealItems() {
+  countRender("hud.heals");
+  const { hud } = useEngine();
+  const r = useSelector(hud, (m) => (m?.royale ? { heals: m.royale.heals, healing: m.royale.healing } : null), jsonEqual);
+  if (!r) return null;
+  return (
+    <HStack gap={2} align="stretch" data-testid="hud-heals">
+      {r.heals.map((h, i) => (
+        <VStack
+          key={h.key}
+          xstyle={[styles.panel, styles.heal, h.count === 0 && styles.healNone, r.healing === i && styles.healOn]}
+          data-testid={`hud-heal-${h.key}`}
+          data-count={h.count}
+          data-active={r.healing === i ? "" : undefined}
+        >
+          <Text xstyle={styles.key}>{i + 4}</Text>
+          <Text xstyle={styles.slotName}>{h.name}</Text>
+          <Text xstyle={[styles.slotAmmo, shared.tabular]}>
+            {h.count}
+            <Text as="span" color="inherit" xstyle={styles.key}>
+              {" "}
+              / {h.max}
+            </Text>
+          </Text>
+        </VStack>
+      ))}
+    </HStack>
+  );
+}
+
+/**
+ * Over the ability bar: the heal in progress (the item, "slowed", a bar that
+ * fills, written per frame), or for a few seconds after, how it ended. A heal
+ * cancelled by the zone gets the zone's red, so it is clear why it stopped.
+ */
+export function HealStatus() {
+  countRender("hud.healStatus");
+  const { hud } = useEngine();
+  const r = useSelector(hud, (m) => (m?.royale ? { healing: m.royale.healing, note: m.royale.healNote, kind: m.royale.stopKind } : null), jsonEqual);
+  const bar = useRef<HTMLElement>(null);
+  useStoreEffect(hud, (m) => {
+    const kit = m?.sim?.kit;
+    const width = `${kit ? healProgress(kit) * 100 : 0}%`;
+    if (bar.current && bar.current.style.width !== width) bar.current.style.width = width;
+  });
+  if (!r) return null;
+  if (r.healing >= 0) {
+    const def = HEAL_ITEMS[r.healing];
+    return (
+      <VStack xstyle={[styles.panel, styles.healStatus, styles.healing]} role="status" data-testid="hud-heal-status" data-state="healing">
+        <Text color="inherit">✚ {def?.name ?? "Healing"} · slowed, don't shoot</Text>
+        <VStack xstyle={styles.reload}>
+          <VStack ref={bar} xstyle={styles.healFill} />
+        </VStack>
+      </VStack>
+    );
+  }
+  if (!r.note) return null;
+  const look = r.kind === "done" ? styles.healDone : r.kind === "zone" ? styles.healZone : styles.healCancel;
+  return (
+    <VStack xstyle={[styles.panel, styles.healStatus, look]} role="status" data-testid="hud-heal-status" data-state={r.kind}>
+      <Text color="inherit">{r.note}</Text>
+    </VStack>
   );
 }
