@@ -18,13 +18,18 @@
 //   POST /countdown { roomId, seconds }    the same for that room's pre-match countdowns
 //   POST /respawn { roomId, seconds }      the same for that room's respawn delays (every
 //                                          dead player respawns `seconds` from now)
+//   POST /loot { roomId, weapon }          battle royale: that room's crates drop this gun
+//                                          (a WEAPONS index) instead of a random item
+//   POST /zone { roomId, wait, close }     battle royale: the running match's zone starts
+//                                          shrinking `wait` seconds from now and is closed
+//                                          `close` seconds from now
 //
 // Run by playwright.config.ts (webServer), or by hand: `bun server.ts`.
 
 import { createServer as createHttpServer } from "node:http";
 import { matchMaker } from "@colyseus/core";
 import { createServer } from "@bagarre/server/app";
-import { MAX_HP, TICK_RATE } from "@bagarre/shared";
+import { ITEM_GUN, MAX_HP, TICK_RATE, WEAPONS, type ItemDrop } from "@bagarre/shared";
 
 /**
  * Every match starts with a 1 s warmup instead of WARMUP_SECONDS (8 s): most
@@ -45,6 +50,13 @@ export const E2E_RULES = {
   ffa: { countdown: 2, respawnDelay: 0.5, warmup: E2E_WARMUP },
   /** A team deathmatch starts 2 s after it is 2v2. */
   tdm: { countdown: 2, respawnDelay: 0.5, warmup: E2E_WARMUP },
+  /**
+   * A battle royale starts 2 s after the second player is in; its zone waits
+   * 60 s and closes at 90 s (30 s and 4:30 in the game): long enough for a
+   * spec's steps, short enough to watch it close (POST /zone moves it on).
+   * The result stays 10 s, like the duel's.
+   */
+  royale: { countdown: 2, warmup: E2E_WARMUP, endDelay: 10, royale: { zoneWait: 60, zoneClose: 90 } },
 };
 
 const port = Number(process.env.PORT ?? 2610);
@@ -55,6 +67,7 @@ const server = createServer({
   duelRules: E2E_RULES.duel,
   ffaRules: E2E_RULES.ffa,
   teamRules: E2E_RULES.tdm,
+  royaleRules: E2E_RULES.royale,
   database: "memory",
   // The e2e client (playwright.config.ts), where reset links would land.
   auth: { publicUrl: "http://localhost:5610", backendUrl: `http://localhost:${port}`, discord: null, mail: null },
@@ -198,6 +211,41 @@ function setSmoke(body: string, reply: (status: number, text: string) => void) {
   reply(200, JSON.stringify(left));
 }
 
+/**
+ * POST /loot { roomId, weapon }: from now on that room's crates drop this gun
+ * (with a full magazine) instead of a random line of the loot table, so a
+ * spec knows what it will pick up. Only the room's Floor changes (its draw).
+ */
+function setLoot(body: string, reply: (status: number, text: string) => void) {
+  const { roomId, weapon } = JSON.parse(body || "{}") as { roomId?: string; weapon?: number };
+  const room = roomId ? (matchMaker.getLocalRoomById(roomId) as unknown as { floor?: { force: ItemDrop | null } } | undefined) : undefined;
+  if (!room) return reply(404, `no room ${roomId}`);
+  if (!room.floor || !("force" in room.floor)) return reply(500, "GameRoom.floor.force is gone: update apps/e2e/server.ts");
+  if (typeof weapon !== "number" || !WEAPONS[weapon]) return reply(400, `bad weapon ${weapon}`);
+  room.floor.force = { kind: ITEM_GUN, item: weapon, amount: WEAPONS[weapon].magazine };
+  reply(200, "ok");
+}
+
+/**
+ * POST /zone { roomId, wait, close }: the running royale match's zone starts
+ * shrinking `wait` seconds from now and is closed `close` seconds from now
+ * (its circles unchanged), so a spec sees it close without waiting for it.
+ */
+function setZone(body: string, reply: (status: number, text: string) => void) {
+  const { roomId, wait, close } = JSON.parse(body || "{}") as { roomId?: string; wait?: number; close?: number };
+  const room = roomId
+    ? (matchMaker.getLocalRoomById(roomId) as unknown as { state: { tick: number; zone?: { start: number; end: number } } } | undefined)
+    : undefined;
+  if (!room) return reply(404, `no room ${roomId}`);
+  const zone = room.state.zone;
+  if (!zone) return reply(500, "GameRoom state.zone is gone: update apps/e2e/server.ts");
+  if (zone.end <= 0) return reply(409, "no zone running");
+  if (typeof wait !== "number" || typeof close !== "number" || wait < 0 || close <= wait) return reply(400, `bad wait ${wait} / close ${close}`);
+  zone.start = room.state.tick + Math.round(wait * TICK_RATE);
+  zone.end = room.state.tick + Math.round(close * TICK_RATE);
+  reply(200, "ok");
+}
+
 /** The test-only control API. */
 createHttpServer((req, res) => {
   let body = "";
@@ -210,6 +258,8 @@ createHttpServer((req, res) => {
     if (req.method === "POST" && req.url === "/hp") return setHp(body, reply);
     if (req.method === "POST" && req.url === "/countdown") return setCountdown(body, reply);
     if (req.method === "POST" && req.url === "/respawn") return setRespawn(body, reply);
+    if (req.method === "POST" && req.url === "/loot") return setLoot(body, reply);
+    if (req.method === "POST" && req.url === "/zone") return setZone(body, reply);
     if (req.method !== "POST" || req.url !== "/kill") return reply(404, "not found");
     const { roomId, killer, victim } = JSON.parse(body || "{}") as { roomId?: string; killer?: string; victim?: string };
     const room = roomId ? (matchMaker.getLocalRoomById(roomId) as unknown as RoomInternals | undefined) : undefined;

@@ -19,6 +19,8 @@ import { GL, SERVER_PORT } from "../playwright.config.ts";
 /** Every game page pins the map, so a run is the same every time. FFA pins its own. */
 export const DUEL_MAP = "yard";
 export const FFA_MAP = "crossroads";
+/** The battle royale's test map (the one with crate spots). */
+export const ROYALE_MAP = "bastion";
 /**
  * Frames drawn per second (`?fps=`, dev only): nothing here looks at pixels,
  * and a dozen pages drawing at 60 fps starve the machine (the GPU locally,
@@ -64,6 +66,14 @@ export interface PlayerState {
   drawnWeapon: number | null;
   /** The spectator view while watching: who is followed and the camera mode. */
   spectator: { followId: string; mode: string } | null;
+  /** Battle royale: we are out and watch the rest of the match from our seat. */
+  knockedOut: boolean;
+  /** Battle royale: crates still standing, items on the floor, and the zone's end tick (0: none). */
+  crates: { id: string; x: number; z: number }[];
+  items: { id: string; x: number; z: number; kind: number; item: number; amount: number }[];
+  zoneEnd: number;
+  /** Our gun in hand as the prediction has it (a switch shows here first). */
+  predictedWeapon: number | null;
   players: {
     id: string;
     name: string;
@@ -94,6 +104,14 @@ export interface PlayerState {
     /** Rounds in the magazine and ticks of reload left (as the server last synced them). */
     ammo: number;
     reloadTicks: number;
+    /** Battle royale: the slot in hand (0-2), the three slots' guns (255 empty) and magazines, grenades left, and the knock-out tick (0: in). */
+    hand: number;
+    guns: number[];
+    mags: number[];
+    grenades: number;
+    outTick: number;
+    /** Final place once the match ended (0 before). */
+    place: number;
   }[];
 }
 
@@ -166,8 +184,18 @@ export class Player {
           flashTicks: Number(p.flashTicks),
           ammo: Number(p.ammo),
           reloadTicks: Number(p.reloadTicks),
+          hand: Number((p.kit as Record<string, number>)?.hand ?? 0),
+          guns: [0, 1, 2].map((i) => Number((p.kit as Record<string, number>)?.[`gun${i}`] ?? 255)),
+          mags: [0, 1, 2].map((i) => Number((p.kit as Record<string, number>)?.[`mag${i}`] ?? 0)),
+          grenades: Number((p.kit as Record<string, number>)?.grenades ?? 0),
+          outTick: Number(p.outTick ?? 0),
+          place: Number(p.place ?? 0),
         }),
       );
+      const crates: PlayerState["crates"] = [];
+      latest?.crates?.forEach((c: { x: number; z: number }, id: string) => crates.push({ id, x: c.x, z: c.z }));
+      const items: PlayerState["items"] = [];
+      latest?.items?.forEach((it: { x: number; z: number; kind: number; item: number; amount: number }, id: string) => items.push({ id, ...it }));
       players.sort((a, c) => a.slot - c.slot);
       return {
         screen: s.screen,
@@ -194,6 +222,11 @@ export class Player {
         inputEnabled: b.input.enabled,
         drawnWeapon: m?.meshes?.get(m.net.sessionId)?.character?.weapon ?? null,
         spectator: b.spectator ? { followId: b.spectator.followId, mode: b.spectator.mode } : null,
+        knockedOut: !!m?.knockedOut,
+        crates,
+        items,
+        zoneEnd: latest?.zone?.end ?? 0,
+        predictedWeapon: m?.predictor?.sim ? m.predictor.weaponOf() : null,
         players,
       };
     });
@@ -398,6 +431,18 @@ export async function place(roomId: string, id: string, x: number, z: number) {
   expect(res.status, await res.text()).toBe(200);
 }
 
+/** Battle royale: from now on that room's crates drop this gun (server.ts' /loot). */
+export async function setLoot(roomId: string, weapon: number) {
+  const res = await fetch(`http://localhost:${SERVER_PORT + 1}/loot`, { method: "POST", body: JSON.stringify({ roomId, weapon }) });
+  expect(res.status, await res.text()).toBe(200);
+}
+
+/** Battle royale: the running zone starts shrinking `wait` s from now and is closed `close` s from now (server.ts' /zone). */
+export async function setZone(roomId: string, wait: number, close: number) {
+  const res = await fetch(`http://localhost:${SERVER_PORT + 1}/zone`, { method: "POST", body: JSON.stringify({ roomId, wait, close }) });
+  expect(res.status, await res.text()).toBe(200);
+}
+
 /** Asks the e2e server to set a living player's HP (server.ts' /hp): no kill, feed line or damage stat. */
 export async function setHp(roomId: string, id: string, hp: number) {
   const res = await fetch(`http://localhost:${SERVER_PORT + 1}/hp`, {
@@ -464,10 +509,10 @@ export class Players {
   }
 
   /** The host opens a private game of that mode from the menu; resolves with its invite link. */
-  async host(mode: "duel" | "ffa" | "tdm" = "duel", name = "A"): Promise<{ host: Player; invite: string; code: string }> {
+  async host(mode: "duel" | "ffa" | "tdm" | "royale" = "duel", name = "A"): Promise<{ host: Player; invite: string; code: string }> {
     const host = await this.open(name);
-    await host.goto("/", mode === "duel" ? DUEL_MAP : FFA_MAP);
-    await host.testId(mode === "ffa" ? "private-ffa" : mode === "tdm" ? "private-tdm" : "private-game").click();
+    await host.goto("/", mode === "duel" ? DUEL_MAP : mode === "royale" ? ROYALE_MAP : FFA_MAP);
+    await host.testId(mode === "duel" ? "private-game" : `private-${mode}`).click();
     await expect(host.page).toHaveURL(/\/game\/[A-Za-z0-9_-]+/);
     await expect(host.testId("waiting-card")).toBeVisible();
     const invite = await host.testId("invite-link").inputValue();
@@ -506,6 +551,15 @@ export class Players {
     const { host, invite, code } = await this.host("tdm", "A");
     const players = [host];
     for (let i = 1; i < n; i++) players.push(await this.join(invite, String.fromCharCode(65 + i), FFA_MAP));
+    for (const p of players) await expect.poll(async () => (await p.state()).players.length).toBe(n);
+    return { players, code, invite };
+  }
+
+  /** A private battle royale by link with `n` players (on Bastion); resolves once they are all in the room. */
+  async royale(n: number): Promise<{ players: Player[]; code: string; invite: string }> {
+    const { host, invite, code } = await this.host("royale", "A");
+    const players = [host];
+    for (let i = 1; i < n; i++) players.push(await this.join(invite, String.fromCharCode(65 + i), ROYALE_MAP));
     for (const p of players) await expect.poll(async () => (await p.state()).players.length).toBe(n);
     return { players, code, invite };
   }
