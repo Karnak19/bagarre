@@ -3,6 +3,7 @@
 
 import { Grid } from "@astryxdesign/core/Grid";
 import { Heading } from "@astryxdesign/core/Heading";
+import { Kbd } from "@astryxdesign/core/Kbd";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { List, ListItem } from "@astryxdesign/core/List";
 import { Text } from "@astryxdesign/core/Text";
@@ -26,11 +27,12 @@ import {
 import * as stylex from "@stylexjs/stylex";
 import type { ReactNode } from "react";
 import { GRENADE_VIEW, GUN_VIEW } from "../../items.ts";
-import { k } from "../kbd.tsx";
 import { shared } from "../styles.ts";
 
 /** Every grenade type in a line: "<Name>: <what it does> (<cooldown> s)." (GRENADE_VIEW's blurbs). */
 const GRENADE_TYPES = GRENADES.map((g) => `${g.name}: ${GRENADE_VIEW[g.key].blurb} (${g.cooldown} s).`).join(" ");
+
+const k = (keys: string) => <Kbd keys={keys} />;
 
 const CONTROLS: [ReactNode, string][] = [
   [<>{k("W")}{k("A")}{k("S")}{k("D")} or arrows</>, "Move, relative to the screen"],

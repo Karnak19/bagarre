@@ -1000,7 +1000,7 @@ export class Match {
     // or a step, never between two.
     const target =
       s.phase === "playing" && me?.alive && sim && freeGunSlot(sim.kit) === -1 ? swapTarget(sim.kit, sim.x, sim.z, s.items, this.net.sessionId) : null;
-    const swap = target && sim ? { id: target.id, from: gunInHand(sim.kit), to: target.item.item } : null;
+    const swap = target && sim ? { from: gunInHand(sim.kit), to: target.item.item } : null;
     return {
       alive,
       players: s.players.size,

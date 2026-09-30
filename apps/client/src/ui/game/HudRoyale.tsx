@@ -11,6 +11,7 @@
 // or a pickup, and the arrow's angle is written to the DOM from a store
 // subscription.
 
+import { Kbd } from "@astryxdesign/core/Kbd";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { Text } from "@astryxdesign/core/Text";
 import { HEAL_ITEMS, healProgress, ticks, weaponDef } from "@bagarre/shared";
@@ -19,7 +20,6 @@ import { useRef } from "react";
 import { countRender } from "../../renders.ts";
 import type { RoyaleHud } from "../../hud.ts";
 import { jsonEqual, useEngine, useSelector, useStoreEffect } from "../hooks.ts";
-import { k } from "../kbd.tsx";
 import { shared } from "../styles.ts";
 
 const styles = stylex.create({
@@ -269,7 +269,7 @@ export function HealStatus() {
 /**
  * While F would swap guns: the key, the gun in hand and the one on the floor
  * it takes ("F  Swap Pistol → Rifle"), from the HUD model's `swap` (the same
- * pick as the server's, swapTarget). Re-renders only when that pick changes.
+ * pick as the server's, swapTarget). Re-renders only when the guns change.
  * Always mounted, faded in and out (opacity only); it keeps the last names
  * while it fades out. `data-state` "on" / "off" for the tests.
  */
@@ -295,7 +295,7 @@ export function SwapPrompt() {
       data-to={swap ? weaponDef(swap.to).key : undefined}
       aria-hidden={!swap}
     >
-      {k("F")}
+      <Kbd keys="F" />
       <Text as="span" color="inherit">
         Swap{" "}
         <Text as="span" color="inherit" xstyle={styles.swapFrom}>
