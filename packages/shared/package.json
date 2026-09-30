@@ -9,11 +9,12 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p scripts",
-    "lint": "oxlint src scripts",
+    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p scripts && tsc --noEmit -p bench",
+    "lint": "oxlint src scripts bench",
     "maps:validate": "bun scripts/validate.ts",
     "maps:preview": "bun scripts/preview.ts",
-    "check": "bun scripts/modes.check.ts && bun scripts/skins.check.ts && bun scripts/grenades.check.ts && bun scripts/items.check.ts && bun scripts/royale.check.ts && bun scripts/heal.check.ts && bun scripts/royale-maps.check.ts"
+    "check": "bun scripts/modes.check.ts && bun scripts/skins.check.ts && bun scripts/grenades.check.ts && bun scripts/items.check.ts && bun scripts/royale.check.ts && bun scripts/heal.check.ts && bun scripts/royale-maps.check.ts",
+    "bench": "bun bench/physics.bench.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
