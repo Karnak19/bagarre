@@ -247,6 +247,8 @@ export function createEngine(config: BootConfig & { nav: Navigator }): Engine {
         get music() {
           return musicDebug();
         },
+        /** Walk: jump the camera over (x, z) at game scale. */
+        walkLookAt: (x: number, z: number) => walker?.lookAt(x, z),
         /** The walk around a map (`/maps/$id`), while on (null otherwise). */
         get walk() {
           const s = walkUi.getState();

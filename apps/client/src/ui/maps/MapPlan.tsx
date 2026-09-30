@@ -1,5 +1,5 @@
 // A map seen from above, as a small SVG for the Maps page: the floor, the
-// FFA zones (tinted), the cover (darker the taller it is), the spawns and
+// FFA and royale zones (tinted), the cover (darker the taller it is), the spawns and
 // the landmarks. It is turned 45° like the in-game minimap (the same
 // `planProjector`), so the top of the drawing is the top of the screen when
 // you play. Pure data to shapes, computed once per map.
@@ -7,7 +7,7 @@
 import type { MapDef } from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
 import { memo } from "react";
-import { hex, isFfa, planProjector } from "../../minimap.ts";
+import { hex, isFfa, isRoyale, planProjector } from "../../minimap.ts";
 import { TEAM_PAINT } from "../../paint.ts";
 import { PLAYER_CSS_COLORS } from "../../scene.ts";
 
@@ -42,12 +42,14 @@ function plan(map: MapDef) {
     [toPx(x0, z0), toPx(x1, z0), toPx(x1, z1), toPx(x0, z1)].map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
   const floor = quad(-map.halfX, -map.halfZ, map.halfX, map.halfZ);
   const ffa = isFfa(map) ? map : null;
+  // Named zones and landmarks: the FFA maps and the battle royale maps.
+  const zoned = ffa ?? (isRoyale(map) ? map : null);
 
   // Zones: where they overlap the first one wins, so draw them in reverse.
   const zones: Shape[] = [];
-  if (ffa)
-    for (let i = ffa.zones.length - 1; i >= 0; i--) {
-      const z = ffa.zones[i];
+  if (zoned)
+    for (let i = zoned.zones.length - 1; i >= 0; i--) {
+      const z = zoned.zones[i];
       zones.push({
         points: quad(Math.max(z.x0, -map.halfX), Math.max(z.z0, -map.halfZ), Math.min(z.x1, map.halfX), Math.min(z.z1, map.halfZ)),
         fill: hex(z.tint),
@@ -66,7 +68,7 @@ function plan(map: MapDef) {
   const paint = new Map<number, string>();
   if (ffa?.teams)
     ffa.teams.forEach((side, t) => side.spawns.forEach((i) => paint.set(i, PLAYER_CSS_COLORS[TEAM_PAINT[t]])));
-  else if (!ffa) {
+  else if (!zoned) {
     paint.set(0, PLAYER_CSS_COLORS[0]);
     paint.set(1, PLAYER_CSS_COLORS[1]);
   }
@@ -76,7 +78,7 @@ function plan(map: MapDef) {
     return { x, y, fill: fill ?? "rgba(255, 255, 255, 0.55)", r: fill ? 3 : 2.2 };
   });
 
-  const landmarks = (ffa?.landmarks ?? []).map((l) => {
+  const landmarks = (zoned?.landmarks ?? []).map((l) => {
     const [x, y] = toPx(l.x, l.z);
     return { x, y, name: l.name };
   });

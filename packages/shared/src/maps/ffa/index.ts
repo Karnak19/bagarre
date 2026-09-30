@@ -78,9 +78,6 @@ export type TeamMapDef = FfaMapDef & { teams: readonly [FfaTeamSide, FfaTeamSide
 
 export const FFA_MAPS: readonly FfaMapDef[] = [CROSSROADS, FREIGHT, BASTION];
 
-/** The battle royale pool: the FFA maps with crate spots and zone limits (`royale`). */
-export const ROYALE_MAPS: readonly FfaMapDef[] = FFA_MAPS.filter((m) => !!m.royale);
-
 /** The team deathmatch pool: the FFA maps with team sides. */
 export const TEAM_MAPS: readonly TeamMapDef[] = FFA_MAPS.filter((m): m is TeamMapDef => !!m.teams);
 

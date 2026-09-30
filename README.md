@@ -507,7 +507,8 @@ shield charges, the zone, the loot draw) in `packages/shared/src/royale.ts`.
 `bun run check` in `packages/shared` runs their self-checks
 (`scripts/royale.check.ts`: the ranking, the zone over time, the stacks, the
 slots, the loot, the maps' crate spots; `scripts/heal.check.ts`: the heals,
-what cancels them, the stacks and the shield charges).
+what cancels them, the stacks and the shield charges; `scripts/royale-maps.check.ts`:
+the royale map's layout, see [docs/royale-maps.md](docs/royale-maps.md)).
 
 - **Start**: a 15 s countdown once 2 are in (more can join during it), then
   a 5 s pre-match (the warmup) with nothing to pick: everyone has the
@@ -515,8 +516,10 @@ what cancels them, the stacks and the shield charges).
   picker and can't be picked in the other modes) and no grenades. Nobody can
   join once it started (the room locks itself, `closedToJoins`); watching
   still works.
-- **Crates**: the map lists crate spots (`MapDef.royale.crates`, only
-  Bastion so far). A crate stands on each at the start; walking into one
+- **The map**: Ironvale, a 90 x 90 m mining town in the snow, the only map
+  in the royale pool (`ROYALE_MAPS`, [docs/royale-maps.md](docs/royale-maps.md)).
+- **Crates**: the map lists crate spots (`MapDef.royale.crates`, 23 on
+  Ironvale). A crate stands on each at the start; walking into one
   breaks it and drops one item drawn from `LOOT` by weight: a gun with a
   full magazine, a stack of grenades, bandages (common), a medkit (rare) or
   a shield charge.

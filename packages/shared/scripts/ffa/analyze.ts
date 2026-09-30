@@ -5,7 +5,7 @@
 
 import { PLAYER_SPEED, WEAPONS } from "../../src/constants.ts";
 import { ffaRespawnPoint, ffaStartSpawns, type FfaMapDef } from "../../src/maps/ffa/index.ts";
-import { FLAT_DECOR, type Obstacle } from "../../src/maps/types.ts";
+import { FLAT_DECOR, type MapDef, type Obstacle } from "../../src/maps/types.ts";
 import {
   along,
   bodiesSee,
@@ -146,7 +146,7 @@ export interface FfaSight {
 }
 
 /** Seen-within-range share for every sample on a `step` grid, plus the longest lines. */
-export function ffaSight(m: FfaMapDef, step = 1): FfaSight {
+export function ffaSight(m: MapDef, step = 1): FfaSight {
   const pts: Pt[] = [];
   for (let z = -m.halfZ + step / 2; z < m.halfZ; z += step)
     for (let x = -m.halfX + step / 2; x < m.halfX; x += step) if (standable(m, x, z)) pts.push({ x, z });

@@ -38,7 +38,8 @@ import {
   WARMUP_SECONDS,
   ZONE,
 } from "./constants.ts";
-import { FFA_MAPS, ROYALE_MAPS, TEAM_MAPS } from "./maps/ffa/index.ts";
+import { FFA_MAPS, TEAM_MAPS } from "./maps/ffa/index.ts";
+import { ROYALE_MAPS } from "./maps/royale/index.ts";
 import { MAPS, type MapDef } from "./maps/index.ts";
 
 export type GameMode = "duel" | "ffa" | "tdm" | "royale";

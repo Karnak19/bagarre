@@ -24,8 +24,26 @@ import type { Box } from "../arena.ts";
  * - `wall`: `BrickWall_2` tiled along the long side, like the outer walls.
  * - `barrels`: `ExplodingBarrel`s packed on the footprint (decorative, they do
  *   not explode). Small squarish cover, about 1-2 m a side.
+ *
+ * Added with Ironvale (the client falls back to the older prop in brackets
+ * when props.glb has no such node):
+ *
+ * - `dumpster`: one `TrashContainer` stretched to the footprint. About
+ *   2.4 x 1.3 m, 1.35 m tall; up to 2 m only as a compact block. [container]
+ * - `rock`: snowy boulders (`Rock_Snow_4`, `_6`, `_7`) on a ~1.6 m grid, the
+ *   shape of each picked from its position, so a long box is a row of rocks,
+ *   not one stretched rock. About 1.1-1.4 m tall. [crate]
+ * - `wagon`: one `Container_Long` (a long shipping container, the rail
+ *   wagons) stretched to the footprint. Tall (1.8 m) like `container`, so
+ *   only as a compact block. [container]
+ * - `trench`: the full-size `SackTrench` tiled along the long side. Long thin
+ *   cover like `sandbags`, a little bulkier. [sandbags]
+ * - `gastank`: upright `GasTank`s (1 m a side) packed on the footprint, like
+ *   `barrels`. [barrels]
+ * - `tank`: one `WaterTank_Floor` (a tank lying on the ground) stretched to
+ *   the footprint, long side along the box's. Keep it 1.3-1.4 m tall. [container]
  */
-export type ObstacleKind = "crate" | "barrier" | "sandbags" | "container" | "wall" | "barrels";
+export type ObstacleKind = "crate" | "barrier" | "sandbags" | "container" | "wall" | "barrels" | "dumpster" | "rock" | "wagon" | "trench" | "gastank" | "tank";
 
 export interface Obstacle extends Box {
   kind: ObstacleKind;
@@ -41,7 +59,13 @@ export const FLAT_DECOR = [
   "Pallet_Broken",
   "WoodPlanks",
 ] as const;
-/** Tall props: only outside the walls, where a player can't stand behind them. */
+/**
+ * Tall props: only outside the walls, where a player can't stand behind them.
+ * The trees (Ultimate Nature Pack, about 2.2-3.6 m tall at scale 1, placed at
+ * scale 2) are tall enough to hide the floor from the iso camera when they
+ * stand just outside the +x or +z wall: keep them on the -x / -z sides, or far
+ * out (scripts/royale-maps.check.ts measures it).
+ */
 export const TALL_DECOR = [
   "TrafficCone",
   "Debris_Tires",
@@ -49,6 +73,16 @@ export const TALL_DECOR = [
   "CardboardBoxes_1",
   "CardboardBoxes_2",
   "CardboardBoxes_4",
+  "PineTree_Snow_1",
+  "PineTree_Snow_2",
+  "PineTree_Snow_3",
+  "PineTree_Snow_4",
+  "PineTree_Snow_5",
+  "CommonTree_Dead_Snow_1",
+  "CommonTree_Dead_Snow_2",
+  "CommonTree_Dead_Snow_3",
+  "CommonTree_Dead_Snow_4",
+  "CommonTree_Dead_Snow_5",
 ] as const;
 export type DecorProp = (typeof FLAT_DECOR)[number] | (typeof TALL_DECOR)[number];
 
@@ -96,14 +130,14 @@ export interface Spawn {
 }
 
 /**
- * What a map needs to host a battle royale (optional, additive: only the
- * maps that have it are in the royale pool, ROYALE_MAPS).
+ * What a map needs to host a battle royale. Optional on a MapDef, required on
+ * a RoyaleMapDef (maps/royale/): only the maps in ROYALE_MAPS carry it.
  */
 export interface RoyaleMapData {
   /**
    * Where a crate stands at the start of every match: open floor, never on
-   * or next to a spawn (the royale check keeps them 3 m from every spawn and
-   * clear of cover).
+   * or next to a spawn (scripts/royale.check.ts keeps them 3 m from every
+   * spawn and clear of cover).
    */
   crates: readonly Spawn[];
   /** The rectangle the zone's final centre is drawn in (`pickZone`), world metres. */

@@ -1,5 +1,5 @@
 // The Maps page (`/maps`): every map, duel maps first, then the free for all
-// maps, each on a card with its plan (MapPlan.tsx), its size, the modes it
+// maps, then the battle royale maps, each on a card with its plan (MapPlan.tsx), its size, the modes it
 // is played in, the weapons it favours and a "Walk around" button that opens
 // `/maps/<id>` (WalkScreen.tsx). It scrolls over the menu's attract scene.
 
@@ -8,10 +8,10 @@ import { Heading } from "@astryxdesign/core/Heading";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { Text } from "@astryxdesign/core/Text";
 import { Token } from "@astryxdesign/core/Token";
-import { FFA_MAPS, MAPS, type MapDef, type WeaponTag } from "@bagarre/shared";
+import { FFA_MAPS, MAPS, ROYALE_MAPS, type MapDef, type WeaponTag } from "@bagarre/shared";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import * as stylex from "@stylexjs/stylex";
-import { isFfa } from "../../minimap.ts";
+import { isFfa, isRoyale } from "../../minimap.ts";
 import { useEngine, useSelector } from "../hooks.ts";
 import { shared } from "../styles.ts";
 import { MapPlan } from "./MapPlan.tsx";
@@ -88,8 +88,9 @@ function Maps() {
             Maps
           </Heading>
           <Text color="secondary" xstyle={styles.intro}>
-            {MAPS.length} maps for duels, {FFA_MAPS.length} bigger ones for the free for all and team deathmatch. Walk
-            around any of them before you play: no game, no opponent, just the map.
+            {MAPS.length} maps for duels, {FFA_MAPS.length} bigger ones for the free for all and team deathmatch, and
+            bigger still for the battle royale. Walk around any of them before you play: no game, no
+            opponent, just the map.
           </Text>
         </VStack>
 
@@ -110,6 +111,15 @@ function Maps() {
             <MapCard key={m.id} map={m} />
           ))}
         </VStack>
+
+        <Heading level={2} xstyle={styles.section}>
+          Battle royale
+        </Heading>
+        <VStack as="ul" xstyle={styles.grid} aria-label="Battle royale maps">
+          {ROYALE_MAPS.map((m) => (
+            <MapCard key={m.id} map={m} />
+          ))}
+        </VStack>
       </VStack>
     </VStack>
   );
@@ -118,6 +128,8 @@ function Maps() {
 function MapCard({ map }: { map: MapDef }) {
   const navigate = useNavigate();
   const ffa = isFfa(map) ? map : null;
+  const royale = isRoyale(map) ? map : null;
+  const players = ffa?.players ?? royale?.players;
   return (
     <VStack as="li" xstyle={[shared.hudPanel, styles.card]} data-testid={`map-card-${map.id}`} aria-label={map.name}>
       <MapPlan map={map} />
@@ -131,15 +143,19 @@ function MapCard({ map }: { map: MapDef }) {
             Size{" "}
           </Text>
           {map.halfX * 2} × {map.halfZ * 2} m
-          {ffa && (
+          {players && (
             <>
               {" · "}
-              {ffa.players.min} to {ffa.players.max} players
+              {players.min} to {players.max} players
             </>
           )}
         </Text>
         <HStack gap={1} wrap="wrap" aria-label="Modes">
-          <Token label={ffa ? "Free for all" : "Duel"} size="sm" color={ffa ? "blue" : "orange"} />
+          {royale ? (
+            <Token label="Royale" size="sm" color="purple" data-testid={`map-royale-${map.id}`} />
+          ) : (
+            <Token label={ffa ? "Free for all" : "Duel"} size="sm" color={ffa ? "blue" : "orange"} />
+          )}
           {ffa?.teams && <Token label="Teams" size="sm" color="red" data-testid={`map-teams-${map.id}`} />}
         </HStack>
         <HStack gap={1} wrap="wrap" align="center" aria-label="Favoured weapons">

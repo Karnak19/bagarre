@@ -10,7 +10,7 @@
 // canvas; each frame only copies it and draws the few dots, and at most
 // every other frame.
 
-import { SMOKE, type FfaMapDef, type MapDef } from "@bagarre/shared";
+import { SMOKE, type FfaMapDef, type MapDef, type RoyaleMapDef } from "@bagarre/shared";
 import { PLAYER_CSS_COLORS } from "./scene.ts";
 
 /** How long a shot stays on the minimap, fading out. */
@@ -30,6 +30,7 @@ export interface MinimapPing {
 }
 
 export const isFfa = (m: MapDef | null): m is FfaMapDef => !!m && (m as Partial<FfaMapDef>).mode === "ffa";
+export const isRoyale = (m: MapDef | null): m is RoyaleMapDef => !!m && (m as Partial<RoyaleMapDef>).mode === "royale";
 
 export const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
 

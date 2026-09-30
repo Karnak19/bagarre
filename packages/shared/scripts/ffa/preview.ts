@@ -4,42 +4,45 @@
 // camera angle, and a sheet with all the maps. SVG first, then `sips` (macOS).
 //
 // Usage (from packages/shared): bun scripts/ffa/preview.ts [outDir] [mapId...]
+// The iso view and the colours are exported for scripts/royale.preview.ts.
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { FFA_MAPS, type FfaMapDef } from "../../src/maps/ffa/index.ts";
-import { FLAT_DECOR, type ObstacleKind } from "../../src/maps/types.ts";
+import { FFA_MAPS, type FfaLandmark, type FfaMapDef, type FfaZone } from "../../src/maps/ffa/index.ts";
+import { FLAT_DECOR, type MapDef, type ObstacleKind } from "../../src/maps/types.ts";
 import { R } from "../analyze.ts";
 import { checkFfa, MAX_CAMP, type FfaReport } from "./analyze.ts";
 
 /** Git-ignored folder at the repo root. */
 const DEFAULT_OUT = join(fileURLToPath(new URL(".", import.meta.url)), "../../../..", ".previews", "ffa-maps");
-const args = process.argv.slice(2);
-const out = args[0] && !FFA_MAPS.some((m) => m.id === args[0]) ? args.shift()! : DEFAULT_OUT;
-const only = args;
-mkdirSync(out, { recursive: true });
 
-const KIND_COLOR: Record<ObstacleKind, string> = {
+export const KIND_COLOR: Record<ObstacleKind, string> = {
   crate: "#b9823f",
   barrier: "#a7a9a3",
   sandbags: "#cdb57a",
   container: "#4f7fb3",
   wall: "#a2503c",
   barrels: "#c8453a",
+  dumpster: "#4e8a5a",
+  rock: "#8d96a3",
+  wagon: "#3d6a9a",
+  trench: "#b8a067",
+  gastank: "#d8cfb8",
+  tank: "#9fb3c2",
 };
-const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+export const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
+export const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
 const pct = (n: number) => `${(n * 100).toFixed(0)}%`;
 
-function shade(color: string, k: number): string {
+export function shade(color: string, k: number): string {
   const n = parseInt(color.slice(1), 16);
   const c = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => Math.max(0, Math.min(255, Math.round(v * k))));
   return `#${c.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 }
 
-function toPng(svgPath: string) {
+export function toPng(svgPath: string) {
   const png = svgPath.replace(/\.svg$/, ".png");
   execFileSync("sips", ["-s", "format", "png", svgPath, "--out", png], { stdio: "ignore" });
   return png;
@@ -157,7 +160,10 @@ interface Solid {
   label?: string;
 }
 
-function iso(m: FfaMapDef, S = 13): string {
+/** Any map with named zones and landmarks (FFA, royale). */
+export type ZonedMap = MapDef & { zones: readonly FfaZone[]; landmarks: readonly FfaLandmark[] };
+
+export function iso(m: ZonedMap, S = 13): string {
   const P = (x: number, y: number, z: number): [number, number] => [((x - z) / Math.SQRT2) * S, ((x + z - 2 * y) / Math.sqrt(6)) * S];
   const T = m.theme;
   const th = 0.6;
@@ -261,19 +267,25 @@ function sheet(maps: readonly FfaMapDef[], reports: FfaReport[]): string {
   return o.join("\n");
 }
 
-const maps = only.length ? FFA_MAPS.filter((m) => only.includes(m.id)) : FFA_MAPS;
-const reports: FfaReport[] = [];
-for (const m of maps) {
-  const r = checkFfa(m);
-  reports.push(r);
-  for (const [suffix, svg] of [["top", topDown(m, r)], ["iso", iso(m)]] as const) {
-    const p = join(out, `${m.id}-${suffix}.svg`);
-    writeFileSync(p, svg);
+if (import.meta.main) {
+  const args = process.argv.slice(2);
+  const out = args[0] && !FFA_MAPS.some((m) => m.id === args[0]) ? args.shift()! : DEFAULT_OUT;
+  const only = args;
+  mkdirSync(out, { recursive: true });
+  const maps = only.length ? FFA_MAPS.filter((m) => only.includes(m.id)) : FFA_MAPS;
+  const reports: FfaReport[] = [];
+  for (const m of maps) {
+    const r = checkFfa(m);
+    reports.push(r);
+    for (const [suffix, svg] of [["top", topDown(m, r)], ["iso", iso(m)]] as const) {
+      const p = join(out, `${m.id}-${suffix}.svg`);
+      writeFileSync(p, svg);
+      console.log(toPng(p));
+    }
+  }
+  if (!only.length) {
+    const p = join(out, `all-ffa-maps.svg`);
+    writeFileSync(p, sheet(maps, reports));
     console.log(toPng(p));
   }
-}
-if (!only.length) {
-  const p = join(out, `all-ffa-maps.svg`);
-  writeFileSync(p, sheet(maps, reports));
-  console.log(toPng(p));
 }

@@ -195,37 +195,4 @@ export const BASTION: FfaMapDef = {
     sunDir: { x: 8, y: 30, z: 6 },
   },
   favours: ["rifle", "shotgun", "sniper"],
-  // Battle royale (the test bed until the royale's own map): crates in the
-  // Keep, round the Ring and in every Field, and the zone closing somewhere
-  // round the Rampart.
-  royale: {
-    crates: [
-      // Keep.
-      { x: 2, z: 3.5 },
-      { x: -5, z: -2 },
-      // Ring.
-      { x: -11, z: -7 },
-      { x: 9, z: 0.5 },
-      { x: -2, z: 10 },
-      { x: 4, z: -10 },
-      { x: -10, z: 7 },
-      // Trenches.
-      { x: -4, z: -20 },
-      { x: 10, z: -22 },
-      { x: -24, z: -18 },
-      // Checkpoint.
-      { x: 26, z: 0 },
-      { x: 17, z: -6 },
-      { x: 21, z: -16 },
-      // Fuel Depot.
-      { x: -6, z: 22 },
-      { x: 12, z: 26 },
-      { x: 24, z: 12 },
-      // Supply Dump.
-      { x: -24, z: 6.5 },
-      { x: -17, z: 10 },
-      { x: -24, z: 17 },
-    ],
-    zone: { x0: -10, z0: -10, x1: 10, z1: 10 },
-  },
 };

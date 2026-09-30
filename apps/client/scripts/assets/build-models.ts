@@ -6,7 +6,8 @@
 //                     mesh + skeleton, no clips
 //   guns/<name>.glb   one per weapon in GUN_VIEW, from the Ultimate Guns FBX
 //                     (converted by convert-guns.py in headless Blender)
-//   props.glb         optional, from the Toon Shooter Game Kit (--props)
+//   props.glb         optional, from the Toon Shooter Game Kit (--props) and
+//                     the Ultimate Nature Pack (--nature)
 //
 // The gltf-transform packages are not dependencies of the repo, so run it from
 // a scratch directory (NODE_PATH, because Bun resolves imports from the
@@ -15,25 +16,31 @@
 //   mkdir /tmp/models && cd /tmp/models
 //   bun add @gltf-transform/core @gltf-transform/functions @gltf-transform/extensions meshoptimizer
 //   NODE_PATH=$PWD/node_modules bun <repo>/apps/client/scripts/assets/build-models.ts \
-//     <chars glTF dir> <guns FBX dir> <repo>/apps/client/public/models [--props <kit glTF dir>]
+//     <chars glTF dir> <guns FBX dir> <repo>/apps/client/public/models \
+//     [--props <kit glTF dir> --nature <nature OBJ dir>]
 //
 // <chars glTF dir> is the glTF folder of the Ultimate Animated Character Pack
 // (Soldier_Male.gltf, ...), <guns FBX dir> the FBX folder of the Ultimate Guns
 // pack. The gun step spawns Blender (BLENDER env var, default the macOS app
 // path) to run convert-guns.py into ./guns-raw of the current directory, which
 // also gets guns.json (grip and muzzle of each gun, the numbers in GUN_VIEW).
-// Pass "-" as <guns FBX dir> to skip the guns.
+// Pass "-" as <guns FBX dir> to skip the guns, and "-" as <chars glTF dir> to
+// skip anims.glb and the skins (to rebuild props.glb alone).
 //
 // With --props, <kit glTF dir> holds env/ (Environment/glTF) and guns/
 // (Guns/glTF) of the Toon Shooter Game Kit, and props.glb is rebuilt: every
-// prop as a named top-level node, plus the grenade.
+// prop as a named top-level node, plus the grenade. --nature (required with
+// --props) is the OBJ folder of the Ultimate Nature Pack: convert-nature.py
+// (headless Blender, like the guns) turns the snowy rocks and trees into glTF
+// in ./nature-raw of the current directory (base on the ground, snow
+// recoloured), and they join props.glb as named nodes too.
 //
 // Every file goes through prune, dedup, resample (clips only) and meshopt
 // compression (decoded by MeshoptDecoder in GLTFLoader). Quantization keeps
 // the glTF coordinates: it moves the scale into a node transform.
 import { NodeIO, Document, type Animation } from "@gltf-transform/core";
 import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
-import { prune, dedup, meshopt, mergeDocuments, resample } from "@gltf-transform/functions";
+import { prune, dedup, meshopt, mergeDocuments, resample, weld } from "@gltf-transform/functions";
 import { MeshoptEncoder } from "meshoptimizer";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -41,9 +48,12 @@ import { resolve } from "node:path";
 const args = process.argv.slice(2);
 const propsAt = args.indexOf("--props");
 const PROPS_SRC = propsAt >= 0 ? args.splice(propsAt, 2)[1] : undefined;
+const natureAt = args.indexOf("--nature");
+const NATURE_SRC = natureAt >= 0 ? args.splice(natureAt, 2)[1] : undefined;
+if (PROPS_SRC && !NATURE_SRC) throw new Error("--props needs --nature <nature OBJ dir> too (props.glb holds the rocks and trees)");
 const [CHARS, GUNS, OUT] = args;
 if (!CHARS || !GUNS || !OUT) {
-  throw new Error("usage: bun build-models.ts <chars glTF dir> <guns FBX dir | -> <out dir> [--props <kit glTF dir>]");
+  throw new Error("usage: bun build-models.ts <chars glTF dir> <guns FBX dir | -> <out dir> [--props <kit glTF dir> --nature <nature OBJ dir>]");
 }
 await MeshoptEncoder.ready;
 const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies({ "meshopt.encoder": MeshoptEncoder });
@@ -121,7 +131,7 @@ mkdirSync(`${OUT}/guns`, { recursive: true });
 // anims.glb: the rig's bones and the kept clips. The mesh and the skin go
 // (nothing to draw), and keepLeaves holds the end bones (Head, Fist.R...) that
 // no longer hang under a skin.
-{
+if (CHARS !== "-") {
   const doc = await io.read(`${CHARS}/${ANIMS_FROM}.gltf`);
   for (const a of doc.getRoot().listAnimations()) if (!KEEP_ANIM.has(a.getName())) dropAnimation(a);
   for (const node of doc.getRoot().listNodes()) {
@@ -135,7 +145,7 @@ mkdirSync(`${OUT}/guns`, { recursive: true });
 }
 
 // skins/<id>.glb: mesh and skeleton, no clips.
-for (const [name, id] of Object.entries(SKINS)) {
+for (const [name, id] of CHARS === "-" ? [] : Object.entries(SKINS)) {
   const doc = await io.read(`${CHARS}/${name}.gltf`);
   for (const a of doc.getRoot().listAnimations()) dropAnimation(a);
   for (const node of doc.getRoot().listNodes()) if (node.getMesh()) node.setName(MESH_NODE);
@@ -157,6 +167,16 @@ if (GUNS !== "-") {
   }
 }
 
+// The Toon Shooter kit's props added for Ironvale: dumpster, long container,
+// full-size sandbags, gas tank, water tank.
+const NEW_KIT_PROPS = ["TrashContainer", "Container_Long", "SackTrench", "GasTank", "WaterTank_Floor"];
+// From the Ultimate Nature Pack: snowy rocks (cover) and trees (decor outside the walls).
+const NATURE_PROPS = [
+  "Rock_Snow_4", "Rock_Snow_6", "Rock_Snow_7",
+  "PineTree_Snow_1", "PineTree_Snow_2", "PineTree_Snow_3", "PineTree_Snow_4", "PineTree_Snow_5",
+  "CommonTree_Dead_Snow_1", "CommonTree_Dead_Snow_2", "CommonTree_Dead_Snow_3", "CommonTree_Dead_Snow_4", "CommonTree_Dead_Snow_5",
+];
+
 // props.glb (optional): one file with every prop as a named top-level node.
 if (PROPS_SRC) {
   const PROPS = ["Crate", "SackTrench_Small", "Barrier_Single", "Container_Small", "BrickWall_2", "TrafficCone", "Pallet", "Pallet_Broken",
@@ -165,8 +185,15 @@ if (PROPS_SRC) {
   props.createBuffer();
   const main = props.createScene("props");
   props.getRoot().setDefaultScene(main);
-  const addDoc = async (path: string, name: string) => {
+  const addDoc = async (path: string, name: string, flatShaded = false) => {
     const src = await io.read(path);
+    if (flatShaded) {
+      // The nature models are flat-shaded, one normal per face: storing them
+      // splits every vertex three ways. Drop the normals and weld; the client
+      // recomputes one normal per face (arenaView.ts, flat()). A third of the size.
+      for (const m of src.getRoot().listMeshes()) for (const prim of m.listPrimitives()) prim.setAttribute("NORMAL", null);
+      await src.transform(weld());
+    }
     const map = mergeDocuments(props, src);
     for (const s of src.getRoot().listScenes()) {
       const scene = map.get(s) as any;
@@ -178,6 +205,14 @@ if (PROPS_SRC) {
   };
   for (const p of PROPS) await addDoc(`${PROPS_SRC}/env/${p}.gltf`, p);
   await addDoc(`${PROPS_SRC}/guns/Grenade.gltf`, "Grenade");
+  // Added for Ironvale (after the originals, which keep their order and data).
+  for (const p of NEW_KIT_PROPS) await addDoc(`${PROPS_SRC}/env/${p}.gltf`, p);
+  const natureRaw = resolve("nature-raw");
+  const blender = process.env.BLENDER ?? "/Applications/Blender.app/Contents/MacOS/Blender";
+  const script = resolve(import.meta.dir, "convert-nature.py");
+  const proc = Bun.spawnSync([blender, "-b", "-P", script, "--", NATURE_SRC!, natureRaw, ...NATURE_PROPS], { stdout: "ignore", stderr: "inherit" });
+  if (proc.exitCode !== 0) throw new Error(`convert-nature.py failed (exit ${proc.exitCode})`);
+  for (const p of NATURE_PROPS) await addDoc(`${natureRaw}/${p}.glb`, p, true);
   // Collapse to one buffer.
   const bufs = props.getRoot().listBuffers();
   for (const b of bufs.slice(1)) {
