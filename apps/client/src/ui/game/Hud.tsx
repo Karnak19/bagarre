@@ -39,7 +39,7 @@ import { paintOf } from "../../paint.ts";
 import { shallowEqual, useEngine, useSelector, useStoreEffect } from "../hooks.ts";
 import { shared, slotFill } from "../styles.ts";
 import { FfaPanel, KillFeed, MinimapBox } from "./HudFfa.tsx";
-import { GunSlots, HealItems, HealStatus, RoyalePanel, ZoneArrow } from "./HudRoyale.tsx";
+import { GunSlots, HealItems, HealStatus, RoyalePanel, SwapPrompt, ZoneArrow } from "./HudRoyale.tsx";
 import { TeamPanel } from "./HudTeam.tsx";
 import { PICKABLE_WEAPONS, WEAPON_KEYS, grenadeView } from "../../items.ts";
 import { GrenadePicker, WeaponPicker } from "./WeaponPicker.tsx";
@@ -186,6 +186,7 @@ export function Hud() {
         <Sound />
       </HStack>
       <Stunned />
+      {royale && <SwapPrompt />}
       {royale && <HealStatus />}
       <Watchers />
       <Debug />

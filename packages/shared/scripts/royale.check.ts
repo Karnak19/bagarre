@@ -5,11 +5,11 @@
 // Run with `bun run check` (in packages/shared). Exits non-zero on a failure.
 
 import { playerCan, spawnSim, stepPlayer } from "../src/combat.ts";
-import { GRENADES, GRENADE_FRAG, GRENADE_SMOKE, LOOT, PISTOL, PLAYER_RADIUS, ROYALE, TICK_RATE, WEAPONS, ZONE, ticks } from "../src/constants.ts";
+import { GRENADES, GRENADE_FRAG, GRENADE_SMOKE, ITEM_GRENADE, ITEM_GUN, LOOT, PISTOL, PLAYER_RADIUS, ROYALE, TICK_RATE, WEAPONS, ZONE, ticks } from "../src/constants.ts";
 import { ROYALE_MAPS } from "../src/maps/index.ts";
 import { lotOf, rankRoyale, ROYALE_RULES, type RoyaleStanding } from "../src/modes.ts";
 import { circleOverlapsBox } from "../src/physics.ts";
-import type { InputMessage, PlayerSim, ZoneView } from "../src/protocol.ts";
+import type { FloorItemView, InputMessage, PlayerSim, ZoneView } from "../src/protocol.ts";
 import {
   NO_GUN,
   carriedGuns,
@@ -23,6 +23,7 @@ import {
   rollLoot,
   startKit,
   swapGun,
+  swapTarget,
   takeGrenades,
   takeGun,
   useGrenade,
@@ -191,6 +192,25 @@ check(!!sw && gunInHand(sw.sim.kit) === SNIPER && sw.sim.ammo === 3 && sw.droppe
 check(sw.sim.fireCd >= delay && carriedGuns(sw.sim).length === 3, "the swapped-in gun waits the switch delay too; still 3 guns");
 check(swapGun(held, SMG, 30) === null, "F on a gun already carried does nothing");
 check(takeGun(sw.sim, DMR, 8) === null, "still full after a swap");
+
+// Which floor gun F takes (swapTarget): the server's F and the HUD's prompt both ask it.
+const gunItem = (item: number, x: number, blockedFor = ""): FloorItemView => ({ x, z: 0, kind: ITEM_GUN, item, amount: WEAPONS[item].magazine, blockedFor });
+const floor = (...its: [string, FloorItemView][]) => new Map(its);
+const reach = ROYALE.pickupRadius;
+const tgt = (items: Map<string, FloorItemView>, kit = held.kit, pid = "me") => swapTarget(kit, 0, 0, items, pid)?.id ?? null;
+check(tgt(floor(["a", gunItem(SNIPER, 0.5)])) === "a", "swapTarget: a gun in reach, not carried");
+check(tgt(floor(["a", gunItem(SNIPER, reach)])) === "a" && tgt(floor(["a", gunItem(SNIPER, reach + 0.01)])) === null, "swapTarget: the pickup radius is the reach, edge included");
+check(tgt(floor(["far", gunItem(SNIPER, 0.8)], ["near", gunItem(DMR, 0.3)])) === "near", "swapTarget: the nearest gun wins, whatever the order");
+check(tgt(floor(["a", gunItem(SNIPER, 0.5)], ["b", gunItem(DMR, -0.5)])) === "a", "swapTarget: a tie goes to the first one met");
+check(tgt(floor(["g", { x: 0.1, z: 0, kind: ITEM_GRENADE, item: GRENADE_FRAG, amount: 2, blockedFor: "" }], ["a", gunItem(SNIPER, 0.6)])) === "a", "swapTarget: only guns count");
+check(tgt(floor(["mine", gunItem(SNIPER, 0.1, "me")], ["a", gunItem(DMR, 0.6)])) === "a", "swapTarget: a gun blocked for us (dropped under our feet) is skipped");
+check(tgt(floor(["theirs", gunItem(SNIPER, 0.1, "other")])) === "theirs", "swapTarget: blocked for someone else doesn't matter");
+check(tgt(floor(["mine", gunItem(SNIPER, 0.1, "me")])) === null, "swapTarget: right after a swap, the gun we dropped isn't offered back");
+check(tgt(floor(["carried", gunItem(SMG, 0.2)], ["a", gunItem(SNIPER, 0.6)])) === null, "swapTarget: the nearest gun already carried: F does nothing (the server never looked further)");
+check(tgt(floor(["a", gunItem(SNIPER, 0.5)]), { ...held.kit, hand: 5 }) === null, "swapTarget: nothing when the hand isn't a gun slot");
+check(tgt(floor()) === null, "swapTarget: nothing on the floor");
+const t0 = swapTarget(held.kit, 0, 0, floor(["a", gunItem(SNIPER, 0.5)]), "me")!;
+check(swapGun(held, t0.item.item, t0.item.amount) !== null, "swapTarget's pick is one swapGun accepts");
 
 // Counted grenades in the step (royale) against the cooldown (the other modes).
 const withTwo = { ...start, kit: { ...start.kit, grenades: 2 } };
