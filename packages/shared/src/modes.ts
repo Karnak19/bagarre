@@ -1,7 +1,8 @@
-// Game modes. One room class on the server (GameRoom) plays all three;
-// everything that differs between a duel, a free-for-all and a team
-// deathmatch is in the mode's rules below, so the room itself has no
-// `if (ffa)` for the numbers.
+// Game modes. One room class on the server (GameRoom) plays all four;
+// everything that differs between a duel, a free-for-all, a team
+// deathmatch and a battle royale is in the mode's rules below, so the room
+// itself has no `if (ffa)` for the numbers. (The royale's own rules, the gun
+// slots, the stacks and the zone, are in royale.ts.)
 
 import {
   FFA_COUNTDOWN,
@@ -18,6 +19,12 @@ import {
   MAX_PLAYERS,
   RESPAWN_DELAY,
   ROOM_NAME,
+  ROYALE_COUNTDOWN,
+  ROYALE_END_DELAY,
+  ROYALE_MAX_PLAYERS,
+  ROYALE_MIN_PLAYERS,
+  ROYALE_ROOM_NAME,
+  ROYALE_WARMUP,
   SUDDEN_DEATH_MAX,
   TEAM_COUNTDOWN,
   TEAM_END_DELAY,
@@ -29,11 +36,23 @@ import {
   TEAM_ROOM_NAME,
   TEAM_TIME_LIMIT,
   WARMUP_SECONDS,
+  ZONE,
 } from "./constants.ts";
-import { FFA_MAPS, TEAM_MAPS } from "./maps/ffa/index.ts";
+import { FFA_MAPS, ROYALE_MAPS, TEAM_MAPS } from "./maps/ffa/index.ts";
 import { MAPS, type MapDef } from "./maps/index.ts";
 
-export type GameMode = "duel" | "ffa" | "tdm";
+export type GameMode = "duel" | "ffa" | "tdm" | "royale";
+
+/**
+ * What makes a battle royale (ModeRules.royale): one life, the gun slots and
+ * counted grenades (royale.ts), crates and items on the floor, and the zone.
+ * The timings are here, not in ZONE, so the tests can shorten them.
+ */
+export interface RoyaleRules {
+  /** Seconds after the match starts before the zone shrinks, and when it is closed. */
+  zoneWait: number;
+  zoneClose: number;
+}
 
 export interface ModeRules {
   mode: GameMode;
@@ -80,6 +99,11 @@ export interface ModeRules {
   dropIn: boolean;
   /** The map pool. A room never plays a map outside it. */
   maps: readonly MapDef[];
+  /**
+   * A battle royale (one life, slots, crates, the zone); null in the other
+   * modes, which then play exactly as before.
+   */
+  royale: RoyaleRules | null;
 }
 
 export const DUEL_RULES: ModeRules = {
@@ -103,6 +127,7 @@ export const DUEL_RULES: ModeRules = {
   endDelay: MATCH_END_DELAY,
   dropIn: false,
   maps: MAPS,
+  royale: null,
 };
 
 export const FFA_RULES: ModeRules = {
@@ -123,6 +148,7 @@ export const FFA_RULES: ModeRules = {
   endDelay: FFA_END_DELAY,
   dropIn: true,
   maps: FFA_MAPS,
+  royale: null,
 };
 
 /**
@@ -148,12 +174,43 @@ export const TEAM_RULES: ModeRules = {
   endDelay: TEAM_END_DELAY,
   dropIn: true,
   maps: TEAM_MAPS,
+  royale: null,
 };
 
-export const MODES: Record<GameMode, ModeRules> = { duel: DUEL_RULES, ffa: FFA_RULES, tdm: TEAM_RULES };
+/**
+ * Battle royale: 2 to 10 players, every one for themselves, one life each.
+ * Everyone starts with the Pistol and no grenades and finds the rest in
+ * crates; the zone closes in and the last one standing wins. No kill target
+ * and no clock (the zone ends it), no joining once it started, no loadout.
+ */
+export const ROYALE_RULES: ModeRules = {
+  mode: "royale",
+  roomName: ROYALE_ROOM_NAME,
+  minPlayers: ROYALE_MIN_PLAYERS,
+  maxPlayers: ROYALE_MAX_PLAYERS,
+  // Only read during warmup (below it, back to waiting). Once the match is
+  // played, what ends a royale is players ALIVE, not connected: the last one
+  // standing wins (GameRoom's checkLastStanding).
+  minToContinue: ROYALE_MIN_PLAYERS,
+  startNeedsAll: false,
+  teams: false,
+  minPerTeam: 0,
+  killsToWin: 0,
+  timeLimit: 0,
+  suddenDeathMax: 0,
+  countdown: ROYALE_COUNTDOWN,
+  warmup: ROYALE_WARMUP,
+  respawnDelay: FFA_RESPAWN_DELAY,
+  endDelay: ROYALE_END_DELAY,
+  dropIn: false,
+  maps: ROYALE_MAPS,
+  royale: { zoneWait: ZONE.wait, zoneClose: ZONE.close },
+};
+
+export const MODES: Record<GameMode, ModeRules> = { duel: DUEL_RULES, ffa: FFA_RULES, tdm: TEAM_RULES, royale: ROYALE_RULES };
 
 export function isGameMode(v: unknown): v is GameMode {
-  return v === "duel" || v === "ffa" || v === "tdm";
+  return v === "duel" || v === "ffa" || v === "tdm" || v === "royale";
 }
 
 /** The rules of a synced `mode` string; an unknown one reads as a duel. */
@@ -177,9 +234,11 @@ export interface Standing {
 /**
  * Why first place won when it was level on kills with second: most damage
  * dealt ("damage"), reached that kill score first ("first"), or the lot
- * ("lot"). "" when it won outright on kills (or was alone).
+ * ("lot"). "" when it won outright on kills (or was alone). In a battle
+ * royale, "kills" too: the last two went out on the same tick and first
+ * place had more kills (see rankRoyale).
  */
-export type TiebreakReason = "" | "damage" | "first" | "lot";
+export type TiebreakReason = "" | "kills" | "damage" | "first" | "lot";
 
 /**
  * FNV-1a (32 bits) of a string: a small, fast hash, the same on the server
@@ -233,9 +292,53 @@ export function rank<T extends Standing>(entries: readonly T[], seed: string): {
   return { order: sorted.map((entry, i) => ({ entry, place: i + 1 })), reason };
 }
 
+/**
+ * A battle royale entry: `outTick` is the server tick the player was
+ * knocked out on (killed, the zone, or left), 0 for one still standing.
+ */
+export interface RoyaleStanding {
+  id: string;
+  outTick: number;
+  kills: number;
+  damage: number;
+}
+
+/**
+ * The final order of a battle royale: the order of knock-outs, never the
+ * kills. Whoever is still standing is 1st; then the last one out is next,
+ * and the first one out is last. Only players knocked out on the same tick
+ * (two in the zone, a frag that gets both) are split by a tiebreak: the most
+ * kills, then the most damage, then the lot (`lotOf` the match id). Every
+ * place is its own, 1 to n. `reason` says why 1st won when it went out on
+ * the same tick as 2nd ("kills", "damage", "lot"), else "".
+ */
+export function rankRoyale<T extends RoyaleStanding>(entries: readonly T[], seed: string): { order: { entry: T; place: number }[]; reason: TiebreakReason } {
+  const lot = new Map(entries.map((e) => [e.id, lotOf(seed, e.id)]));
+  // Still standing counts as the latest possible knock-out.
+  const out = (e: RoyaleStanding) => (e.outTick > 0 ? e.outTick : Number.MAX_SAFE_INTEGER);
+  const sorted = [...entries].sort(
+    (a, b) =>
+      out(b) - out(a) ||
+      b.kills - a.kills ||
+      b.damage - a.damage ||
+      lot.get(a.id)! - lot.get(b.id)! ||
+      (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
+  const [first, second] = sorted;
+  const reason: TiebreakReason =
+    !first || !second || out(first) !== out(second)
+      ? ""
+      : first.kills !== second.kills
+        ? "kills"
+        : first.damage !== second.damage
+          ? "damage"
+          : "lot";
+  return { order: sorted.map((entry, i) => ({ entry, place: i + 1 })), reason };
+}
+
 /** `TiebreakReason` from a synced string (anything unknown reads as "", won outright). */
 export function parseTiebreak(v: unknown): TiebreakReason {
-  return v === "damage" || v === "first" || v === "lot" ? v : "";
+  return v === "kills" || v === "damage" || v === "first" || v === "lot" ? v : "";
 }
 
 /** "1st", "2nd", "3rd", "4th"... */

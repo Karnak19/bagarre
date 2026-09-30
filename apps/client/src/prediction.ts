@@ -1,10 +1,13 @@
 import {
   DEFAULT_MAP_ID,
+  NO_GUN,
+  gunInHand,
   mapById,
   readSim,
   stepPlayer,
   type Can,
   type InputMessage,
+  type KitMode,
   type MapDef,
   type PlayerSim,
   type PlayerView,
@@ -31,6 +34,14 @@ const MAX_PENDING = 120;
  * server agree (the normal case, same function, same inputs) this changes
  * nothing; if they disagree, the server wins and the position difference is
  * faded out visually over a few frames.
+ *
+ * Battle royale (`kit` "slots"): the gun in hand is part of the predicted
+ * state (the kit's hand slot), and a slot switch is an input the shared step
+ * applies, so a switch fires the new gun from the very next predicted input,
+ * with its own magazine, exactly like the server will. What only the server
+ * decides (a pickup, an F swap) comes back in a snapshot's kit, and the
+ * replay of the inputs still in flight runs with it: no shot is ever
+ * predicted with the old gun's stats once the server has the new one.
  */
 export class Predictor {
   /** Predicted state after the latest sent input. */
@@ -41,6 +52,8 @@ export class Predictor {
   weapon = 0;
   /** Grenade type in hand (its cooldown), from the latest snapshot. */
   grenade = 0;
+  /** How the gun and grenade are read (the mode's KitMode), from the latest snapshot. */
+  kit: KitMode = "loadout";
   /**
    * The map we predict on: always the one of the latest snapshot (main.ts
    * calls `setMap` before `reconcile`). Predicting on any other map than the
@@ -89,23 +102,24 @@ export class Predictor {
   apply(input: InputMessage, canAct: Can): StepResult | null {
     if (!this.sim) return null;
     this.prev = { x: this.sim.x, z: this.sim.z };
-    const res = stepPlayer(this.map, this.sim, input, this.weapon, canAct, this.grenade);
+    const res = stepPlayer(this.map, this.sim, input, this.weapon, canAct, this.grenade, this.kit);
     this.sim = res.sim;
     this.pending.push({ input, armed: canAct.armed });
     if (this.pending.length > MAX_PENDING) this.pending.shift();
     return res;
   }
 
-  reconcile(server: PlayerView, canAct: Can) {
+  reconcile(server: PlayerView, canAct: Can, kit: KitMode = "loadout") {
     this.weapon = server.weapon;
     this.grenade = server.grenade;
+    this.kit = kit;
     this.pending = this.pending.filter((p) => p.input.seq > server.lastSeq);
     let s = readSim(server);
     // The snapshot's rule, except at the end of a warmup: an input predicted
     // armed (it reaches the server once the match has started) stays armed.
     for (const p of this.pending) {
       const can = { act: canAct.act, armed: canAct.armed || (canAct.act && p.armed) };
-      s = stepPlayer(this.map, s, p.input, this.weapon, can, this.grenade).sim;
+      s = stepPlayer(this.map, s, p.input, this.weapon, can, this.grenade, this.kit).sim;
     }
 
     if (!this.sim) {
@@ -136,6 +150,16 @@ export class Predictor {
       x: this.prev.x + (cur.x - this.prev.x) * alpha + this.offset.x,
       z: this.prev.z + (cur.z - this.prev.z) * alpha + this.offset.z,
     };
+  }
+
+  /**
+   * The gun in hand as predicted: with slots, the predicted kit's (a switch
+   * shows and fires at once); otherwise the snapshot's weapon.
+   */
+  weaponOf(sim: PlayerSim | null = this.sim): number {
+    if (this.kit !== "slots" || !sim) return this.weapon;
+    const hand = gunInHand(sim.kit);
+    return hand === NO_GUN ? this.weapon : hand;
   }
 
   get pendingCount() {

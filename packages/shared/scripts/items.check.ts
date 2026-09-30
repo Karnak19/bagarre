@@ -28,7 +28,7 @@ function check(cond: boolean, label: string) {
  * remove a line: these numbers are MSG_PICK, `Player.weapon`,
  * `Player.grenade`, `Grenade.kind` and the kill feed.
  */
-const WEAPON_IDS = ["rifle", "shotgun", "sniper", "smg", "revolver", "burst-pistol", "dmr"];
+const WEAPON_IDS = ["rifle", "shotgun", "sniper", "smg", "revolver", "burst-pistol", "dmr", "pistol"];
 const GRENADE_IDS = ["frag", "smoke", "stun", "flash", "heal"];
 
 const weaponKeys = WEAPONS.map((w) => w.key);

@@ -55,7 +55,7 @@ export function OpenGames() {
           {games.map((g) => {
             const map = findMap(g.mapId)?.name ?? "";
             const when = age(g.createdAt);
-            const mode = g.mode === "ffa" ? "Free for all" : g.mode === "tdm" ? "Team deathmatch" : "Duel";
+            const mode = g.mode === "ffa" ? "Free for all" : g.mode === "tdm" ? "Team deathmatch" : g.mode === "royale" ? "Battle royale" : "Duel";
             // Teams: "3v2 (5/8)".
             const seats = g.teams ? `${g.teams[0]}v${g.teams[1]} (${g.players}/${g.maxPlayers})` : `${g.players}/${g.maxPlayers} players`;
             // A free-for-all takes players mid-match; a duel under way is full.

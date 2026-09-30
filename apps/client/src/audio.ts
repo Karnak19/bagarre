@@ -25,6 +25,7 @@ export type SfxName =
   | "revolver"
   | "burst"
   | "dmr"
+  | "pistol"
   | "reload"
   | "empty_click"
   | "dash"
@@ -83,6 +84,8 @@ const DEFS: Record<SfxName, SfxDef> = {
   revolver: { files: variants("sniper", 2), gain: 0.85, voices: 2, rate: 1.3 },
   burst: { files: variants("rifle", 3), gain: 0.6, voices: 4, rate: 1.35 },
   dmr: { files: variants("rifle", 3), gain: 1, voices: 3, rate: 0.8 },
+  // The royale's Pistol: the rifle again, lighter and higher than the burst pistol.
+  pistol: { files: variants("rifle", 3), gain: 0.5, voices: 4, rate: 1.6 },
   reload: { files: ["reload"], gain: 0.8, voices: 2 },
   empty_click: { files: ["empty_click"], gain: 0.7, voices: 2 },
   dash: { files: [], gain: 0.55, voices: 2 },

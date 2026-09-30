@@ -11,7 +11,7 @@ import { ToggleButton, ToggleButtonGroup } from "@astryxdesign/core/ToggleButton
 import { Text } from "@astryxdesign/core/Text";
 import { GRENADES, WEAPONS } from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
-import { GRENADE_VIEW } from "../../items.ts";
+import { GRENADE_VIEW, PICKABLE_WEAPONS } from "../../items.ts";
 import { countRender } from "../../renders.ts";
 import { shallowEqual, useEngine, useSelector } from "../hooks.ts";
 import { shared } from "../styles.ts";
@@ -46,7 +46,7 @@ export function WeaponPicker({ live = false }: { live?: boolean }) {
       xstyle={styles.group}
       data-testid="weapon-picker"
     >
-      {WEAPONS.map((w, i) => (
+      {PICKABLE_WEAPONS.map((i) => [WEAPONS[i], i] as const).map(([w, i]) => (
         <ToggleButton key={w.name} value={String(i)} label={w.name} data-testid={`pick-${i + 1}`}>
           <HStack as="span" gap={1.5} align="center">
             <Kbd keys={String(i + 1)} />

@@ -58,6 +58,27 @@ export interface TeamHud {
   suddenDeath: boolean;
 }
 
+/** The battle royale's own HUD: who is still in, the zone, our gun slots and grenade stack. */
+export interface RoyaleHud {
+  /** Players still in, and in the match in all. */
+  alive: number;
+  players: number;
+  /** The zone: not there (warmup, the result), waiting to shrink, shrinking, closed. */
+  zone: "none" | "waiting" | "shrinking" | "closed";
+  /** Until it starts shrinking (waiting) or is closed (shrinking), "m:ss"; "" otherwise. */
+  zoneTime: string;
+  /** How far it has shrunk, 0..1. */
+  shrink: number;
+  /** We stand outside it: the arrow shows the way back. */
+  outside: boolean;
+  /** Screen angle to the zone's centre, degrees clockwise from right (only meaningful when `outside`). */
+  arrow: number;
+  /** The three gun slots, in order: `weapon` -1 when empty; `hand` is the one in hand. Predicted. */
+  slots: { weapon: number; name: string; ammo: number; magazine: number; hand: boolean; reloading: boolean }[];
+  /** Grenades left of the type in hand (`me.grenade`). */
+  grenades: number;
+}
+
 export interface HudModel {
   status: string;
   me: PlayerView | null;
@@ -67,6 +88,8 @@ export interface HudModel {
   ffa: FfaHud | null;
   /** Team deathmatch score and clock; null in the other modes. */
   team: TeamHud | null;
+  /** Battle royale: players left, the zone, the gun slots and grenades; null in the other modes. */
+  royale: RoyaleHud | null;
   /** Recent deaths, oldest first (both modes; the HUD shows it in FFA). */
   feed: KillFeedLine[];
   /** Predicted local state (cooldowns, ammo), fresher than `me`. */

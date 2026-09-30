@@ -95,6 +95,21 @@ export interface Spawn {
   z: number;
 }
 
+/**
+ * What a map needs to host a battle royale (optional, additive: only the
+ * maps that have it are in the royale pool, ROYALE_MAPS).
+ */
+export interface RoyaleMapData {
+  /**
+   * Where a crate stands at the start of every match: open floor, never on
+   * or next to a spawn (the royale check keeps them 3 m from every spawn and
+   * clear of cover).
+   */
+  crates: readonly Spawn[];
+  /** The rectangle the zone's final centre is drawn in (`pickZone`), world metres. */
+  zone: { x0: number; z0: number; x1: number; z1: number };
+}
+
 export interface MapDef {
   /** Stable id, sent over the wire (`mapId`). Lowercase, no spaces. */
   id: string;
@@ -119,6 +134,8 @@ export interface MapDef {
   theme: MapTheme;
   /** Weapons the layout rewards, for the design notes and a future map card. */
   favours: readonly WeaponTag[];
+  /** Battle royale: crate spots and zone limits. Absent: not a royale map. */
+  royale?: RoyaleMapData;
 }
 
 // --- Authoring helpers --------------------------------------------------------

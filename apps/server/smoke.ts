@@ -616,9 +616,11 @@ async function burstDuel() {
     if (await waitFor(() => me(r1)?.pick === id, 1000)) accepted.push(id);
   }
   ok(accepted.length === 3, `pick ids 4-6 accepted (${accepted.join(", ")})`);
-  for (const id of [WEAPONS.length, WEAPONS.length + 1]) r1.send(MSG_PICK, { weapon: id });
+  // Ids past the table, and a starting-only gun (the royale's Pistol), are refused.
+  const pistol = WEAPONS.findIndex((x) => x.pickable === false);
+  for (const id of [pistol, WEAPONS.length, WEAPONS.length + 1]) r1.send(MSG_PICK, { weapon: id });
   await sleep(200);
-  ok(me(r1)?.pick === WEAPONS.length - 1, `pick ids ${WEAPONS.length}+ refused (pick stays ${me(r1)?.pick})`);
+  ok(me(r1)?.pick === 6, `pick ids ${WEAPONS.length}+ and the Pistol (${pistol}) refused (pick stays ${me(r1)?.pick})`);
   r1.send(MSG_PICK, { weapon: BURST_ID });
   await waitFor(() => me(r1)?.pick === BURST_ID, 1000);
   const r2 = await new Client(URL).joinById(r1.roomId);
@@ -1698,7 +1700,8 @@ try {
   const results = await Promise.allSettled([
     accountChecks(URL, accounts, (c, l) => accountLines.push([c, `[accounts] ${l}`])).then(() => accountLines),
     skinChecks(URL, accounts, (c, l) => skinLines.push([c, `[skins] ${l}`])).then(() => skinLines),
-    ...WEAPONS.map((_, i) => weaponDuel(i)),
+    // Every gun the picker offers (the royale's starting Pistol can't be picked).
+    ...WEAPONS.flatMap((w, i) => (w.pickable === false ? [] : [weaponDuel(i)])),
     burstDuel(),
     grenadeDuel(),
     shieldDuel(),
