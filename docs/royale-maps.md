@@ -123,7 +123,7 @@ snow, a cold low sun. Coordinates as in docs/maps.md, north is -z.
   - North-east, **Engine Shed**: a 14 x 10 m brick shed with three doors
     round a locomotive, spares in its corners, a coal pile by the south
     door. Two safe crates inside.
-  - East, **Main Street**: seven brick houses either side of a north-south
+  - East, **Main Street**: eight brick houses either side of a north-south
     street, carts parked against the houses on alternating sides so the
     street zigzags, barrels in two houses and junk in the yards.
   - West, **Checkpoint**: a barrier chicane across the west road and two

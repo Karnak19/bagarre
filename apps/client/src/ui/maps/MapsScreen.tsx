@@ -88,8 +88,8 @@ function Maps() {
             Maps
           </Heading>
           <Text color="secondary" xstyle={styles.intro}>
-            {MAPS.length} maps for duels, {FFA_MAPS.length} bigger ones for the free for all and team deathmatch, and{" "}
-            {ROYALE_MAPS.length} much bigger one for the battle royale. Walk around any of them before you play: no game, no
+            {MAPS.length} maps for duels, {FFA_MAPS.length} bigger ones for the free for all and team deathmatch, and
+            bigger still for the battle royale. Walk around any of them before you play: no game, no
             opponent, just the map.
           </Text>
         </VStack>
