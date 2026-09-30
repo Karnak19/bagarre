@@ -45,7 +45,11 @@ const PLAYERS = 10;
 const RECONCILE_PENDING = 6;
 const LOS_PER_TICK = 20;
 const SEED = 0xbadc0de;
-/** Must match physics.ts' movePlayer (not exported): used to derive obstacle test counts only. */
+/**
+ * Copy of movePlayer's MOVE_SUBSTEP in physics.ts, which does not export it and the
+ * benchmark must not change. Only feeds the obstacleTestsPerTick upper bound; it never
+ * affects the simulation or the checksum. Keep in sync by hand.
+ */
 const MOVE_SUBSTEP = 0.25;
 
 function arg(name: string): string | undefined {
@@ -196,7 +200,6 @@ function run(map: MapDef): Result {
   const bullets: Bullet[] = [];
   let hits = 0;
   let losVisible = 0;
-  let reconcileAcc = 0;
 
   const losA = new Int32Array(LOS_PER_TICK);
   const losB = new Int32Array(LOS_PER_TICK);
@@ -236,7 +239,6 @@ function run(map: MapDef): Result {
   let sumReconcileSub = 0;
   const fired = new Uint8Array(PLAYERS);
   const dashed = new Uint8Array(PLAYERS);
-  const moveIn: InputMessage[] = [];
 
   for (let tick = 0; tick < total; tick++) {
     const measured = tick >= WARMUP;
@@ -274,7 +276,6 @@ function run(map: MapDef): Result {
       inp.gx = tx;
       inp.gz = tz;
       inp.dash = dashCount[i];
-      moveIn[i] = inp;
     }
     for (let k = 0; k < LOS_PER_TICK; k++) {
       const a = Math.floor(rng() * PLAYERS);
@@ -287,13 +288,13 @@ function run(map: MapDef): Result {
 
     // --- Movement: stepPlayer + the shots it fires ---
     for (let i = 0; i < PLAYERS; i++) {
-      const res = stepPlayer(map, sims[i], moveIn[i], LOADOUT[i], can);
+      const res = stepPlayer(map, sims[i], row[i], LOADOUT[i], can);
       sims[i] = res.sim;
       fired[i] = res.fired ? 1 : 0;
       dashed[i] = res.dashing ? 1 : 0;
       if (res.fired) {
         const life = bulletLifeTicks(weaponDef(LOADOUT[i]));
-        for (const b of shotPellets(LOADOUT[i], res.sim.x, res.sim.z, moveIn[i].aim, moveIn[i].seq)) {
+        for (const b of shotPellets(LOADOUT[i], res.sim.x, res.sim.z, row[i].aim, row[i].seq)) {
           (b as Bullet).ticksLeft = life;
           (b as Bullet).owner = i;
           bullets.push(b as Bullet);
@@ -359,7 +360,6 @@ function run(map: MapDef): Result {
     p0Dashed[tick % RING] = dashed[0];
     if (rs.x !== sims[0].x || rs.z !== sims[0].z) throw new Error(`reconcile replay diverged at tick ${tick}`);
     losVisible += vis;
-    reconcileAcc = hashNum(reconcileAcc, rs.x + rs.z);
 
     if (measured) {
       times.movement[m] = t1 - t0;
@@ -371,7 +371,7 @@ function run(map: MapDef): Result {
       let firedNow = 0;
       for (let i = 0; i < PLAYERS; i++) {
         if (fired[i]) firedNow += weaponDef(LOADOUT[i]).pellets;
-        sumMoveSub += moveSubsteps(moveIn[i], dashed[i] === 1);
+        sumMoveSub += moveSubsteps(row[i], dashed[i] === 1);
       }
       sumFired += firedNow;
       sumBulletSubsteps += substepCalls + blockedStops;
@@ -394,7 +394,6 @@ function run(map: MapDef): Result {
   }
   h = hashNum(h, hits);
   h = hashNum(h, losVisible);
-  h = hashNum(h, reconcileAcc);
 
   const perTick = (v: number) => v / TICKS;
   const moveSub = perTick(sumMoveSub);
