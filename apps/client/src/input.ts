@@ -15,6 +15,13 @@ function isEditable(e: Event) {
  * and presses are ignored and nothing is held, so the player stands still and
  * doesn't fire. Keys typed in a text field are always ignored, so typing a
  * username never moves, fires, mutes (M) or picks a weapon (the number keys).
+ *
+ * Battle royale (`slotMode`, set by the match): the number keys 1-3 pick a
+ * gun slot instead of a loadout gun (they never call `onPick` then), the
+ * mouse wheel cycles through the guns carried (`onCycle`, which the match
+ * turns into a slot from its predicted kit), and F asks for a swap with the
+ * gun on the floor. A slot choice is an input like a shot: `slot` plus the
+ * `switch` press counter, checked by the shared step on both sides.
  */
 export class Input {
   private keys = new Set<string>();
@@ -27,7 +34,13 @@ export class Input {
    * Running press totals, sent in every input (see InputMessage). Bumped on
    * key-down only, so auto-repeat while holding the key doesn't count.
    */
-  readonly presses = { dash: 0, grenade: 0, shield: 0, reload: 0 };
+  readonly presses = { dash: 0, grenade: 0, shield: 0, reload: 0, switch: 0, swap: 0 };
+  /** The gun slot asked for by the latest switch (InputMessage.slot, 0-2). */
+  slot = 0;
+  /** Battle royale: 1-3 are gun slots, the wheel cycles them, F swaps. */
+  slotMode = false;
+  /** Called with 1 (down) or -1 (up) when the wheel turns in slot mode. */
+  onCycle: (dir: 1 | -1) => void = () => {};
   /** Called with the weapon id when its number key is pressed (weaponOfKey: 1 = weapon 0). */
   onPick: (weapon: number) => void = () => {};
   /** Called when G (next grenade type) is pressed. */
@@ -58,7 +71,10 @@ export class Input {
       else if (e.code === "KeyE") this.presses.shield++;
       else if (e.code === "KeyR") this.presses.reload++;
       else if (e.code === "KeyM") this.onMute();
-      else if (weapon !== null) this.onPick(weapon);
+      else if (this.slotMode && /^Digit[1-3]$/.test(e.code)) this.selectSlot(Number(e.code.slice(5)) - 1);
+      else if (this.slotMode && e.code === "KeyF") this.presses.swap++;
+      // The other number keys do nothing in slot mode (4 and 5 are the royale's items next, #34).
+      else if (weapon !== null && !this.slotMode) this.onPick(weapon);
       else if (e.code === "KeyG") this.onGrenadeCycle();
     });
     window.addEventListener("keyup", (e) => this.keys.delete(e.code));
@@ -78,6 +94,21 @@ export class Input {
       if (e.button === 0) this.firing = false;
     });
     canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+    canvas.addEventListener(
+      "wheel",
+      (e) => {
+        if (!this.on || !this.slotMode || e.deltaY === 0) return;
+        e.preventDefault();
+        this.onCycle(e.deltaY > 0 ? 1 : -1);
+      },
+      { passive: false },
+    );
+  }
+
+  /** Asks for the gun in `slot` (0-2): sent with the next input, applied by the step if there is a gun there. */
+  selectSlot(slot: number) {
+    this.slot = slot;
+    this.presses.switch++;
   }
 
   private down(...codes: string[]) {

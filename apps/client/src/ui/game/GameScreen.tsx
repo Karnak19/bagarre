@@ -9,11 +9,13 @@ import { useEngine, useSelector } from "../hooks.ts";
 import { Hud } from "./Hud.tsx";
 
 export function GameScreen() {
-  const { app } = useEngine();
+  const { app, view } = useEngine();
   const inGame = useSelector(app, (s) => s.screen === "game");
   const spectating = useSelector(app, (s) => s.spectating);
+  // Battle royale: out of the match, we watch the rest of it from our seat.
+  const knockedOut = useSelector(view, (v) => !!v?.knockedOut);
   if (!inGame) return null;
-  return spectating ? <Watching /> : <Hud />;
+  return spectating || knockedOut ? <Watching /> : <Hud />;
 }
 
 /** The spectator overlay, from the match's first snapshot (the Spectator is made then). */

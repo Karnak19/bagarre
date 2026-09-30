@@ -96,6 +96,12 @@ export interface GameView {
   canPick: boolean;
   /** Watching, not playing: no waiting or result card, the spectator overlay instead of the HUD. */
   spectating: boolean;
+  /**
+   * Battle royale: out of the match while it goes on. We keep our seat (the
+   * result card comes at the end) but watch like a spectator meanwhile:
+   * the spectator overlay and controls, no game input.
+   */
+  knockedOut: boolean;
 }
 
 /** The parts of the 3D side the flow drives. */
@@ -159,11 +165,19 @@ function joinLabels(req: JoinRequest): { title: string; sub: string } {
       ? { title: "Finding a free for all…", sub: "Joining an open free for all, or opening a new one." }
       : req.mode === "tdm"
         ? { title: "Finding a team game…", sub: "Joining an open team deathmatch, or opening a new one." }
-        : { title: "Finding a game…", sub: "Joining an open game, or opening a new one." };
+        : req.mode === "royale"
+          ? { title: "Finding a battle royale…", sub: "Joining an open battle royale, or opening a new one." }
+          : { title: "Finding a game…", sub: "Joining an open game, or opening a new one." };
   if (req.kind === "private")
     return {
       title:
-        req.mode === "ffa" ? "Creating your private free for all…" : req.mode === "tdm" ? "Creating your private team game…" : "Creating your private game…",
+        req.mode === "ffa"
+          ? "Creating your private free for all…"
+          : req.mode === "tdm"
+            ? "Creating your private team game…"
+            : req.mode === "royale"
+              ? "Creating your private battle royale…"
+              : "Creating your private game…",
       sub: req.mode === "duel" ? "You'll get a link to send a friend." : "You'll get a link to send your friends.",
     };
   if (req.kind === "watch") return { title: "Opening the game…", sub: `Watching game ${req.roomId}` };
@@ -232,7 +246,18 @@ export class App {
     else if (phase === "ended") card = "result";
     if (card !== "none" && this.state.scoreboardHeld) this.set({ scoreboardHeld: false });
     const me = m.me;
-    return { card, phase, snapshot, you: m.net.sessionId, endedAt: m.endedAt, pick: me?.pick ?? 0, grenadePick: me?.grenadePick ?? 0, canPick: m.canPick, spectating };
+    return {
+      card,
+      phase,
+      snapshot,
+      you: m.net.sessionId,
+      endedAt: m.endedAt,
+      pick: me?.pick ?? 0,
+      grenadePick: me?.grenadePick ?? 0,
+      canPick: m.canPick,
+      spectating,
+      knockedOut: m.knockedOut,
+    };
   }
 
   /**
@@ -424,7 +449,11 @@ export class App {
       else if (req.kind === "watch" && e.reason === "full")
         this.showNotice({ title: "Too many spectators", body: "This game can't take more spectators right now. Try again in a moment.", retry: req });
       else if (e.reason === "full")
-        this.showNotice({ title: "This game is full", body: "Every seat is taken. Join another game from the menu, or start your own.", retry: null });
+        this.showNotice({
+          title: "This game is full",
+          body: "Every seat is taken, or the match has already started (a duel or a battle royale can't be joined then). Join another game from the menu, or start your own.",
+          retry: null,
+        });
       else if (e.reason === "gone")
         this.showNotice({ title: "This game doesn't exist anymore", body: "Everyone left, or the link is wrong. Start a new game from the menu.", retry: null });
       else if (e.reason === "unreachable")

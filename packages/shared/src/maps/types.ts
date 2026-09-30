@@ -64,7 +64,7 @@ export const FLAT_DECOR = [
  * The trees (Ultimate Nature Pack, about 2.2-3.6 m tall at scale 1, placed at
  * scale 2) are tall enough to hide the floor from the iso camera when they
  * stand just outside the +x or +z wall: keep them on the -x / -z sides, or far
- * out (scripts/royale.check.ts measures it).
+ * out (scripts/royale-maps.check.ts measures it).
  */
 export const TALL_DECOR = [
   "TrafficCone",
@@ -129,6 +129,21 @@ export interface Spawn {
   z: number;
 }
 
+/**
+ * What a map needs to host a battle royale. Optional on a MapDef, required on
+ * a RoyaleMapDef (maps/royale/): only the maps in ROYALE_MAPS carry it.
+ */
+export interface RoyaleMapData {
+  /**
+   * Where a crate stands at the start of every match: open floor, never on
+   * or next to a spawn (scripts/royale.check.ts keeps them 3 m from every
+   * spawn and clear of cover).
+   */
+  crates: readonly Spawn[];
+  /** The rectangle the zone's final centre is drawn in (`pickZone`), world metres. */
+  zone: { x0: number; z0: number; x1: number; z1: number };
+}
+
 export interface MapDef {
   /** Stable id, sent over the wire (`mapId`). Lowercase, no spaces. */
   id: string;
@@ -153,6 +168,8 @@ export interface MapDef {
   theme: MapTheme;
   /** Weapons the layout rewards, for the design notes and a future map card. */
   favours: readonly WeaponTag[];
+  /** Battle royale: crate spots and zone limits. Absent: not a royale map. */
+  royale?: RoyaleMapData;
 }
 
 // --- Authoring helpers --------------------------------------------------------

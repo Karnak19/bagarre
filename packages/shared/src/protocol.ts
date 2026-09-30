@@ -62,6 +62,18 @@ export interface InputMessage {
   grenade: number;
   shield: number;
   reload: number;
+  /**
+   * Battle royale only (the other modes ignore them; parseInput fills in 0
+   * when they are missing). `switch` is a press counter like the ones above:
+   * when it goes up, the gun in `slot` (0-2, the slot the player asks for)
+   * goes in hand, if they carry one there. The client works the slot out
+   * (a number key, or the wheel from its predicted slots); the step checks it.
+   * `swap` is the F press counter: swap the gun in hand for the one on the
+   * floor (the server's, see floor.ts).
+   */
+  slot?: number;
+  switch?: number;
+  swap?: number;
 }
 
 /**
@@ -121,8 +133,52 @@ export interface PlayerSim {
    * client predicts the slow exactly like the server (no rubber-banding).
    */
   stunTicks: number;
+  /**
+   * The battle royale's gun slots and grenade stack (KitSim, royale.ts). In
+   * the other modes it stays empty and nothing reads it. A nested object, as
+   * it is a child Schema on the server (`Player.kit`): room for healing
+   * items and shield charges (#34) without nearing the 63-field cap.
+   */
+  kit: KitSim;
 }
 
+/**
+ * What a player carries in the battle royale. Flat on purpose, like the
+ * schema that syncs it: `gun0`..`gun2` are the three gun slots (a WEAPONS
+ * index, NO_GUN when empty) and `mag0`..`mag2` their magazines. The slot in
+ * `hand` holds the gun being used: ITS magazine is `PlayerSim.ammo`, the
+ * one the step fires and reloads, and its `magN` is stale until it is
+ * switched away (see `switchGun`, `magAt`). `grenades` is how many of the
+ * type in hand (`Player.grenade`) are left.
+ */
+export interface KitSim {
+  hand: number;
+  gun0: number;
+  gun1: number;
+  gun2: number;
+  mag0: number;
+  mag1: number;
+  mag2: number;
+  grenades: number;
+  /** Highest `switch` / `swap` press counter already consumed (InputMessage). */
+  switchSeen: number;
+  swapSeen: number;
+}
+
+export const KIT_KEYS = [
+  "hand",
+  "gun0",
+  "gun1",
+  "gun2",
+  "mag0",
+  "mag1",
+  "mag2",
+  "grenades",
+  "switchSeen",
+  "swapSeen",
+] as const satisfies readonly (keyof KitSim)[];
+
+/** The flat fields of PlayerSim (everything but `kit`), copied one by one. */
 export const PLAYER_SIM_KEYS = [
   "x",
   "z",
@@ -213,6 +269,11 @@ export interface PlayerView extends PlayerSim {
    */
   flashEnd: number;
   flashTicks: number;
+  /**
+   * Battle royale: the server tick this player was knocked out on (killed,
+   * the zone, or left), 0 while still in. Their place follows from it.
+   */
+  outTick: number;
 }
 
 export const PLAYER_VIEW_KEYS = [
@@ -243,6 +304,7 @@ export const PLAYER_VIEW_KEYS = [
   "grenadePick",
   "flashEnd",
   "flashTicks",
+  "outTick",
 ] as const satisfies readonly (keyof PlayerView)[];
 
 /**
@@ -284,6 +346,45 @@ export interface SmokeView {
   team: number;
 }
 
+/**
+ * Something on the floor in the battle royale (`RoomStateView.items`):
+ * dropped by a crate or a dead player, picked up by walking over it. Owned by
+ * the server, which alone decides who gets it.
+ */
+export interface FloorItemView {
+  x: number;
+  z: number;
+  /** An ITEM_KINDS index (ITEM_GUN, ITEM_GRENADE). */
+  kind: number;
+  /** Which one: a WEAPONS index for a gun, a GRENADES index for grenades. */
+  item: number;
+  /** How many: a gun's magazine, a stack's count. */
+  amount: number;
+}
+
+/** A crate still standing (`RoomStateView.crates`); walking into it breaks it open. */
+export interface CrateView {
+  x: number;
+  z: number;
+}
+
+/**
+ * The battle royale's zone, as a few numbers: the circle moves from
+ * (x0, z0) with radius r0 at tick `start` to (x1, z1) with radius r1 at tick
+ * `end`, in a straight line. `zoneAt` (royale.ts) turns it into the circle of
+ * any tick, the same on the server and the client. `end` 0: no zone.
+ */
+export interface ZoneView {
+  x0: number;
+  z0: number;
+  x1: number;
+  z1: number;
+  r0: number;
+  r1: number;
+  start: number;
+  end: number;
+}
+
 /** Minimal iteration interface shared by Colyseus MapSchema and Map. */
 export interface MapLike<T> {
   forEach(cb: (value: T, key: string) => void): void;
@@ -315,11 +416,13 @@ export interface KillView {
 
 /** `KillView.weapon` of a grenade kill. */
 export const KILL_GRENADE = 255;
+/** `KillView.weapon` of a death in the battle royale's zone (the killer is "", like a self-kill). */
+export const KILL_ZONE = 254;
 /** Kill feed lines kept in the synced state. */
 export const KILL_FEED_SIZE = 5;
 
 export interface RoomStateView {
-  /** "duel", "ffa" or "tdm" (see modes.ts). Set when the room is made, never changes. */
+  /** "duel", "ffa", "tdm" or "royale" (see modes.ts). Set when the room is made, never changes. */
   mode: string;
   phase: Phase;
   /** Session id of the winner once the match ended, "" before (always "" with teams). There is always one. */
@@ -364,6 +467,10 @@ export interface RoomStateView {
   feed: { forEach(cb: (k: KillView, i: number) => void): void; length: number };
   /** Spectators connected right now (clients with no seat, see GameRoom). */
   spectators: number;
+  /** Battle royale: the items on the floor, the crates still standing, and the zone (empty or `end` 0 elsewhere). */
+  items: MapLike<FloorItemView>;
+  crates: MapLike<CrateView>;
+  zone: ZoneView;
 }
 
 /**

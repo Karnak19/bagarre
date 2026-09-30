@@ -18,6 +18,7 @@ import { Character } from "./character.ts";
 import { grenadeView, gunView } from "./items.ts";
 import { TEAM_PAINT } from "./paint.ts";
 import { Plates } from "./plates.ts";
+import { RoyaleView } from "./royaleView.ts";
 import { Vfx, shieldMaterial, type SmokeCloud } from "./vfx.ts";
 
 /**
@@ -412,6 +413,8 @@ export class GameScene {
   private vfx: Vfx;
   /** Name plates and health bars over the players' heads (filled by match.ts every frame). */
   readonly plates: Plates;
+  /** Battle royale: the zone, the crates and the items on the floor (filled by match.ts every frame). */
+  readonly royale: RoyaleView;
   private lastRender = -1;
   private trauma = 0;
   private shakeOffset = new THREE.Vector3();
@@ -462,6 +465,8 @@ export class GameScene {
       this.grenadeModel.scale.setScalar(0.55);
     }
     this.vfx = new Vfx(this.scene, this.camera, loaded?.atlas ?? null);
+    this.royale = new RoyaleView(loaded?.props?.get("Crate") ?? null, loaded?.guns ?? [], loaded?.props?.get("Grenade") ?? null);
+    this.scene.add(this.royale.group);
     this.plates = new Plates(this.renderer, PLAYER_CSS_COLORS);
     this.scene.add(this.plates.mesh);
     this.resize();
@@ -542,6 +547,19 @@ export class GameScene {
   }
   private tmpShadow = new THREE.Vector3();
 
+  /**
+   * The direction from ground point a to ground point b as seen on screen,
+   * in degrees clockwise from "right" (a CSS rotate() for an arrow drawn
+   * pointing right): the royale HUD's way back to the zone.
+   */
+  screenAngle(ax: number, az: number, bx: number, bz: number): number {
+    const a = this.tmp.set(ax, 0, az).project(this.camera);
+    const b = this.tmp2.set(bx, 0, bz).project(this.camera);
+    // NDC y points up, the screen's down: flip it. Aspect: NDC x spans the width.
+    const aspect = this.renderer.domElement.clientWidth / Math.max(1, this.renderer.domElement.clientHeight);
+    return (Math.atan2(-(b.y - a.y), (b.x - a.x) * aspect) * 180) / Math.PI;
+  }
+
   /** Removes every drawn bullet and grenade at once (map change). */
   clearProjectiles() {
     for (const b of this.bullets.values()) this.scene.remove(b.mesh);
@@ -549,6 +567,7 @@ export class GameScene {
     for (const g of this.grenades.values()) this.scene.remove(g.ball, g.ring);
     this.grenades.clear();
     this.vfx.smokeClouds([], 0, SMOKE.radius);
+    this.royale.clear();
   }
 
   resize() {

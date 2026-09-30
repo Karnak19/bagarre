@@ -218,15 +218,15 @@ export async function leaderboard(limit = LEADERBOARD_SIZE): Promise<Leaderboard
 }
 
 /** Most players any match can have: a place is never higher. */
-const MAX_MATCH_PLAYERS = MODES.tdm.maxPlayers;
+const MAX_MATCH_PLAYERS = Math.max(...Object.values(MODES).map((m) => m.maxPlayers));
 
 /**
  * Writes a finished match: one row for the match, and each account player's
  * stats. Idempotent per `matchId`: recording it again changes nothing.
  *
  * Every mode alike: `won` is a win, anything else a loss. In a duel and a
- * free-for-all a win is first place; in a team deathmatch it is being on the
- * winning team. A match is never a draw (see `rank` in @bagarre/shared). An
+ * free-for-all a win is first place (a battle royale too: the last one
+ * standing); in a team deathmatch it is being on the winning team. A match is never a draw (see `rank` in @bagarre/shared). An
  * account that never picked a username gets its place on the match row, but
  * no stats.
  */

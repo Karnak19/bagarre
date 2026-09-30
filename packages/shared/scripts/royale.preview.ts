@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { ROYALE_MAPS, type RoyaleMapDef } from "../src/maps/royale/index.ts";
 import { bodiesSee, circleHitsBox, R } from "./analyze.ts";
 import { esc, hex, iso, KIND_COLOR, shade, toPng } from "./ffa/preview.ts";
-import { FINAL_CIRCLE_RADIUS, tightOpen } from "./royale.check.ts";
+import { FINAL_CIRCLE_RADIUS, tightOpen } from "./royale-maps.check.ts";
 
 /** Git-ignored folder at the repo root. */
 const DEFAULT_OUT = join(fileURLToPath(new URL(".", import.meta.url)), "../../..", ".previews", "royale-maps");
@@ -35,7 +35,7 @@ function topDown(m: RoyaleMapDef, S = 10): string {
   o.push(`<rect width="${W}" height="${H}" fill="#15171c"/>`);
   o.push(`<text x="${pad}" y="30" font-size="22" font-weight="bold" fill="#fff">${esc(m.name)}  <tspan font-size="14" fill="#aaa">(${m.id}, royale ${m.players.min}-${m.players.max}, favours ${m.favours.join(" / ")})</tspan></text>`);
   o.push(`<text x="${pad}" y="52" font-size="13" fill="#ccc">${esc(m.blurb)}</text>`);
-  o.push(`<text x="${pad}" y="70" font-size="12" fill="#9ab">${2 * m.halfX}x${2 * m.halfZ} m, ${m.obstacles.length} boxes, ${m.spawns.length} starts, ${m.crates.length} crates, final circle r ${FINAL_CIRCLE_RADIUS} m (placeholder), tight floor ${(to0(m).tightShare * 100).toFixed(0)}%, open ${(to0(m).openShare * 100).toFixed(0)}%</text>`);
+  o.push(`<text x="${pad}" y="70" font-size="12" fill="#9ab">${2 * m.halfX}x${2 * m.halfZ} m, ${m.obstacles.length} boxes, ${m.spawns.length} starts, ${m.royale.crates.length} crates, final circle r ${FINAL_CIRCLE_RADIUS} m (placeholder), tight floor ${(to0(m).tightShare * 100).toFixed(0)}%, open ${(to0(m).openShare * 100).toFixed(0)}%</text>`);
   o.push(`<rect x="${X(-m.halfX) - 8}" y="${Z(-m.halfZ) - 8}" width="${2 * m.halfX * S + 16}" height="${2 * m.halfZ * S + 16}" fill="${shade(hex(m.theme.wall === "brick" ? 0x9a5a45 : 0xa7a9a3), 0.8)}"/>`);
   o.push(`<rect x="${X(-m.halfX)}" y="${Z(-m.halfZ)}" width="${2 * m.halfX * S}" height="${2 * m.halfZ * S}" fill="${shade(hex(m.theme.floor), 0.45)}"/>`);
   for (const z of m.zones) o.push(`<rect x="${X(z.x0)}" y="${Z(z.z0)}" width="${(z.x1 - z.x0) * S}" height="${(z.z1 - z.z0) * S}" fill="${hex(z.tint)}" fill-opacity="0.14" stroke="${hex(z.tint)}" stroke-opacity="0.6" stroke-dasharray="6 4"/>`);
@@ -47,7 +47,7 @@ function topDown(m: RoyaleMapDef, S = 10): string {
     if (to.tight[i]) o.push(`<rect x="${X(p.x - 1)}" y="${Z(p.z - 1)}" width="${2 * S}" height="${2 * S}" fill="#b36bff" opacity="0.35"/>`);
   });
   // Endgame cover: each final circle centre, red where it has too few boxes.
-  const f = m.finalZone;
+  const f = m.royale.zone;
   for (let cz = Math.ceil(f.z0); cz <= f.z1; cz++)
     for (let cx = Math.ceil(f.x0); cx <= f.x1; cx++) {
       let n = 0;
@@ -74,7 +74,7 @@ function topDown(m: RoyaleMapDef, S = 10): string {
     o.push(`<text x="${X(l.x) + 8}" y="${Z(l.z) - 6}" font-size="12" font-weight="bold" fill="#fff">${esc(l.name)}</text>`);
   }
   // Crates and starts.
-  for (const c of m.crates) o.push(`<rect x="${X(c.x) - 5}" y="${Z(c.z) - 5}" width="10" height="10" fill="#ffd84a" stroke="#000" stroke-width="1.5" transform="rotate(45 ${X(c.x)} ${Z(c.z)})"/>`);
+  for (const c of m.royale.crates) o.push(`<rect x="${X(c.x) - 5}" y="${Z(c.z) - 5}" width="10" height="10" fill="#ffd84a" stroke="#000" stroke-width="1.5" transform="rotate(45 ${X(c.x)} ${Z(c.z)})"/>`);
   m.spawns.forEach((p, i) => {
     o.push(`<circle cx="${X(p.x)}" cy="${Z(p.z)}" r="${R * S + 2}" fill="#ff8a3d" stroke="#fff" stroke-width="1.5"/>`);
     o.push(`<text x="${X(p.x)}" y="${Z(p.z) - R * S - 5}" font-size="11" font-weight="bold" text-anchor="middle" fill="#fff">${i}</text>`);

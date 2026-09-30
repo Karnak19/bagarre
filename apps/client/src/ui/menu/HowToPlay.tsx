@@ -12,11 +12,14 @@ import {
   GRENADE,
   GRENADES,
   KILLS_TO_WIN,
+  ROYALE,
+  ROYALE_MAX_PLAYERS,
   SHIELD,
   TEAM_KILLS_TO_WIN,
   TEAM_SIZE,
   TEAM_TIME_LIMIT,
   WEAPONS,
+  ZONE,
 } from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
 import type { ReactNode } from "react";
@@ -75,6 +78,13 @@ export function HowToPlay() {
         Team deathmatch: red against blue, up to {TEAM_SIZE}v{TEAM_SIZE}. The first team to {TEAM_KILLS_TO_WIN} kills wins, or
         the team ahead after {TEAM_TIME_LIMIT / 60} minutes. Your bullets and grenades never hurt a teammate, nor you.
       </Text>
+      <Text>
+        Battle royale: up to {ROYALE_MAX_PLAYERS} players, one life each. Everyone starts with the Pistol and no grenades;
+        walk into crates for guns and grenades, and over what the fallen drop. You carry {ROYALE.gunSlots} guns ({k("1")}-
+        {k("3")} or the wheel to switch, {k("F")} to swap the one in hand for one on the floor) and one grenade type at a
+        time, counted. The zone closes in over {Math.round(ZONE.close / 60)} minutes and hurts anyone outside it. The last one
+        standing wins; your place is the order you went out in.
+      </Text>
 
       <Section>Controls</Section>
       <Grid columnGap={5} rowGap={2} xstyle={styles.keys}>
@@ -97,7 +107,7 @@ export function HowToPlay() {
         {WEAPONS.map((w, i) => (
           <ListItem
             key={w.name}
-            startContent={k(String(i + 1))}
+            startContent={w.pickable === false ? undefined : k(String(i + 1))}
             label={w.name}
             description={GUN_VIEW[w.key].role}
             endContent={

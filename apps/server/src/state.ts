@@ -1,5 +1,30 @@
 import { schema, t, type SchemaType } from "@colyseus/schema";
-import { DEFAULT_GRENADE, DEFAULT_MAP_ID, DEFAULT_WEAPON, MAX_HP, NO_TEAM, WEAPONS } from "@bagarre/shared";
+import { DEFAULT_GRENADE, DEFAULT_MAP_ID, DEFAULT_WEAPON, MAX_HP, NO_GUN, NO_TEAM, WEAPONS } from "@bagarre/shared";
+
+/**
+ * What a player carries in the battle royale (KitSim in @bagarre/shared):
+ * three gun slots with their magazines, the slot in hand, the grenade
+ * count, and the switch / swap press counters. A child of Player, so the
+ * royale's items (healing and shield charges next, #34) never push Player
+ * near the 63-field cap. Part of the prediction's state like the rest of
+ * PlayerSim, hence synced in full. Unused (empty) in the other modes.
+ */
+export const Kit = schema(
+  {
+    hand: t.uint8().default(0),
+    gun0: t.uint8().default(NO_GUN),
+    gun1: t.uint8().default(NO_GUN),
+    gun2: t.uint8().default(NO_GUN),
+    mag0: t.uint8().default(0),
+    mag1: t.uint8().default(0),
+    mag2: t.uint8().default(0),
+    grenades: t.uint8().default(0),
+    switchSeen: t.uint32().default(0),
+    swapSeen: t.uint32().default(0),
+  },
+  "Kit",
+);
+export type Kit = SchemaType<typeof Kit>;
 
 // Positions and the dash direction are float64 on purpose: the client re-runs
 // the shared step function from these exact values during reconciliation. A
@@ -74,6 +99,12 @@ export const Player = schema(
     /** Flash: the tick the white screen ends on, and its full length in ticks (for the fade). */
     flashEnd: t.uint32().default(0),
     flashTicks: t.uint16().default(0),
+
+    // Battle royale (appended, like the grenades).
+    /** Gun slots and grenade stack (see Kit). */
+    kit: Kit,
+    /** The tick this player was knocked out on (0: still in). Their place follows from it. */
+    outTick: t.uint32().default(0),
   },
   "Player",
 );
@@ -121,6 +152,46 @@ export const Smoke = schema(
 );
 export type Smoke = SchemaType<typeof Smoke>;
 
+/** Something on the floor in the battle royale (FloorItemView in @bagarre/shared). Owned by the server. */
+export const FloorItem = schema(
+  {
+    x: t.float32().default(0),
+    z: t.float32().default(0),
+    /** ITEM_KINDS index, then which one (WEAPONS / GRENADES index), then how many (magazine, stack). */
+    kind: t.uint8().default(0),
+    item: t.uint8().default(0),
+    amount: t.uint8().default(0),
+  },
+  "FloorItem",
+);
+export type FloorItem = SchemaType<typeof FloorItem>;
+
+/** A crate still standing (CrateView). */
+export const Crate = schema(
+  {
+    x: t.float32().default(0),
+    z: t.float32().default(0),
+  },
+  "Crate",
+);
+export type Crate = SchemaType<typeof Crate>;
+
+/** The battle royale's zone as a few numbers (ZoneView); `zoneAt` gives the circle of any tick. `end` 0: none. */
+export const Zone = schema(
+  {
+    x0: t.float32().default(0),
+    z0: t.float32().default(0),
+    x1: t.float32().default(0),
+    z1: t.float32().default(0),
+    r0: t.float32().default(0),
+    r1: t.float32().default(0),
+    start: t.uint32().default(0),
+    end: t.uint32().default(0),
+  },
+  "Zone",
+);
+export type Zone = SchemaType<typeof Zone>;
+
 /** One line of the kill feed (KillView in @bagarre/shared). */
 export const KillEvent = schema(
   {
@@ -143,7 +214,7 @@ export type KillEvent = SchemaType<typeof KillEvent>;
 /** The room state of every mode (RoomStateView in @bagarre/shared). */
 export const GameState = schema(
   {
-    /** "duel", "ffa" or "tdm", from the room's rules. Never changes. */
+    /** "duel", "ffa", "tdm" or "royale", from the room's rules. Never changes. */
     mode: t.string().default("duel"),
     phase: t.string().default("waiting"),
     winner: t.string().default(""),
@@ -179,6 +250,10 @@ export const GameState = schema(
     smokes: t.map(Smoke),
     /** Warmup: the tick it ends on, the match starts then (0 outside warmup). Synced as a tick so every client's timer agrees. */
     warmupEnd: t.uint32().default(0),
+    /** Battle royale: items on the floor, crates still standing (by id), and the zone. Empty in the other modes. */
+    items: t.map(FloorItem),
+    crates: t.map(Crate),
+    zone: Zone,
   },
   "GameState",
 );

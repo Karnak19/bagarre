@@ -1,284 +1,237 @@
-// Self-check of the battle royale maps (src/maps/royale/): the map rules the
-// mode relies on, so a broken spot fails here and not in a play test.
+// Self-check of the battle royale's rules (src/royale.ts, rankRoyale in
+// src/modes.ts): the ranking by order of knock-out, the zone over time, the
+// grenade stacks, the gun slots (and the step's switch, which the client
+// predicts), the loot table, and the royale maps' crate spots.
 // Run with `bun run check` (in packages/shared). Exits non-zero on a failure.
-//
-// For every map in ROYALE_MAPS:
-// 1. size 80..100 m a side; box heights and the thin-long rule; no narrow gaps;
-// 2. at least 10 start spots; every start and crate spot standable and in bounds;
-// 3. no two start spots see each other (any distance);
-// 4. 15..25 crate spots, none near a start, none on top of each other;
-// 5. everything reachable on foot, and the whole floor one connected region;
-// 6. the final zone's rectangle well inside the map;
-// 7. endgame cover: every final circle centre has cover and room to stand;
-// 8. tall decor (trees) outside the walls, and hiding no floor from the camera.
-//
-// The geometry comes from scripts/analyze.ts (the duel validator's helpers).
 
-import { ROYALE_MAPS, type RoyaleMapDef } from "../src/maps/royale/index.ts";
-import { WALL_THICKNESS } from "../src/arena.ts";
-import { TALL_DECOR, type Obstacle, type Spawn } from "../src/maps/types.ts";
-import { ffaSight, OPEN_M2, TIGHT_M2, type FfaSight } from "./ffa/analyze.ts";
-import { bodiesSee, boxGap, cellOf, cellPt, circleHitsBox, flood, gapFilled, hiddenFromCamera, MIN_GAP, MIN_THICKNESS, R, walkGrid } from "./analyze.ts";
-
-/** Side of the map, metres. */
-const SIZE: [number, number] = [80, 100];
-const MIN_STARTS = 10;
-const CRATE_COUNT: [number, number] = [15, 25];
-/** A crate this close to a start spot would hand that player a free crate. */
-const CRATE_START_MIN = 2;
-const CRATE_CRATE_MIN = 1.5;
-/** A spot must clear every box by this much on top of the player radius (like the duel validator's spawns). */
-const SPOT_CLEAR = 0.25;
-/** The final zone's rectangle keeps at least this far from every edge. */
-const FINAL_MARGIN = 12;
-/**
- * Radius of the final circle the endgame cover check assumes. Placeholder
- * until #32 (the royale mode) fixes the final circle's size.
- */
-export const FINAL_CIRCLE_RADIUS = 7;
-/** Every possible final circle has at least this many boxes in it... */
-const FINAL_MIN_BOXES = 2;
-/** ...and at least this share of it is floor a player can stand on. */
-const FINAL_MIN_FLOOR = 0.5;
-/** Walk grid cell for the flood fill and the floor share, metres. */
-const CELL = 0.2;
-const EPS = 1e-6;
-/**
- * Tall decor as the camera sees it, at scale 1: a square column of half-side
- * `r` and height `h` round its origin. The trees' numbers are the largest of
- * each family in the Ultimate Nature Pack (PineTree_Snow_3 is 2.2 m wide,
- * PineTree_Snow_2 3.6 m tall; CommonTree_Dead_Snow_1 2.1 m wide,
- * CommonTree_Dead_Snow_3 3.0 m tall); the kit's small props are about 1 m.
- */
-const DECOR_COLUMN: Record<string, { r: number; h: number }> = {
-  PineTree: { r: 1.1, h: 3.6 },
-  CommonTree: { r: 1.1, h: 3.0 },
-  other: { r: 0.6, h: 1.2 },
-};
-const columnOf = (prop: string) => DECOR_COLUMN[prop.split("_")[0]] ?? DECOR_COLUMN.other;
-/** Sight samples every this many metres for the tight/open shares (1 m, as on the FFA maps, takes ~25 s at 90 m; 2 m is within 0.2 pp of it). */
-const SIGHT_STEP = 2;
-
-/**
- * Tight and open floor, as the FFA validator defines them (scripts/ffa/analyze.ts):
- * tight floor sees less than TIGHT_M2 of floor within the longest weapon's
- * range (shotgun and SMG ground); open floor sees at least OPEN_M2 of floor
- * beyond rifle range (sniper lanes). Reported, not checked.
- */
-export function tightOpen(m: RoyaleMapDef): { sl: FfaSight; tight: Uint8Array; tightShare: number; openShare: number } {
-  const sl = ffaSight(m, SIGHT_STEP);
-  const n = sl.pts.length;
-  const cell = SIGHT_STEP * SIGHT_STEP;
-  const tight = new Uint8Array(n);
-  let t = 0;
-  let o = 0;
-  for (let i = 0; i < n; i++) {
-    if (sl.camp[i] * n * cell < TIGHT_M2) {
-      tight[i] = 1;
-      t++;
-    }
-    if (sl.far[i] * cell >= OPEN_M2) o++;
-  }
-  return { sl, tight, tightShare: n ? t / n : 0, openShare: n ? o / n : 0 };
-}
+import { playerCan, spawnSim, stepPlayer } from "../src/combat.ts";
+import { GRENADES, GRENADE_FRAG, GRENADE_SMOKE, LOOT, PISTOL, PLAYER_RADIUS, ROYALE, TICK_RATE, WEAPONS, ZONE, ticks } from "../src/constants.ts";
+import { ROYALE_MAPS } from "../src/maps/index.ts";
+import { lotOf, rankRoyale, ROYALE_RULES, type RoyaleStanding } from "../src/modes.ts";
+import { circleOverlapsBox } from "../src/physics.ts";
+import type { InputMessage, PlayerSim, ZoneView } from "../src/protocol.ts";
+import {
+  NO_GUN,
+  carriedGuns,
+  cycleSlot,
+  freeGunSlot,
+  gunAt,
+  gunInHand,
+  magAt,
+  outsideZone,
+  pickZone,
+  rollLoot,
+  startKit,
+  swapGun,
+  takeGrenades,
+  takeGun,
+  useGrenade,
+  zoneAt,
+  zoneDamage,
+} from "../src/royale.ts";
+import { MAPS } from "../src/maps/index.ts";
 
 const failures: string[] = [];
-function check(cond: boolean, label: string, detail: string[] = []) {
+function check(cond: boolean, label: string) {
   console.log(`${cond ? "PASS" : "FAIL"}  ${label}`);
-  if (!cond) {
-    failures.push(label);
-    for (const d of detail.slice(0, 12)) console.log(`        ${d}`);
-    if (detail.length > 12) console.log(`        ... and ${detail.length - 12} more`);
-  }
+  if (!cond) failures.push(label);
 }
 
-const f = (n: number, d = 1) => n.toFixed(d);
-const at = (p: Spawn) => `(${p.x}, ${p.z})`;
-const name = (o: Obstacle) => `${o.kind}@(${o.x},${o.z})`;
+// --- Ranking: order of knock-out, not kills ----------------------------------------
 
-function checkMap(m: RoyaleMapDef) {
-  const t0 = performance.now();
-  console.log(`\n${m.name} (${m.id})`);
+const st = (id: string, outTick: number, kills = 0, damage = 0): RoyaleStanding => ({ id, outTick, kills, damage });
+const ids = (r: ReturnType<typeof rankRoyale>) => r.order.map((o) => o.entry.id).join(",");
 
-  // 1. Size, boxes, gaps.
-  const sx = 2 * m.halfX;
-  const sz = 2 * m.halfZ;
-  check(sx >= SIZE[0] && sx <= SIZE[1] && sz >= SIZE[0] && sz <= SIZE[1], `size ${sx} x ${sz} m within ${SIZE[0]}..${SIZE[1]} m a side`);
-  const boxErrors: string[] = [];
-  for (const o of m.obstacles) {
-    if (o.x - o.w / 2 < -m.halfX - EPS || o.x + o.w / 2 > m.halfX + EPS || o.z - o.d / 2 < -m.halfZ - EPS || o.z + o.d / 2 > m.halfZ + EPS)
-      boxErrors.push(`${name(o)} pokes out of the map`);
-    if (Math.min(o.w, o.d) < MIN_THICKNESS - EPS) boxErrors.push(`${name(o)} thinner than ${MIN_THICKNESS} m`);
-    if (o.h < 0.8 - EPS || o.h > 2.0 + EPS) boxErrors.push(`${name(o)} is ${o.h} m tall (0.8..2.0)`);
-    if (Math.min(o.w, o.d) < 1.5 && Math.max(o.w, o.d) >= 4 - EPS && (o.h < 1.1 - EPS || o.h > 1.4 + EPS))
-      boxErrors.push(`${name(o)} is a long thin wall ${o.h} m tall (1.1..1.4)`);
-  }
-  check(boxErrors.length === 0, `${m.obstacles.length} boxes in bounds, 0.8-2.0 m tall, long thin walls 1.1-1.4 m`, boxErrors);
-  const gapErrors: string[] = [];
-  for (let i = 0; i < m.obstacles.length; i++)
-    for (let j = i + 1; j < m.obstacles.length; j++) {
-      const a = m.obstacles[i];
-      const b = m.obstacles[j];
-      const g = boxGap(a, b);
-      if (g > EPS && g < MIN_GAP - EPS && !gapFilled(m, a, b)) gapErrors.push(`gap ${f(g, 2)} m between ${name(a)} and ${name(b)}`);
-    }
-  for (const o of m.obstacles)
-    for (const g of [m.halfX - (o.x + o.w / 2), o.x - o.w / 2 + m.halfX, m.halfZ - (o.z + o.d / 2), o.z - o.d / 2 + m.halfZ])
-      if (g > EPS && g < MIN_GAP - EPS) gapErrors.push(`gap ${f(g, 2)} m between ${name(o)} and the outer wall`);
-  check(gapErrors.length === 0, `no gap under ${MIN_GAP} m between boxes or a box and the wall`, gapErrors);
+// The survivor first, then the last one out... the first one out last, whatever the kills.
+const byDeath = rankRoyale([st("early", 100, 5, 900), st("winner", 0, 0, 10), st("late", 400, 1), st("mid", 250, 3)], "m");
+check(ids(byDeath) === "winner,late,mid,early" && byDeath.reason === "", `places follow the order of knock-out, not kills (${ids(byDeath)})`);
+check(byDeath.order.map((o) => o.place).join() === "1,2,3,4", "every place is its own, 1 to n");
 
-  // 2. Spots clear of boxes and in bounds.
-  const spotErrors = (kind: string, spots: readonly Spawn[]) => {
-    const out: string[] = [];
-    for (const s of spots) {
-      if (Math.abs(s.x) > m.halfX - R - SPOT_CLEAR || Math.abs(s.z) > m.halfZ - R - SPOT_CLEAR) out.push(`${kind} ${at(s)} too close to the edge`);
-      for (const o of m.obstacles) if (circleHitsBox(s.x, s.z, R + SPOT_CLEAR, o)) out.push(`${kind} ${at(s)} in or against ${name(o)}`);
-    }
-    return out;
-  };
-  check(m.spawns.length >= MIN_STARTS, `${m.spawns.length} start spots (at least ${MIN_STARTS})`);
-  check(spotErrors("start", m.spawns).length === 0, "every start spot clear of boxes and in bounds", spotErrors("start", m.spawns));
-  check(spotErrors("crate", m.crates).length === 0, "every crate spot clear of boxes and in bounds", spotErrors("crate", m.crates));
+// Same tick: kills, then damage, then the lot.
+const sameKills = rankRoyale([st("a", 300, 1, 50), st("b", 300, 2, 10), st("c", 100)], "m");
+check(ids(sameKills) === "b,a,c" && sameKills.reason === "kills", `the last two out on the same tick: more kills wins (${ids(sameKills)}, "${sameKills.reason}")`);
+const sameDamage = rankRoyale([st("a", 300, 2, 50), st("b", 300, 2, 80)], "m");
+check(ids(sameDamage) === "b,a" && sameDamage.reason === "damage", `then more damage (${ids(sameDamage)}, "${sameDamage.reason}")`);
+const tied = [st("a", 300), st("b", 300), st("c", 300)];
+const lot = rankRoyale(tied, "room:m1");
+const expected = [...tied].sort((x, y) => lotOf("room:m1", x.id) - lotOf("room:m1", y.id)).map((e) => e.id).join(",");
+check(ids(lot) === expected && lot.reason === "lot", `then the lot, reproducible from the match id (${ids(lot)})`);
+check(ids(rankRoyale([...tied].reverse(), "room:m1")) === ids(lot), "the lot doesn't depend on the input order");
+// A tie lower down doesn't touch first place or the reason.
+const lowTie = rankRoyale([st("w", 0), st("x", 200, 0), st("y", 200, 3)], "m");
+check(ids(lowTie) === "w,y,x" && lowTie.reason === "", `a same-tick tie further down: split there, first won outright (${ids(lowTie)})`);
+// A leaver is knocked out when they leave: no 1st place for leaving early.
+const leaver = rankRoyale([st("left", 50, 4, 400), st("stayed", 0)], "m");
+check(ids(leaver) === "stayed,left", "leaving early is a knock-out at that tick, not a win");
+check(rankRoyale([], "m").order.length === 0, "nobody: an empty order");
 
-  // 3. Starts out of each other's sight.
-  const seen: string[] = [];
-  let minStart = Infinity;
-  for (let i = 0; i < m.spawns.length; i++)
-    for (let j = i + 1; j < m.spawns.length; j++) {
-      const a = m.spawns[i];
-      const b = m.spawns[j];
-      minStart = Math.min(minStart, Math.hypot(a.x - b.x, a.z - b.z));
-      if (bodiesSee(m, a, b)) seen.push(`starts ${i} ${at(a)} and ${j} ${at(b)} see each other (${f(Math.hypot(a.x - b.x, a.z - b.z))} m)`);
-    }
-  check(seen.length === 0, "no two start spots see each other", seen);
+// --- The zone --------------------------------------------------------------------------
 
-  // 4. Crates.
-  check(m.crates.length >= CRATE_COUNT[0] && m.crates.length <= CRATE_COUNT[1], `${m.crates.length} crate spots (${CRATE_COUNT[0]}..${CRATE_COUNT[1]})`);
-  const crateErrors: string[] = [];
-  for (const c of m.crates)
-    for (const s of m.spawns) if (Math.hypot(c.x - s.x, c.z - s.z) < CRATE_START_MIN) crateErrors.push(`crate ${at(c)} within ${CRATE_START_MIN} m of start ${at(s)}`);
-  for (let i = 0; i < m.crates.length; i++)
-    for (let j = i + 1; j < m.crates.length; j++)
-      if (Math.hypot(m.crates[i].x - m.crates[j].x, m.crates[i].z - m.crates[j].z) < CRATE_CRATE_MIN)
-        crateErrors.push(`crates ${at(m.crates[i])} and ${at(m.crates[j])} closer than ${CRATE_CRATE_MIN} m`);
-  check(crateErrors.length === 0, `crates at least ${CRATE_START_MIN} m from starts and ${CRATE_CRATE_MIN} m apart`, crateErrors);
+const zone: ZoneView = { x0: 0, z0: 0, x1: 8, z1: -6, r0: 40, r1: 0, start: 900, end: 8100 };
+const c0 = zoneAt(zone, 0)!;
+const cStart = zoneAt(zone, zone.start)!;
+const cMid = zoneAt(zone, (zone.start + zone.end) / 2)!;
+const cEnd = zoneAt(zone, zone.end)!;
+const cLate = zoneAt(zone, zone.end + 3000)!;
+check(c0.r === 40 && cStart.r === 40 && c0.x === 0, "before it shrinks: the start circle");
+check(Math.abs(cMid.r - 20) < 1e-9 && Math.abs(cMid.x - 4) < 1e-9 && Math.abs(cMid.z + 3) < 1e-9, `halfway: half the radius, halfway to the end centre (r ${cMid.r})`);
+check(cEnd.r === 0 && cEnd.x === 8 && cEnd.z === -6 && cLate.r === 0, "closed at the end tick, and stays closed");
+let smooth = true;
+for (let t = zone.start; t < zone.end; t += 7) if (zoneAt(zone, t + 1)!.r > zoneAt(zone, t)!.r || zoneAt(zone, t)!.r - zoneAt(zone, t + 1)!.r > 0.01) smooth = false;
+check(smooth, "it shrinks a little every tick, never grows, no steps");
+check(zoneAt({ ...zone, end: 0 }, 5000) === null && !outsideZone({ ...zone, end: 0 }, 5000, 99, 99), "no zone (end 0): nobody is outside");
+check(!outsideZone(zone, zone.end - 1, 8, -6) && outsideZone(zone, cMid ? (zone.start + zone.end) / 2 : 0, 30, 0), "inside is safe, outside isn't");
+check(ROYALE_RULES.royale?.zoneClose === ZONE.close && ZONE.close <= 4.5 * 60 && ZONE.wait < ZONE.close, `the real zone closes by 4:30 (${ZONE.close} s)`);
 
-  // 5. Reachability: one connected floor, every spot on it.
-  const g = walkGrid(m, CELL);
-  const reached = flood(g, cellOf(g, m.spawns[0]));
-  let walkable = 0;
-  let lost = 0;
-  let lostAt = { x: 0, z: 0 };
-  for (let c = 0; c < g.walk.length; c++) {
-    if (!g.walk[c]) continue;
-    walkable++;
-    if (!reached[c]) {
-      if (!lost) lostAt = cellPt(g, c);
-      lost++;
-    }
-  }
-  const unreached = [...m.spawns.map((s) => ["start", s] as const), ...m.crates.map((s) => ["crate", s] as const)]
-    .filter(([, s]) => !reached[cellOf(g, s)])
-    .map(([k, s]) => `${k} ${at(s)} not reachable from start 0`);
-  check(unreached.length === 0, "every start and crate spot reachable on foot from start 0", unreached);
-  check(lost === 0, `the whole floor is one connected region (${walkable} cells of ${CELL} m)`, lost ? [`${lost} cells cut off, first near (${f(lostAt.x)}, ${f(lostAt.z)})`] : []);
+// Damage outside: whole HP each tick, growing, summing to the dose.
+const perSecond = (from: number) => {
+  let n = 0;
+  for (let t = from; t < from + TICK_RATE; t++) n += zoneDamage(zone, t);
+  return n;
+};
+check(zoneDamage(zone, zone.start - 5) === 0 && perSecond(zone.start - TICK_RATE) === 0, "no damage before it shrinks");
+const early = perSecond(zone.start + 1);
+const mid = perSecond((zone.start + zone.end) / 2);
+const late = perSecond(zone.end + 60);
+check(early >= ZONE.dpsStart - 1 && early <= ZONE.dpsStart + 1, `about ${ZONE.dpsStart} HP a second at first (${early})`);
+check(mid > early && late > mid, `it grows as the zone closes (${early}, ${mid}, ${late} per second)`);
+check(Math.abs(late - ZONE.dpsEnd) <= 1, `about ${ZONE.dpsEnd} HP a second once closed (${late})`);
+let integer = true;
+for (let t = zone.start; t < zone.end + 300; t += 13) if (!Number.isInteger(zoneDamage(zone, t)) || zoneDamage(zone, t) < 0) integer = false;
+check(integer, "every tick's damage is a whole, non-negative number");
 
-  // 6. Final zone rectangle.
-  const z = m.finalZone;
-  const margin = Math.min(z.x0 + m.halfX, m.halfX - z.x1, z.z0 + m.halfZ, m.halfZ - z.z1);
-  check(z.x0 <= z.x1 && z.z0 <= z.z1 && margin >= FINAL_MARGIN - EPS, `final zone [${z.x0}, ${z.x1}] x [${z.z0}, ${z.z1}] at least ${FINAL_MARGIN} m from the edges (${f(margin)} m)`);
-
-  // 7. Endgame cover: every final circle centre on a 1 m grid.
-  const r = FINAL_CIRCLE_RADIUS;
-  const rc = Math.ceil(r / g.cell);
-  let worst = { x: 0, z: 0, boxes: Infinity, floor: Infinity, score: Infinity };
-  const coverErrors: string[] = [];
-  let centres = 0;
-  for (let cz = Math.ceil(z.z0); cz <= z.z1 + EPS; cz++)
-    for (let cx = Math.ceil(z.x0); cx <= z.x1 + EPS; cx++) {
-      centres++;
-      let boxes = 0;
-      for (const o of m.obstacles) if (circleHitsBox(cx, cz, r, o)) boxes++;
-      const c0 = cellOf(g, { x: cx, z: cz });
-      const i0 = c0 % g.nx;
-      const j0 = (c0 - i0) / g.nx;
-      let cells = 0;
-      let open = 0;
-      for (let dj = -rc; dj <= rc; dj++)
-        for (let di = -rc; di <= rc; di++) {
-          const i = i0 + di;
-          const j = j0 + dj;
-          if (i < 0 || j < 0 || i >= g.nx || j >= g.nz) continue;
-          const p = cellPt(g, j * g.nx + i);
-          if ((p.x - cx) ** 2 + (p.z - cz) ** 2 > r * r) continue;
-          cells++;
-          if (g.walk[j * g.nx + i]) open++;
-        }
-      const floor = cells ? open / cells : 0;
-      // How close to failing: the tighter of the two measures, as a share of its limit.
-      const score = Math.min(boxes / FINAL_MIN_BOXES, floor / FINAL_MIN_FLOOR);
-      if (score < worst.score) worst = { x: cx, z: cz, boxes, floor, score };
-      if (boxes < FINAL_MIN_BOXES || floor < FINAL_MIN_FLOOR) coverErrors.push(`circle at (${cx}, ${cz}): ${boxes} boxes, ${f(floor * 100, 0)} % floor`);
-    }
-  check(
-    coverErrors.length === 0,
-    `every final circle (r ${r} m, ${centres} centres) has ${FINAL_MIN_BOXES}+ boxes and ${FINAL_MIN_FLOOR * 100}%+ standable floor`,
-    coverErrors,
-  );
-
-  // 8. Tall decor: outside the walls, and no floor hidden from the camera.
-  // The camera looks down (-1, -1, -1) from the +x / +z side, so a tree just
-  // outside the +x or +z wall stands between it and the floor near that wall.
-  const tall = m.decor.filter((d) => (TALL_DECOR as readonly string[]).includes(d.prop));
-  const inside = tall
-    .filter((d) => Math.abs(d.x) - columnOf(d.prop).r * (d.scale ?? 1) < m.halfX + WALL_THICKNESS && Math.abs(d.z) - columnOf(d.prop).r * (d.scale ?? 1) < m.halfZ + WALL_THICKNESS)
-    .map((d) => `${d.prop} at (${d.x}, ${d.z}) touches the arena or its walls`);
-  check(inside.length === 0, `${tall.length} tall decor props all outside the walls`, inside);
-  const columns = {
-    ...m,
-    obstacles: tall.map((d) => {
-      const { r, h } = columnOf(d.prop);
-      const k = d.scale ?? 1;
-      return { kind: "crate" as const, x: d.x, z: d.z, w: 2 * r * k, d: 2 * r * k, h: h * k };
-    }),
-  };
-  const shaded: string[] = [];
-  for (let c = 0; c < g.walk.length; c += 3) {
-    if (!g.walk[c]) continue;
-    const p = cellPt(g, c);
-    // Any part of a player (from the feet up) hidden by a tree counts.
-    if (hiddenFromCamera(columns, p.x, p.z, 0.05)) shaded.push(`floor at (${f(p.x)}, ${f(p.z)}) hidden from the camera by tall decor`);
-  }
-  check(shaded.length === 0, "tall decor hides no floor from the camera", shaded);
-
-  const { tightShare, openShare } = tightOpen(m);
-  const ms = performance.now() - t0;
-  return { m, minStart, worst, tightShare, openShare, ms };
+// The zone of a real match: covers the map, closes on the drawn centre inside the limits.
+for (const map of ROYALE_MAPS) {
+  const z = pickZone(map, "room:abc", 100, 100 + ticks(ZONE.close));
+  const lim = map.royale!.zone;
+  check(z.r0 >= Math.hypot(map.halfX, map.halfZ), `${map.id}: the zone starts round the whole map (r ${z.r0.toFixed(1)})`);
+  check(z.x1 >= lim.x0 && z.x1 <= lim.x1 && z.z1 >= lim.z0 && z.z1 <= lim.z1 && z.r1 === 0, `${map.id}: it closes on a centre inside its limits (${z.x1.toFixed(1)}, ${z.z1.toFixed(1)})`);
+  const again = pickZone(map, "room:abc", 100, 200);
+  const other = pickZone(map, "room:xyz", 100, 200);
+  check(again.x1 === z.x1 && again.z1 === z.z1 && (other.x1 !== z.x1 || other.z1 !== z.z1), `${map.id}: the centre comes from the match seed`);
 }
 
-if (import.meta.main) {
-  const rows = ROYALE_MAPS.map(checkMap);
+// --- Grenade stacks ------------------------------------------------------------------
 
-  console.log("\nmap        size   boxes  starts  crates  min start gap  worst endgame circle           tight  open   time");
-  for (const { m, minStart, worst, tightShare, openShare, ms } of rows)
-    console.log(
-      [
-        m.id.padEnd(10),
-        `${2 * m.halfX}x${2 * m.halfZ}`.padEnd(6),
-        String(m.obstacles.length).padEnd(6),
-        String(m.spawns.length).padEnd(7),
-        String(m.crates.length).padEnd(7),
-        `${f(minStart)} m`.padEnd(14),
-        `(${worst.x}, ${worst.z}) ${worst.boxes} boxes ${f(worst.floor * 100, 0)}% floor`.padEnd(30),
-        `${f(tightShare * 100)}%`.padEnd(6),
-        `${f(openShare * 100)}%`.padEnd(6),
-        `${f(ms / 1000, 2)} s`,
-      ].join(" "),
-    );
+const fragMax = GRENADES[GRENADE_FRAG].stack;
+const none = takeGrenades({ type: GRENADE_FRAG, count: 0 }, { type: GRENADE_SMOKE, count: 1 });
+check(none.held.type === GRENADE_SMOKE && none.held.count === 1 && none.left === 0 && none.dropped === null, "none held: the stack is taken");
+const add = takeGrenades({ type: GRENADE_FRAG, count: 1 }, { type: GRENADE_FRAG, count: 1 });
+check(add.held.count === 2 && add.left === 0 && add.dropped === null, "the same type adds to the stack");
+const cap = takeGrenades({ type: GRENADE_FRAG, count: fragMax - 1 }, { type: GRENADE_FRAG, count: 2 });
+check(cap.held.count === fragMax && cap.left === 1 && cap.taken === 1, `up to the type's maximum (${fragMax}); the rest stays on the floor`);
+const full = takeGrenades({ type: GRENADE_FRAG, count: fragMax }, { type: GRENADE_FRAG, count: 2 });
+check(full.taken === 0 && full.left === 2 && full.held.count === fragMax, "at the maximum: nothing is taken");
+const swap = takeGrenades({ type: GRENADE_FRAG, count: 2 }, { type: GRENADE_SMOKE, count: 1 });
+check(swap.held.type === GRENADE_SMOKE && swap.held.count === 1 && swap.dropped?.type === GRENADE_FRAG && swap.dropped.count === 2 && swap.left === 0, "another type swaps in, and the old stack drops");
+check(useGrenade(2) === 1 && useGrenade(1) === 0 && useGrenade(0) === 0, "each throw uses one, never below 0");
+check(GRENADES.every((g) => g.stack >= 1), "every grenade type has a stack of at least 1");
 
-  if (failures.length > 0) {
-    console.error(`\n${failures.length} failed`);
-    process.exit(1);
-  }
-  console.log("\nroyale maps: all checks passed");
+// --- Gun slots ------------------------------------------------------------------------
+
+const RIFLE = 0;
+const SMG = WEAPONS.findIndex((w) => w.key === "smg");
+const SNIPER = WEAPONS.findIndex((w) => w.key === "sniper");
+const DMR = WEAPONS.findIndex((w) => w.key === "dmr");
+const start = spawnSim(0, 0, RIFLE, undefined, startKit());
+check(gunInHand(start.kit) === PISTOL && start.ammo === WEAPONS[PISTOL].magazine && gunAt(start.kit, 1) === NO_GUN, "the start: the Pistol in slot 1, in hand, full; slots 2-3 empty");
+check(WEAPONS[PISTOL].pickable === false, "the Pistol is a starting gun only (pickable: false)");
+
+const one = takeGun(start, RIFLE, 7)!;
+check(!!one && gunAt(one.kit, 1) === RIFLE && one.kit.mag1 === 7 && gunInHand(one.kit) === PISTOL, "a gun fills the first free slot, with its magazine; the one in hand stays");
+check(takeGun(one, RIFLE, 12) === null, "a gun already carried stays on the floor");
+const two = takeGun(one, SMG, 30)!;
+check(freeGunSlot(two.kit) === -1 && takeGun(two, SNIPER, 4) === null, "with 3 guns, walking over another does nothing");
+
+// Switching through the step: each gun keeps its magazine, the switch cancels a reload.
+const idle: InputMessage = { seq: 0, mx: 0, mz: 0, aim: 0, fire: false, gx: 0, gz: 0, dash: 0, grenade: 0, shield: 0, reload: 0, slot: 0, switch: 0, swap: 0 };
+const can = playerCan(true, "playing");
+let seq = 0;
+const step = (s: PlayerSim, extra: Partial<InputMessage>) => stepPlayer(open, s, { ...idle, seq: ++seq, ...extra }, RIFLE, can, GRENADE_FRAG, "slots");
+const open = { halfX: 20, halfZ: 20, obstacles: [] };
+let s = { ...two, ammo: 4 }; // 4 left in the Pistol
+let r = step(s, { slot: 1, switch: 1 });
+s = r.sim;
+check(gunInHand(s.kit) === RIFLE && s.ammo === 7 && magAt(s, 0) === 4, `switch to slot 2: the rifle's 7 in hand, the Pistol keeps its 4 (${s.ammo}, ${magAt(s, 0)})`);
+const delay = ticks(ROYALE.switchTime);
+let fired = -1;
+for (let i = 0; i < delay + 3 && fired < 0; i++) {
+  r = step(s, { fire: true, switch: 1, slot: 1 });
+  s = r.sim;
+  if (r.fired) fired = i + 1;
 }
+check(fired === delay, `a switch waits ${ROYALE.switchTime} s (${delay} steps) before it can fire (fired on step ${fired})`);
+check(s.ammo === 6, "the shot came out of the rifle's magazine");
+r = step(s, { reload: 1, switch: 1, slot: 1 });
+s = r.sim;
+check(s.reloadTicks > 0, "a reload starts");
+r = step(s, { reload: 1, switch: 2, slot: 2 });
+s = r.sim;
+check(gunInHand(s.kit) === SMG && s.reloadTicks === 0 && s.ammo === 30 && magAt(s, 1) === 6, "switching away mid-reload cancels it: the rifle keeps 6, the SMG's 30 in hand");
+r = step(s, { reload: 1, switch: 3, slot: 1 });
+s = r.sim;
+check(gunInHand(s.kit) === RIFLE && s.ammo === 6, "and back: the rifle's magazine as it was (not refilled)");
+const same = step(s, { reload: 1, switch: 4, slot: 1 }).sim;
+check(same.fireCd <= s.fireCd, "asking for the slot in hand does nothing");
+const toEmpty = stepPlayer(open, { ...one, kit: { ...one.kit } }, { ...idle, seq: 999, switch: 1, slot: 2 }, RIFLE, can, GRENADE_FRAG, "slots").sim;
+check(gunInHand(toEmpty.kit) === PISTOL, "an empty slot can't be switched to");
+const dead = stepPlayer(open, two, { ...idle, seq: 1000, switch: 1, slot: 1 }, RIFLE, playerCan(false, "playing"), GRENADE_FRAG, "slots").sim;
+check(gunInHand(dead.kit) === PISTOL && dead.kit.switchSeen === 1, "dead: the press is used up and nothing switches");
+const loadout = stepPlayer(open, two, { ...idle, seq: 1001, switch: 1, slot: 1 }, RIFLE, can).sim;
+check(gunInHand(loadout.kit) === PISTOL, "the other modes (loadout): the switch press does nothing");
+
+// The wheel: carried slots only.
+check(cycleSlot(two.kit, 1) === 1 && cycleSlot({ ...two.kit, hand: 2 }, 1) === 0 && cycleSlot(two.kit, -1) === 2, "the wheel cycles through carried guns");
+check(cycleSlot({ ...one.kit, hand: 1 }, 1) === 0 && cycleSlot(start.kit, 1) === 0, "skipping empty slots (alone: stays)");
+
+// F swap: the floor gun takes the hand's place, the old one drops with its magazine.
+const held = { ...s }; // rifle in hand with 6
+const sw = swapGun(held, SNIPER, 3)!;
+check(!!sw && gunInHand(sw.sim.kit) === SNIPER && sw.sim.ammo === 3 && sw.dropped.weapon === RIFLE && sw.dropped.mag === 6, "F swaps the floor gun into the hand; the old one drops, magazine as it was");
+check(sw.sim.fireCd >= delay && carriedGuns(sw.sim).length === 3, "the swapped-in gun waits the switch delay too; still 3 guns");
+check(swapGun(held, SMG, 30) === null, "F on a gun already carried does nothing");
+check(takeGun(sw.sim, DMR, 8) === null, "still full after a swap");
+
+// Counted grenades in the step (royale) against the cooldown (the other modes).
+const withTwo = { ...start, kit: { ...start.kit, grenades: 2 } };
+let g = stepPlayer(open, withTwo, { ...idle, seq: 1, grenade: 1, gx: 3 }, RIFLE, can, GRENADE_FRAG, "slots");
+check(!!g.grenade && g.sim.kit.grenades === 1 && g.sim.grenadeCd === ticks(ROYALE.throwGap), "a throw uses one grenade, and a short gap follows");
+g = stepPlayer(open, g.sim, { ...idle, seq: 2, grenade: 2, gx: 3 }, RIFLE, can, GRENADE_FRAG, "slots");
+check(!g.grenade && g.sim.kit.grenades === 1, "no second throw inside the gap");
+let empty = { ...start, kit: { ...start.kit, grenades: 0 } };
+const none0 = stepPlayer(open, empty, { ...idle, seq: 3, grenade: 1, gx: 3 }, RIFLE, can, GRENADE_FRAG, "slots");
+check(!none0.grenade, "with 0 grenades, nothing to throw");
+empty = spawnSim(0, 0, RIFLE);
+const cooled = stepPlayer(open, empty, { ...idle, seq: 1, grenade: 1, gx: 3 }, RIFLE, can, GRENADE_FRAG);
+check(!!cooled.grenade && cooled.sim.kit.grenades === 0 && cooled.sim.grenadeCd === ticks(GRENADES[GRENADE_FRAG].cooldown), "the other modes keep the grenade on its cooldown, uncounted");
+
+// --- Loot ------------------------------------------------------------------------------
+
+const draws = new Map<string, number>();
+for (let i = 0; i < 1000; i++) {
+  const d = rollLoot((i + 0.5) / 1000);
+  const key = `${d.kind}:${d.item}`;
+  draws.set(key, (draws.get(key) ?? 0) + 1);
+  if (d.item < 0 || d.amount < 1) failures.push(`loot ${key} is valid`);
+}
+check(draws.size === LOOT.length, `every loot line can drop (${draws.size} of ${LOOT.length})`);
+check(LOOT.every((e) => e.kind !== "gun" || WEAPONS.some((w) => w.key === e.key && w.key !== "pistol")), "the loot names real guns, never the Pistol");
+check(LOOT.every((e) => e.kind !== "grenade" || e.amount <= GRENADES.find((x) => x.key === e.key)!.stack), "no loot stack is over its type's maximum");
+
+// --- Maps: crate spots ------------------------------------------------------------------
+
+check(ROYALE_MAPS.length >= 1 && ROYALE_MAPS.every((m) => !MAPS.includes(m)), `royale maps: ${ROYALE_MAPS.map((m) => m.id).join(", ")} (never a duel map)`);
+for (const map of ROYALE_MAPS) {
+  const crates = map.royale!.crates;
+  const inside = crates.every((c) => Math.abs(c.x) <= map.halfX - 1 && Math.abs(c.z) <= map.halfZ - 1);
+  const clear = crates.every((c) => !map.obstacles.some((b) => circleOverlapsBox(c.x, c.z, ROYALE.crateRadius + PLAYER_RADIUS, b)));
+  const far = Math.min(...crates.flatMap((c) => map.spawns.map((sp) => Math.hypot(sp.x - c.x, sp.z - c.z))));
+  check(crates.length >= 10 && inside && clear, `${map.id}: ${crates.length} crates on open floor, inside the walls`);
+  check(far >= 3, `${map.id}: no crate within 3 m of a spawn (closest ${far.toFixed(1)} m)`);
+}
+
+if (failures.length > 0) {
+  console.error(`\n${failures.length} failed`);
+  process.exit(1);
+}
+console.log("\nroyale: all checks passed");

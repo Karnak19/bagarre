@@ -162,7 +162,8 @@ export function Scoreboard({
   countRender("scoreboard");
   // A free-for-all: a place column, and the clock counts down instead of the duel score.
   // A team deathmatch: the players grouped by team, each group under its team's score.
-  const ffa = model.mode === "ffa";
+  // A battle royale reads like a free for all: a place column (its order of knock-outs).
+  const ffa = model.mode === "ffa" || model.mode === "royale";
   const teams = model.teams;
   return (
     <VStack as="section" aria-label={label} xstyle={[styles.board, flat && styles.flat]} data-testid="scoreboard">
@@ -172,7 +173,7 @@ export function Scoreboard({
             {model.mapName}
           </Text>
           <Text type="supporting" color="secondary">
-            First to {ffa || teams ? model.killsToWin : KILLS_TO_WIN}
+            {model.mode === "royale" ? "Last one standing" : `First to ${ffa || teams ? model.killsToWin : KILLS_TO_WIN}`}
           </Text>
         </HStack>
         {teams ? (

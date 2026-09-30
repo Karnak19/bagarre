@@ -3,7 +3,9 @@
 // weapon picker line and the netcode debug line. In a free-for-all the score
 // and the opponent's bar give way to the rank panel, the kill feed and the
 // minimap (HudFfa.tsx); in a team deathmatch to the team score (HudTeam.tsx),
-// the same kill feed and minimap, in team colours.
+// the same kill feed and minimap, in team colours; in a battle royale to
+// the players still in and the zone's timer, and the weapon box to the three
+// gun slots (HudRoyale.tsx).
 //
 // match.ts writes a HudModel every frame (hud.ts). Nothing here re-renders
 // per frame: each widget selects the few fields it shows and re-renders only
@@ -36,8 +38,9 @@ import { paintOf } from "../../paint.ts";
 import { shallowEqual, useEngine, useSelector, useStoreEffect } from "../hooks.ts";
 import { shared, slotFill } from "../styles.ts";
 import { FfaPanel, KillFeed, MinimapBox } from "./HudFfa.tsx";
+import { GunSlots, RoyalePanel, ZoneArrow } from "./HudRoyale.tsx";
 import { TeamPanel } from "./HudTeam.tsx";
-import { WEAPON_KEYS, grenadeView } from "../../items.ts";
+import { PICKABLE_WEAPONS, WEAPON_KEYS, grenadeView } from "../../items.ts";
 import { GrenadePicker, WeaponPicker } from "./WeaponPicker.tsx";
 
 const styles = stylex.create({
@@ -147,15 +150,16 @@ export function Hud() {
   // A free-for-all swaps the duel's score and opponent bar for its rank panel,
   // the kill feed and the minimap; a team deathmatch for the team score, the
   // kill feed and the minimap.
-  const layout = useSelector(hud, (m) => (m?.team ? "team" : m?.ffa ? "ffa" : "duel"));
+  const layout = useSelector(hud, (m) => (m?.royale ? "royale" : m?.team ? "team" : m?.ffa ? "ffa" : "duel"));
   const big = layout !== "duel";
+  const royale = layout === "royale";
   return (
     <VStack xstyle={styles.root} data-testid="hud" aria-hidden="false">
       {big ? (
         <HStack justify="between" align="start" gap={4} xstyle={styles.top}>
           <PlayerBar mine />
           <VStack gap={2} align="end">
-            {layout === "team" ? <TeamPanel /> : <FfaPanel />}
+            {layout === "team" ? <TeamPanel /> : royale ? <RoyalePanel /> : <FfaPanel />}
             <KillFeed />
           </VStack>
         </HStack>
@@ -168,11 +172,12 @@ export function Hud() {
       )}
       {big && <MinimapBox />}
       <Status />
+      {royale && <ZoneArrow />}
       <MapCard />
       <Warmup />
-      <Picker />
+      {!royale && <Picker />}
       <HStack gap={2} align="stretch" xstyle={styles.bottom}>
-        <Weapon />
+        {royale ? <GunSlots /> : <Weapon />}
         <Ability kind="dash" keyLabel="Space" label="Dash" />
         <Ability kind="grenade" keyLabel="Q" label="Grenade" />
         <Ability kind="shield" keyLabel="E" label="Shield" />
@@ -374,22 +379,33 @@ function Ability({ kind, keyLabel, label }: { kind: keyof typeof ABILITY; keyLab
   const a = ABILITY[kind];
   const state = useSelector(
     hud,
-    (m) => ({
-      ready: !m || a.cd(m) === 0,
-      active: kind === "shield" && (m?.me?.shieldHp ?? 0) > 0,
-      // The grenade slot names the type in hand, with its icon.
-      grenade: kind === "grenade" ? (m?.me?.grenade ?? 0) : -1,
-    }),
+    (m) => {
+      // Battle royale: grenades are counted, not on a cooldown; none left is never ready.
+      const count = kind === "grenade" && m?.royale ? m.royale.grenades : -1;
+      return {
+        ready: (!m || a.cd(m) === 0) && count !== 0,
+        active: kind === "shield" && (m?.me?.shieldHp ?? 0) > 0,
+        // The grenade slot names the type in hand, with its icon.
+        grenade: kind === "grenade" ? (m?.me?.grenade ?? 0) : -1,
+        count,
+      };
+    },
     shallowEqual,
   );
-  const shown = state.grenade >= 0 ? `${grenadeView(state.grenade).icon} ${grenadeDef(state.grenade).name}` : label;
+  const shown =
+    state.count === 0
+      ? "None"
+      : state.grenade >= 0
+        ? `${grenadeView(state.grenade).icon} ${grenadeDef(state.grenade).name}${state.count > 0 ? ` ×${state.count}` : ""}`
+        : label;
   // The sweep and the timer move every tick while cooling down: written here.
   const cd = useRef<HTMLElement>(null);
   const t = useRef<HTMLElement>(null);
   useStoreEffect(hud, (m) => {
     const left = m ? a.cd(m) : 0;
     const height = `${m ? Math.min(1, left / a.total(m)) * 100 : 0}%`;
-    const text = left > 0 ? `${(left / TICK_RATE).toFixed(1)}s` : "ready";
+    const none = kind === "grenade" && m?.royale?.grenades === 0;
+    const text = none ? "find some" : left > 0 ? `${(left / TICK_RATE).toFixed(1)}s` : "ready";
     if (cd.current && cd.current.style.height !== height) cd.current.style.height = height;
     if (t.current && t.current.textContent !== text) t.current.textContent = text;
   });
@@ -399,6 +415,7 @@ function Ability({ kind, keyLabel, label }: { kind: keyof typeof ABILITY; keyLab
       data-testid={`hud-${kind}`}
       data-ready={state.ready ? "" : undefined}
       data-type={state.grenade >= 0 ? GRENADES[state.grenade]?.key : undefined}
+      data-count={state.count >= 0 ? state.count : undefined}
     >
       <VStack ref={cd} xstyle={styles.cd} />
       <Text xstyle={[styles.front, styles.key]}>{keyLabel}</Text>
@@ -432,6 +449,7 @@ function Warmup() {
   countRender("hud.warmup");
   const { hud } = useEngine();
   const seconds = useSelector(hud, (m) => m?.warmup ?? null);
+  const royale = useSelector(hud, (m) => !!m?.royale);
   if (seconds === null) return null;
   return (
     <VStack gap={1} xstyle={[styles.panel, styles.warmup]} data-testid="warmup">
@@ -441,9 +459,19 @@ function Warmup() {
           {seconds}
         </Text>
       </Text>
-      <Text xstyle={styles.warmupSub}>Pick your loadout: it's in your hand at once. No shooting until the match starts.</Text>
-      <WeaponPicker live />
-      <GrenadePicker heading="Your grenade" live />
+      {royale ? (
+        // Battle royale: nothing to pick.
+        <Text xstyle={styles.warmupSub}>
+          One life. Everyone starts with the Pistol: break crates for guns and grenades (1-3 or the wheel switch guns, F swaps
+          with one on the floor). Stay inside the zone. Last one standing wins.
+        </Text>
+      ) : (
+        <>
+          <Text xstyle={styles.warmupSub}>Pick your loadout: it's in your hand at once. No shooting until the match starts.</Text>
+          <WeaponPicker live />
+          <GrenadePicker heading="Your grenade" live />
+        </>
+      )}
     </VStack>
   );
 }
@@ -469,7 +497,7 @@ function Picker() {
   const hint = p.canPick ? (changed ? "applies on respawn" : `${WEAPON_KEYS} weapon, G grenade`) : "pick while dead";
   return (
     <HStack gap={1.5} align="center" xstyle={styles.picker} data-testid="hud-picker">
-      {WEAPONS.map((w, i) => (
+      {PICKABLE_WEAPONS.map((i) => WEAPONS[i]).map((w, i) => (
         <Text
           key={w.name}
           xstyle={[

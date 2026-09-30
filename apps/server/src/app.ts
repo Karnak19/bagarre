@@ -1,10 +1,10 @@
 import { createAuthContext, createEndpoint, createRouter, defineRoom, defineServer, matchMaker } from "@colyseus/core";
 import { WebSocketTransport } from "@colyseus/ws-transport";
-import { FFA_ROOM_NAME, GAMES_ROUTE, ROOM_NAME, TEAM_ROOM_NAME, WATCH_ROUTE, type ModeRules, type OpenGame, type RoomMeta } from "@bagarre/shared";
+import { FFA_ROOM_NAME, GAMES_ROUTE, ROOM_NAME, ROYALE_ROOM_NAME, TEAM_ROOM_NAME, WATCH_ROUTE, type ModeRules, type OpenGame, type RoomMeta } from "@bagarre/shared";
 import { useDatabase } from "./accounts.ts";
 import { configureAuth, databaseService, type AuthConfig } from "./auth.ts";
 import { createDatabase, type DatabaseLocation } from "./db.ts";
-import { DuelRoom, FfaRoom, GameRoom, TeamRoom } from "./GameRoom.ts";
+import { DuelRoom, FfaRoom, GameRoom, RoyaleRoom, TeamRoom } from "./GameRoom.ts";
 
 /**
  * The menu's open games list: the public rooms of both modes, the ones with
@@ -16,7 +16,7 @@ import { DuelRoom, FfaRoom, GameRoom, TeamRoom } from "./GameRoom.ts";
  * the metadata, never from `clients`, which counts spectators too. `names`:
  * the room types to list (the smoke test lists its own).
  */
-export async function openGames(names: readonly string[] = [ROOM_NAME, FFA_ROOM_NAME, TEAM_ROOM_NAME]): Promise<OpenGame[]> {
+export async function openGames(names: readonly string[] = [ROOM_NAME, FFA_ROOM_NAME, TEAM_ROOM_NAME, ROYALE_ROOM_NAME]): Promise<OpenGame[]> {
   const out: OpenGame[] = [];
   for (const name of names) {
     const rooms = await matchMaker.query({ name, private: false });
@@ -44,7 +44,7 @@ export async function openGames(names: readonly string[] = [ROOM_NAME, FFA_ROOM_
 
 const listGames = createEndpoint(GAMES_ROUTE, { method: "GET" }, async () => ({ games: await openGames() }));
 
-const GAME_ROOM_NAMES = new Set([ROOM_NAME, FFA_ROOM_NAME, TEAM_ROOM_NAME]);
+const GAME_ROOM_NAMES = new Set([ROOM_NAME, FFA_ROOM_NAME, TEAM_ROOM_NAME, ROYALE_ROOM_NAME]);
 
 /**
  * Watching a game: a spectator's place in a room, past the seat lock (a full
@@ -84,10 +84,11 @@ function watchEndpoint(allowRoom: (name: string) => boolean) {
 /**
  * `mapId` pins every duel room to one duel map (the smoke test forces
  * "yard"), `ffaMapId` every FFA room to one FFA map, `teamMapId` every team
- * deathmatch room to one team map; without them each match picks a random
+ * deathmatch room to one team map, `royaleMapId` every battle royale room
+ * to one royale map; without them each match picks a random
  * map of its mode's pool. `watchAnyRoom` opens the watch
  * route to every room type (the smoke test's own), not just "duel" and "ffa".
- * `duelRules` / `ffaRules` / `teamRules` tweak each mode's rules (the e2e
+ * `duelRules` / `ffaRules` / `teamRules` / `royaleRules` tweak each mode's rules (the e2e
  * server's short kill target and countdown). `database` is where the
  * accounts live: "memory" for the smoke and e2e servers, else DATABASE_URL
  * (see db.ts). `auth` overrides the public URLs, Discord and mail settings
@@ -100,10 +101,12 @@ export function createServer(
     mapId?: string;
     ffaMapId?: string;
     teamMapId?: string;
+    royaleMapId?: string;
     watchAnyRoom?: boolean;
     duelRules?: Partial<ModeRules>;
     ffaRules?: Partial<ModeRules>;
     teamRules?: Partial<ModeRules>;
+    royaleRules?: Partial<ModeRules>;
     database?: DatabaseLocation;
     auth?: Partial<AuthConfig>;
   } = {},
@@ -115,6 +118,7 @@ export function createServer(
   const duel = options.duelRules ? DuelRoom.withRules(options.duelRules) : DuelRoom;
   const ffa = options.ffaRules ? FfaRoom.withRules(options.ffaRules) : FfaRoom;
   const tdm = options.teamRules ? TeamRoom.withRules(options.teamRules) : TeamRoom;
+  const royale = options.royaleRules ? RoyaleRoom.withRules(options.royaleRules) : RoyaleRoom;
   return defineServer({
     greet: options.greet ?? false,
     gracefullyShutdown: options.gracefullyShutdown ?? true,
@@ -123,6 +127,7 @@ export function createServer(
       [ROOM_NAME]: defineRoom(options.mapId ? duel.pinnedTo(options.mapId) : duel),
       [FFA_ROOM_NAME]: defineRoom(options.ffaMapId ? ffa.pinnedTo(options.ffaMapId) : ffa),
       [TEAM_ROOM_NAME]: defineRoom(options.teamMapId ? tdm.pinnedTo(options.teamMapId) : tdm),
+      [ROYALE_ROOM_NAME]: defineRoom(options.royaleMapId ? royale.pinnedTo(options.royaleMapId) : royale),
     },
     // Booted before the server listens; adds the auth and account routes.
     database: databaseService(db),
