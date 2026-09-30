@@ -53,12 +53,12 @@ export const E2E_RULES = {
   /** A team deathmatch starts 2 s after it is 2v2. */
   tdm: { countdown: 2, respawnDelay: 0.5, warmup: E2E_WARMUP },
   /**
-   * A battle royale starts 2 s after the second player is in; its zone waits
+   * A battle royale starts when its host presses Start (no countdown); its zone waits
    * 60 s and closes at 90 s (30 s and 4:30 in the game): long enough for a
    * spec's steps, short enough to watch it close (POST /zone moves it on).
    * The result stays 10 s, like the duel's.
    */
-  royale: { countdown: 2, warmup: E2E_WARMUP, endDelay: 10, royale: { zoneWait: 60, zoneClose: 90 } },
+  royale: { warmup: E2E_WARMUP, endDelay: 10, royale: { zoneWait: 60, zoneClose: 90 } },
 };
 
 const port = Number(process.env.PORT ?? 2610);

@@ -36,6 +36,9 @@ function statusLine(v: GameView | null): string {
     let n = 0;
     s.players.forEach(() => n++);
     const need = rulesOf(s.mode).minPlayers - n;
+    // Battle royale: enough are in, the host starts it.
+    const host = s.players.get(s.host)?.name;
+    if (need <= 0 && rulesOf(s.mode).hostStarts && host) return `Waiting for ${host} to start`;
     return need > 0 ? `Waiting for ${need === 1 ? "one more player" : `${need} more players`}` : "Waiting for players";
   }
   // The players are on the map picking their loadout: the same timer they see.

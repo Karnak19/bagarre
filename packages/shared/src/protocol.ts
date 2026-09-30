@@ -23,6 +23,12 @@ export const MSG_TEAM = "team";
 /** Spectator -> room: take a free seat, on the same connection. Payload `{}`. */
 export const MSG_TAKE_SEAT = "seat";
 /**
+ * Host -> room: start the match now. Payload `{}`. Only in a mode whose host
+ * starts it (`ModeRules.hostStarts`, the battle royale), and only honoured
+ * from the host, while waiting, with enough players in (`acceptsStart`).
+ */
+export const MSG_START = "start";
+/**
  * Close code: the room has had spectators but no player for
  * SPECTATOR_IDLE_S, so it closes. 4000-4010 are Colyseus'; ours are 4011+.
  */
@@ -492,6 +498,11 @@ export interface RoomStateView {
   timeLimit: number;
   /** Server ticks left of the pre-match countdown while waiting (0: not counting down). */
   countdown: number;
+  /**
+   * Session id of the room's host: the first seated player in join order
+   * ("" with none). In a battle royale the host starts the match.
+   */
+  host: string;
   /**
    * Warmup: the server tick it ends on (the match starts then). A tick, not
    * a duration, so every client shows the same timer, one that reconnects

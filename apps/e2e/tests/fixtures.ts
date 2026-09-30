@@ -2,8 +2,9 @@
 //
 // - `players.open()` makes a player: its own browser context (own storage,
 //   own guest name, own connection), so N players are N contexts.
-// - `players.duel()` / `players.ffa(n)` / `players.teams(n)` open a private game by its link and
-//   wait until every player is in the match. Private games are never listed
+// - `players.duel()` / `players.ffa(n)` / `players.teams(n)` / `players.royale(n)` open a private
+//   game by its link and wait until every player is in the match (a royale's host then presses
+//   Start, through the real UI). Private games are never listed
 //   nor quick-matched, so tests running in parallel never meet.
 // - `Player.state()` reads the dev handle `window.__bagarre` (Vite dev only)
 //   into one plain object: assertions go through it and data-testids, never
@@ -47,6 +48,8 @@ export interface PlayerState {
   mapId: string | null;
   /** The latest snapshot's server tick (0 before any). */
   tick: number;
+  /** Session id of the room's host (the battle royale's host starts the match). */
+  host: string;
   /** Warmup: the server tick it ends on (0 outside warmup), and the tick the match clock started on. */
   warmupEnd: number;
   startTick: number;
@@ -227,6 +230,7 @@ export class Player {
         phase: latest?.phase ?? null,
         mapId: latest?.mapId ?? null,
         tick: latest?.tick ?? 0,
+        host: latest?.host ?? "",
         warmupEnd: latest?.warmupEnd ?? 0,
         startTick: latest?.startTick ?? 0,
         bullets: latest?.bullets.size ?? 0,
@@ -500,6 +504,17 @@ export async function signUp(p: Player, who: { email: string; username: string; 
   await expect(panel.getByTestId("username-form")).toBeHidden();
 }
 
+/**
+ * Battle royale: the host presses Start on its waiting card, once it shows
+ * `n` players and is enabled. (The match then goes into its warmup.)
+ */
+export async function pressStart(host: Player, n: number) {
+  const start = host.testId("royale-start");
+  await expect(start).toHaveAttribute("data-players", String(n));
+  await expect(start).toHaveAttribute("data-ready", "true");
+  await start.click();
+}
+
 export class Players {
   private all: Player[] = [];
   private browsers: Browser[] = [];
@@ -578,15 +593,24 @@ export class Players {
     return { players, code, invite };
   }
 
-  /** A private battle royale by link with `n` players (on Ironvale); resolves once they are all in the room. */
+  /**
+   * A private battle royale by link with `n` players (on Ironvale): once they
+   * are all in the room, the host (A, the first in) presses Start on its
+   * waiting card. Resolves once the match is started (its warmup or play).
+   */
   async royale(n: number): Promise<{ players: Player[]; code: string; invite: string }> {
+    const lobby = await this.royaleLobby(n);
+    await pressStart(lobby.players[0], n);
+    for (const p of lobby.players) await expect.poll(async () => (await p.state()).phase, { message: `${p.name}: started` }).not.toBe("waiting");
+    return lobby;
+  }
+
+  /** A private battle royale by link with `n` players, all in the room, still waiting for the host (A, `players[0]`) to start it. */
+  async royaleLobby(n: number): Promise<{ players: Player[]; code: string; invite: string }> {
     const { host, invite, code } = await this.host("royale", "A");
-    // The countdown starts as soon as two are in and a started match takes no more seats: hold it until everyone is here.
-    await setCountdown(code, 120);
     const players = [host];
     for (let i = 1; i < n; i++) players.push(await this.join(invite, String.fromCharCode(65 + i), ROYALE_MAP));
     for (const p of players) await expect.poll(async () => (await p.state()).players.length).toBe(n);
-    await setCountdown(code, 1);
     return { players, code, invite };
   }
 

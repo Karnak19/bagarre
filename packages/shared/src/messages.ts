@@ -85,6 +85,11 @@ export function parseTakeSeat(raw: unknown): Record<string, never> | null {
   return record(raw) ? {} : null;
 }
 
+/** MSG_START: a plain object; its fields are ignored. */
+export function parseStart(raw: unknown): Record<string, never> | null {
+  return record(raw) ? {} : null;
+}
+
 /** MSG_TEAM: TEAM_RED or TEAM_BLUE, nothing else. */
 export function parseTeam(raw: unknown): TeamMessage | null {
   const m = record(raw);

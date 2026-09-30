@@ -6,6 +6,7 @@ import {
   MSG_PICK,
   MSG_PING,
   MSG_PONG,
+  MSG_START,
   MSG_TAKE_SEAT,
   MSG_TEAM,
   NO_TEAM,
@@ -64,6 +65,8 @@ export interface Snapshot {
   timeLimit: number;
   /** Ticks left of the pre-match countdown (0: none). */
   countdown: number;
+  /** Session id of the room's host ("" with none). The battle royale's host starts the match. */
+  host: string;
   /** Warmup: the server tick it ends on (0 outside warmup). See `warmupLeft`. */
   warmupEnd: number;
   suddenDeath: boolean;
@@ -151,6 +154,7 @@ function capture(state: RoomStateView): Omit<Snapshot, "t" | "epoch"> {
     killsToWin: state.killsToWin,
     timeLimit: state.timeLimit,
     countdown: state.countdown,
+    host: state.host ?? "",
     warmupEnd: state.warmupEnd ?? 0,
     suddenDeath: state.suddenDeath,
     players,
@@ -467,6 +471,12 @@ export class Net {
   sendTeam(team: number) {
     if (this.status !== "connected" || this.role === "spectator") return;
     this.delay(() => this.send(MSG_TEAM, { team }));
+  }
+
+  /** Battle royale host, while waiting: start the match (the server ignores it from anyone else, or with too few players). */
+  sendStart() {
+    if (this.status !== "connected" || this.role === "spectator") return;
+    this.delay(() => this.send(MSG_START, {}));
   }
 
   /** Spectator: take the free seat (the role flips on the snapshot that has us in `players`). */

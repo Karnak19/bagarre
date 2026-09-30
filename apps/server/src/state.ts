@@ -248,6 +248,8 @@ export const GameState = schema(
     timeLimit: t.uint16().default(0),
     /** Ticks left of the pre-match countdown (0: not counting down). */
     countdown: t.uint16().default(0),
+    /** Session id of the host: the first seated player in join order ("" with none). The battle royale's host starts the match. */
+    host: t.string().default(""),
     suddenDeath: t.boolean().default(false),
     players: t.map(Player),
     bullets: t.map(Bullet),

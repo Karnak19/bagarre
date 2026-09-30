@@ -100,17 +100,19 @@ The first run may need the browser: `bunx playwright install chromium` in
   countdown and the respawn delay. A 0.5 s death or a 2 s countdown can fall
   between two frames of a starved CI page, so a spec that checks one holds it
   open, checks, then lets it go (`setCountdown()`, `setRespawn()`).
-  The battle royale's rules are short too (a 2 s countdown, the zone
-  waiting 60 s and closed at 90 s), and two more calls drive it:
+  The battle royale's rules are short too (the zone waiting 60 s and
+  closed at 90 s; it has no countdown, its host starts it), and two more calls drive it:
   `POST /loot` makes a room's crates drop a given gun, or any floor item
   (healing items, shield charges), instead of a random item (`setLoot()`), `POST /zone` moves the running zone's shrink to start
   and end some seconds from now (`setZone()`).
 - `tests/fixtures.ts` holds the fixtures. `players.open()` is a new player
-  (its own browser context); `players.duel()`, `players.teams(n)` and `players.host()` /
+  (its own browser context); `players.duel()`, `players.teams(n)`, `players.royale(n)` and `players.host()` /
   `players.join()` open a private game by its link, so tests running in
   parallel never meet. `Player.state()` reads the dev handle into one plain
   object (screen, card, phase, room, players, spectator...), and `kill()`,
   `bot()`, `sfxCount()` / `sfxSince()` drive and watch the game.
+  `players.royale(n)` has the host press Start on its waiting card, through
+  the real UI (`pressStart()`); `players.royaleLobby(n)` stops before it.
 - Assertions go through `data-testid`s and `__bagarre`, never pixels. Wait
   with web-first assertions and `expect.poll` / `expectState()`, never a
   fixed sleep. Pages open with `?map=` (pinned map), `?fps=` (a dev-only
@@ -391,7 +393,10 @@ TypeScript: React never runs per frame and there is no React Three Fiber.
   `hud-team-you`, `hud-team-time`, `scoreboard-team` (with `data-team`,
   `data-score`, `data-you`, `data-won`), `scoreboard-team-heading` and
   `result-teams`. The battle royale adds `play-royale`, `private-royale`,
-  `royale-countdown`, `royale-players`, `hud-royale` (with `data-alive`,
+  `royale-start` (the host's Start, with `data-ready`, `data-players`),
+  `royale-start-hint`, `royale-waiting-host` (everyone else's "Waiting for
+  ... to start"), `royale-players` (with `data-players`), the host's `seat`
+  `data-host`, `hud-royale` (with `data-alive`,
   `data-zone`), `hud-royale-alive`, `hud-zone-time`, `hud-zone-arrow`,
   `hud-slots`, `hud-slot-{1,2,3}` (with `data-weapon`, `data-active`,
   `data-ammo`), the grenade and shield slots' `data-count`, `hud-heals`,
@@ -576,7 +581,15 @@ slots, the loot, the maps' crate spots; `src/heal.test.ts`: the heals,
 what cancels them, the stacks and the shield charges; `src/maps/royale/royale-maps.test.ts`:
 the royale map's layout, see [docs/royale-maps.md](docs/royale-maps.md)).
 
-- **Start**: a 15 s countdown once 2 are in (more can join during it), then
+- **Start**: the room's host starts it (`ModeRules.hostStarts`). The host is
+  the first seated player in join order (`hostOf`, synced as `state.host`;
+  never a spectator); when they leave, the next one in is host at once.
+  Their waiting card has **Start** (or **Enter**), usable once 2 are in;
+  everyone else's says who they are waiting for. There is no countdown, and
+  a full room doesn't start on its own either. Start sends `MSG_START`
+  (`{}`, checked by `parseStart`); the room honours it only from the host,
+  while waiting, with 2 connected (`acceptsStart`), and ignores anything
+  else. More can join until then. It goes straight into
   a 5 s pre-match (the warmup) with nothing to pick: everyone has the
   **Pistol** (a weak starting gun, `pickable: false`: it is in no loadout
   picker and can't be picked in the other modes) and no grenades. Nobody can
@@ -645,6 +658,9 @@ the royale map's layout, see [docs/royale-maps.md](docs/royale-maps.md)).
   kept on `bagarre_matches` with `mode: "royale"`. A royale that started
   with fewer than 3 players isn't recorded (`ROYALE_MIN_RECORDED`): with two,
   one kill would be a win. The result card says which.
+- **After the result** (10 s, `ROYALE_END_DELAY`): no rematch on its own.
+  Everyone still in the room is back in the lobby, on their feet with the
+  Pistol, and the host starts the next match with Start, like the first.
 
 In a game the HUD shows who is still in and the zone's timer (top right),
 the three slots with their magazines in place of the weapon box, the
@@ -652,13 +668,15 @@ bandages and medkits, the grenade and shield charge counts, the heal in
 progress (or how it ended), and an arrow back to the zone when you are outside; the ground shows
 the zone's edge with a tint outside, the crates and the items. On the menu,
 **Battle royale** quick-matches one and **Private royale** makes a private
-one; in dev, `?play=royale`. The e2e spec is `apps/e2e/tests/royale.spec.ts`.
+one; in dev, `?play=royale`. The e2e specs are `apps/e2e/tests/royale.spec.ts`
+and `apps/e2e/tests/royale-start.spec.ts` (the host's Start); the host rules'
+unit tests are `packages/shared/src/host.test.ts`.
 
 ### Rooms and modes
 
 One room class plays every mode: `GameRoom` (`apps/server/src/GameRoom.ts`),
 driven by the mode's rules (`ModeRules` in `packages/shared/src/modes.ts`:
-seats, start threshold, teams, kill target, time limit, countdown, warmup, respawn
+seats, start threshold, teams, kill target, time limit, host start, countdown, warmup, respawn
 delay, result delay, drop-in, map pool, royale). `DuelRoom`, `FfaRoom`,
 `TeamRoom` and `RoyaleRoom` only pick the rules, and are registered as the
 `duel`, `ffa`, `tdm` and `royale` room types. The simulation

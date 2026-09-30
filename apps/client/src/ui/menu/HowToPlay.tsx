@@ -17,6 +17,7 @@ import {
   HEAL_MEDKIT,
   ROYALE,
   ROYALE_MAX_PLAYERS,
+  ROYALE_MIN_PLAYERS,
   SHIELD,
   TEAM_KILLS_TO_WIN,
   TEAM_SIZE,
@@ -82,7 +83,9 @@ export function HowToPlay() {
         the team ahead after {TEAM_TIME_LIMIT / 60} minutes. Your bullets and grenades never hurt a teammate, nor you.
       </Text>
       <Text>
-        Battle royale: up to {ROYALE_MAX_PLAYERS} players, one life each. Everyone starts with the Pistol and no grenades;
+        Battle royale: up to {ROYALE_MAX_PLAYERS} players, one life each. The first player in is the host and starts the
+        match ({k("Enter")} or Start) once {ROYALE_MIN_PLAYERS} are in; if the host leaves, the next one in takes over.
+        Everyone starts with the Pistol and no grenades;
         walk into crates for guns and grenades, and over what the fallen drop. You carry {ROYALE.gunSlots} guns ({k("1")}-
         {k("3")} or the wheel to switch, {k("F")} to swap the one in hand for one on the floor) and one grenade type at a
         time, counted. Health doesn't come back on its own: {k("4")} uses a bandage (+{HEAL_ITEMS[HEAL_BANDAGE].amount} HP,{" "}

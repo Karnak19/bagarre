@@ -19,7 +19,6 @@ import {
   MAX_PLAYERS,
   RESPAWN_DELAY,
   ROOM_NAME,
-  ROYALE_COUNTDOWN,
   ROYALE_END_DELAY,
   ROYALE_MAX_PLAYERS,
   ROYALE_MIN_PLAYERS,
@@ -85,7 +84,14 @@ export interface ModeRules {
    * and `rank`'s tiebreaks decide. 0 with no time limit (a duel).
    */
   suddenDeathMax: number;
-  /** Seconds of countdown before a match starts once enough players are in (0: starts at once). */
+  /**
+   * The room's host (the first seated player in join order, see `hostOf`)
+   * starts every match with a Start button (MSG_START): no countdown, and no
+   * start on its own, not even with every seat taken. False: the match
+   * starts on its own once enough players are in (after `countdown`).
+   */
+  hostStarts: boolean;
+  /** Seconds of countdown before a match starts once enough players are in (0: starts at once). Unused with `hostStarts`. */
   countdown: number;
   /**
    * Seconds of warmup once the match starts, before `playing` (see
@@ -122,6 +128,7 @@ export const DUEL_RULES: ModeRules = {
   // kill at a time), and a player leaving sends the room back to waiting with
   // no result. So no sudden death, and `rank` never has a tie to break.
   suddenDeathMax: 0,
+  hostStarts: false,
   countdown: 0,
   warmup: WARMUP_SECONDS,
   respawnDelay: RESPAWN_DELAY,
@@ -143,6 +150,7 @@ export const FFA_RULES: ModeRules = {
   killsToWin: FFA_KILLS_TO_WIN,
   timeLimit: FFA_TIME_LIMIT,
   suddenDeathMax: SUDDEN_DEATH_MAX,
+  hostStarts: false,
   countdown: FFA_COUNTDOWN,
   warmup: WARMUP_SECONDS,
   respawnDelay: FFA_RESPAWN_DELAY,
@@ -169,6 +177,7 @@ export const TEAM_RULES: ModeRules = {
   killsToWin: TEAM_KILLS_TO_WIN,
   timeLimit: TEAM_TIME_LIMIT,
   suddenDeathMax: SUDDEN_DEATH_MAX,
+  hostStarts: false,
   countdown: TEAM_COUNTDOWN,
   warmup: WARMUP_SECONDS,
   respawnDelay: TEAM_RESPAWN_DELAY,
@@ -183,6 +192,7 @@ export const TEAM_RULES: ModeRules = {
  * Everyone starts with the Pistol and no grenades and finds the rest in
  * crates; the zone closes in and the last one standing wins. No kill target
  * and no clock (the zone ends it), no joining once it started, no loadout.
+ * The host starts every match, the next one after a result included (`hostStarts`).
  */
 export const ROYALE_RULES: ModeRules = {
   mode: "royale",
@@ -199,7 +209,9 @@ export const ROYALE_RULES: ModeRules = {
   killsToWin: 0,
   timeLimit: 0,
   suddenDeathMax: 0,
-  countdown: ROYALE_COUNTDOWN,
+  // The host presses Start (once ROYALE_MIN_PLAYERS are in), then the warmup.
+  hostStarts: true,
+  countdown: 0,
   warmup: ROYALE_WARMUP,
   respawnDelay: FFA_RESPAWN_DELAY,
   endDelay: ROYALE_END_DELAY,
@@ -212,6 +224,27 @@ export const MODES: Record<GameMode, ModeRules> = { duel: DUEL_RULES, ffa: FFA_R
 
 export function isGameMode(v: unknown): v is GameMode {
   return v === "duel" || v === "ffa" || v === "tdm" || v === "royale";
+}
+
+/**
+ * The host of a room: the first session id in join order that still holds a
+ * seat (`seated`), or "" with none. Spectators are never in the join order;
+ * a battle royale player who left mid-match keeps a seat for the result but
+ * isn't `seated` any more. So when the host leaves, the next one in join
+ * order is host at once.
+ */
+export function hostOf(joinOrder: readonly string[], seated: (id: string) => boolean): string {
+  return joinOrder.find(seated) ?? "";
+}
+
+/**
+ * Whether a start request (MSG_START) starts the match: only in a mode whose
+ * host starts it, only while waiting, only from the host, and only with
+ * enough players in (`ready`, the room's own check). Anything else is
+ * ignored, never an error.
+ */
+export function acceptsStart(rules: ModeRules, req: { phase: string; sender: string; host: string; ready: boolean }): boolean {
+  return rules.hostStarts && req.phase === "waiting" && req.sender !== "" && req.sender === req.host && req.ready;
 }
 
 /** The rules of a synced `mode` string; an unknown one reads as a duel. */
