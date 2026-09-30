@@ -190,7 +190,7 @@ and session tokens, and [`@colyseus/database`](https://docs.colyseus.io/database
   set (the button is hidden otherwise). Register this redirect in the
   Discord developer portal (your app, OAuth2, Redirects):
   `<PUBLIC_URL>/colyseus/auth/provider/discord/callback`, so
-  `https://ghj9pktfasrpthjvvpg2gehp.big-server.basile.vernouillet.dev/colyseus/auth/provider/discord/callback`
+  `https://bagarre.basilevernouillet.com/colyseus/auth/provider/discord/callback`
   in production, and `http://localhost:2567/auth/provider/discord/callback`
   for a dev app. The server builds it from `PUBLIC_URL` (the site's public
   origin, required in production) plus `/colyseus`, or from

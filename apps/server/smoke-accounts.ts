@@ -145,7 +145,7 @@ const sameStats = (a: Stats | null | undefined, b: Stats) =>
 
 /** Configuration read from the environment: production refuses to start without its secrets. */
 function configChecks(check: Check) {
-  const PROD_ORIGIN = "https://ghj9pktfasrpthjvvpg2gehp.big-server.basile.vernouillet.dev";
+  const PROD_ORIGIN = "https://bagarre.basilevernouillet.com";
   const throws = (f: () => unknown) => {
     try {
       f();
