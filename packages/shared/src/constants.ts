@@ -96,7 +96,7 @@ export interface WeaponDef<K extends string = WeaponKey> {
  *    muzzle flash, shot sound, How to play blurb. It won't compile without it.
  * 3. Add its assets: the model under apps/client/public/models/guns/, and
  *    its shot sound (SfxName and the SFX table in apps/client/src/audio.ts).
- * 4. Append its key to WEAPON_IDS in packages/shared/scripts/items.check.ts.
+ * 4. Append its key to WEAPON_IDS in packages/shared/src/items.test.ts.
  * 5. For the battle royale: give it a weight in LOOT below (or leave it out:
  *    it then never drops from a crate).
  */
@@ -271,7 +271,7 @@ export const GRENADE_FLASH = 3;
  *    won't compile without it.
  * 3. Add its assets: the blast sound (SfxName and the SFX table in
  *    apps/client/src/audio.ts), any new particles in vfx.ts.
- * 4. Append its key to GRENADE_IDS in packages/shared/scripts/items.check.ts
+ * 4. Append its key to GRENADE_IDS in packages/shared/src/items.test.ts
  *    (and a new effect or `affects` value to EFFECTS / AFFECTS there).
  * 5. For the battle royale: its `stack`, and a weight in LOOT below.
  */

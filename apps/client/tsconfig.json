@@ -1,9 +1,12 @@
 {
+  // The browser code. vite.config.ts is tsconfig.node.json's, the tests
+  // tsconfig.test.json's (both see Bun's globals, which this must not).
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["vite/client"],
     "jsx": "react-jsx"
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
 }

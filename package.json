@@ -12,6 +12,7 @@
     "build:bin": "turbo run build:bin",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
+    "test": "turbo run test",
     "smoke": "turbo run smoke",
     "e2e": "turbo run e2e",
     "maps:validate": "turbo run maps:validate",

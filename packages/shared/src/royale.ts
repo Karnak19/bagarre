@@ -17,7 +17,7 @@
 //   press). See "Healing" below for the rules and their order.
 // - The loot: `rollLoot` draws one LOOT line by weight.
 //
-// `scripts/royale.check.ts` runs their self-checks (`bun run check`).
+// `royale.test.ts` tests them (`bun run test`).
 
 import {
   GRENADES,

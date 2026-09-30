@@ -31,6 +31,10 @@
     "lint": {
       "outputs": []
     },
+    "test": {
+      "dependsOn": ["^test"],
+      "outputs": []
+    },
     "smoke": {
       "cache": false,
       "passThroughEnv": ["NODE_ENV", "PORT", "SMOKE_PORT"]

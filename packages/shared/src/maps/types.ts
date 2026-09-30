@@ -64,7 +64,7 @@ export const FLAT_DECOR = [
  * The trees (Ultimate Nature Pack, about 2.2-3.6 m tall at scale 1, placed at
  * scale 2) are tall enough to hide the floor from the iso camera when they
  * stand just outside the +x or +z wall: keep them on the -x / -z sides, or far
- * out (scripts/royale-maps.check.ts measures it).
+ * out (royale/royale-maps.test.ts measures it).
  */
 export const TALL_DECOR = [
   "TrafficCone",
@@ -136,7 +136,7 @@ export interface Spawn {
 export interface RoyaleMapData {
   /**
    * Where a crate stands at the start of every match: open floor, never on
-   * or next to a spawn (scripts/royale.check.ts keeps them 3 m from every
+   * or next to a spawn (src/royale.test.ts keeps them 3 m from every
    * spawn and clear of cover).
    */
   crates: readonly Spawn[];

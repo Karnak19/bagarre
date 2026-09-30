@@ -1,4 +1,6 @@
 {
   "extends": "../../tsconfig.base.json",
-  "include": ["src"]
+  "include": ["src"],
+  // The tests are checked by tsconfig.test.json, with bun's types.
+  "exclude": ["src/**/*.test.ts"]
 }

@@ -1,0 +1,9 @@
+{
+  // The bun:test files, with bun's types (and Node's, which they bring).
+  // Kept out of tsconfig.json so the shared code itself sees no Bun globals.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["bun"]
+  },
+  "include": ["src/**/*.test.ts"]
+}
