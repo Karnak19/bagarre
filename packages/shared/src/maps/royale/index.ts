@@ -23,7 +23,7 @@ export interface RoyaleMapDef extends MapDef {
   hub: Spawn;
   /**
    * Start spots (the MapDef `spawns` doc about pairs is for duels): at least
-   * 12, spread round the map, no two in sight of each other at any distance.
+   * 10 (one per player, MIN_STARTS in scripts/royale.check.ts), spread round the map, no two in sight of each other at any distance.
    * Nobody respawns in this mode, so these are only about fair starts.
    */
   // spawns: readonly Spawn[] (inherited)

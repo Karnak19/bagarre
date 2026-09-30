@@ -485,17 +485,17 @@ export class GameScene {
     this.scene.add(sun.target);
   }
 
+  /** What the current arena is dressed with (arenaView's ArenaDressing), for the dev handle and tests. */
+  get dressing(): ArenaDressing | null {
+    return (this.arena.userData.dressing as ArenaDressing | undefined) ?? null;
+  }
+
   /**
    * Shows another map: frees the old arena's geometries (and the materials
    * made for it, never the loaded props'), builds the new one and applies its
    * theme. Also drops every drawn bullet and grenade, without sparks: they
    * belonged to the old map.
    */
-  /** What the current arena is dressed with (arenaView's ArenaDressing), for the dev handle and tests. */
-  get dressing(): ArenaDressing | null {
-    return (this.arena.userData.dressing as ArenaDressing | undefined) ?? null;
-  }
-
   setMap(map: MapDef) {
     if (this.map?.id === map.id) return;
     this.map = map;
