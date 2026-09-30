@@ -31,6 +31,7 @@ what it can (a second `bun run build` with nothing changed is instant).
 | `bun run build`         | Type-checks every package, then builds the client into `apps/client/dist` |
 | `bun run typecheck`     | Type-checks every package                                          |
 | `bun run lint`          | oxlint on every package                                             |
+| `bun run test`          | The unit tests (`bun:test`, the `*.test.ts` files next to the code) in every package; not the Playwright suite (see [Unit tests](#unit-tests)) |
 | `bun run smoke`         | Boots a real server, connects headless clients, checks the game loop, accounts, reconnection and shutdown (port 2599, or `SMOKE_PORT`) |
 | `bun run e2e`           | The Playwright suite: real browsers playing against a real server (see [End-to-end tests](#end-to-end-tests)) |
 | `bun run bench`         | Times the shared physics per tick (movement, bullets, reconcile, line of sight) on Ironvale and Crossroads, with a checksum that must not change when optimizing (`--map`, `--ticks`, `--json`) |
@@ -39,6 +40,28 @@ what it can (a second `bun run build` with nothing changed is instant).
 
 To run one package's task only: `bunx turbo run dev --filter=@bagarre/client`,
 or `bun run <script>` inside the package's folder.
+
+## Unit tests
+
+The game rules, the tables and the maps' layout rules are tested with
+`bun:test`, in `*.test.ts` files next to the code they test
+(`packages/shared/src/modes.test.ts`, `src/maps/royale/royale-maps.test.ts`,
+`apps/client/src/spectate/model.test.ts`...). `bun run test` runs them all;
+CI runs it too.
+
+```sh
+bun run test                                 # every package's tests
+cd packages/shared
+bun test src/royale.test.ts                  # one file
+bun test -t "the lot"                        # the tests whose name matches
+bun test --watch src                         # re-run on save
+```
+
+Each package's `test` script is `bun test ./src`, so a bare `bun test` at
+the repo root is not the way in: it would also pick up the Playwright
+specs in `apps/e2e/tests/`. They are typed by each package's
+`tsconfig.test.json` (with `@types/bun`), kept out of the main `tsconfig.json`
+so Bun's globals never reach the shared or browser code.
 
 ## End-to-end tests
 
@@ -51,7 +74,7 @@ bun run e2e                                  # the whole suite, headless
 cd apps/e2e
 bunx playwright test duel                    # one spec file (or -g "<test name>")
 bunx playwright test --headed --workers 1    # watch it play
-bun run test:ui                              # Playwright's UI mode
+bun run test:ui                              # Playwright's UI mode (in apps/e2e)
 bun run report                               # the last HTML report
 ```
 
@@ -391,7 +414,7 @@ Duel maps stay duel-only, and FFA maps never show up in a duel.
   it won outright). While the match runs, the HUD and Tab order players by
   kills, then damage. The result card says how a tie was broken ("Won on
   damage dealt", "Won by reaching 12 kills first", "Won on a coin flip").
-  `bun run check` in `packages/shared` runs `rank`'s self-check.
+  `packages/shared/src/modes.test.ts` tests `rank` (`bun run test`).
 - **Start**: once 3 players are in, a 10 s countdown (`FFA_COUNTDOWN`), then
   everyone spawns spread out, out of each other's sight (`ffaStartSpawns`),
   facing the centre. If a player leaves before the end of the countdown and
@@ -505,10 +528,10 @@ each. The rules are `ROYALE_RULES` in `packages/shared/src/modes.ts` (with
 `LOOT`, and one definition per healing item (`HEAL_ITEMS`) in
 `constants.ts`, and the pure rules (gun slots, grenade stacks, healing and
 shield charges, the zone, the loot draw) in `packages/shared/src/royale.ts`.
-`bun run check` in `packages/shared` runs their self-checks
-(`scripts/royale.check.ts`: the ranking, the zone over time, the stacks, the
-slots, the loot, the maps' crate spots; `scripts/heal.check.ts`: the heals,
-what cancels them, the stacks and the shield charges; `scripts/royale-maps.check.ts`:
+`bun run test` runs their tests
+(`src/royale.test.ts`: the ranking, the zone over time, the stacks, the
+slots, the loot, the maps' crate spots; `src/heal.test.ts`: the heals,
+what cancels them, the stacks and the shield charges; `src/maps/royale/royale-maps.test.ts`:
 the royale map's layout, see [docs/royale-maps.md](docs/royale-maps.md)).
 
 - **Start**: a 15 s countdown once 2 are in (more can join during it), then
@@ -764,8 +787,8 @@ How it works:
   capped at `MAX_HP`, nobody dead), `smokeCover` (in a cloud, or
   the line to them crosses one: `segmentHitsCircle`; "own" when every cloud in the
   way is the viewer's side's, `ownsCloud`, else "foreign") and `smokeVeil` (who
-  sees whom: none, faded or hidden). `bun run check` in `packages/shared` runs their self-checks
-  (`scripts/grenades.check.ts`).
+  sees whom: none, faded or hidden). `bun run test` runs their tests
+  (`packages/shared/src/grenades.test.ts`).
 - The stun is `stunTicks`, part of the synced `PlayerSim`: the shared
   `stepPlayer` reads it (half speed, no dash) and counts it down once per
   input, so the stunned player's own prediction slows down exactly like the
@@ -878,8 +901,8 @@ looks, in the client. Nothing is matched by position.
 - **Ids are append-only.** An item's index is its id on the wire (picks,
   `Player.weapon` / `Player.grenade`, `Grenade.kind`, the kill feed): never
   reorder, rename or remove one. Append the new key to `WEAPON_IDS` or
-  `GRENADE_IDS` in `packages/shared/scripts/items.check.ts` (and a new
-  effect or `affects` value to its `EFFECTS` / `AFFECTS` lists); `bun run check`
+  `GRENADE_IDS` in `packages/shared/src/items.test.ts` (and a new
+  effect or `affects` value to its `EFFECTS` / `AFFECTS` lists); `bun run test`
   fails if the order changes. A missing view entry or effect handler is a
   compile error (the tables are `Record`s keyed by item key or effect).
 

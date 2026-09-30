@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { ROYALE_MAPS, type RoyaleMapDef } from "../src/maps/royale/index.ts";
 import { bodiesSee, circleHitsBox, R } from "./analyze.ts";
 import { esc, hex, iso, KIND_COLOR, shade, toPng } from "./ffa/preview.ts";
-import { LATE_SECONDS, lateCircle, lateRadius, tightOpen } from "./royale-maps.check.ts";
+import { LATE_SECONDS, lateCircle, lateRadius, tightOpen } from "./royale-maps.ts";
 
 /** Git-ignored folder at the repo root. */
 const DEFAULT_OUT = join(fileURLToPath(new URL(".", import.meta.url)), "../../..", ".previews", "royale-maps");

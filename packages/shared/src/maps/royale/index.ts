@@ -10,8 +10,8 @@
 // is. ROYALE_MAPS is the royale mode's pool (ROYALE_RULES.maps) and nothing
 // else: these maps are never in MAPS (duels), FFA_MAPS or TEAM_MAPS, and
 // `ffaMapById` never falls back to one. `findMap` finds them, so a synced
-// `mapId` resolves. See docs/royale-maps.md; scripts/royale-maps.check.ts
-// checks the layout of every map here, scripts/royale.check.ts its crate spots
+// `mapId` resolves. See docs/royale-maps.md; royale-maps.test.ts
+// tests the layout of every map here, src/royale.test.ts its crate spots
 // and zone against the mode's rules.
 import type { MapDef, RoyaleMapData, Spawn } from "../types.ts";
 import type { FfaLandmark, FfaZone } from "../ffa/index.ts";
@@ -28,7 +28,7 @@ export interface RoyaleMapDef extends MapDef {
   hub: Spawn;
   /**
    * Start spots (the MapDef `spawns` doc about pairs is for duels): at least
-   * 10 (one per player, MIN_STARTS in scripts/royale-maps.check.ts), spread
+   * 10 (one per player, MIN_STARTS in royale-maps.test.ts), spread
    * round the map, no two in sight of each other at any distance. Nobody
    * respawns in this mode, so these are only about fair starts.
    */

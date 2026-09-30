@@ -62,7 +62,7 @@ are wired once the FFA restructuring (modes and the seat model) has landed.
 | File | What it is |
 | --- | --- |
 | `spectate/model.ts` | Pure view-model. Scoreboard order, the leader, who to follow, the switch when the followed player dies (to the killer, else the leader, after `AUTO_SWITCH_DELAY_MS`), cycling with Q / E, and the UI model (rows, "watching", seats, spectator count). Reads any `Map`-like of player fields, so a `Snapshot` from `net.ts` fits as it is. |
-| `spectate/model.test.ts` | `bun test apps/client/src/spectate`: the model plus the camera maths. |
+| `spectate/model.test.ts` | `bun run test` (or `bun test src/spectate` in `apps/client`): the model plus the camera maths. |
 | `spectate/camera.ts` | `SpectatorCamera`, which has three modes: **Follow** (glides after a player), **Overview** (fits the whole map), and **Free** (WASD, drag and wheel, kept over the map). It goes through a two-method `SpectatorCameraRig` (`apply(x, z, viewHeight)` and `viewport()`); `sceneRig(scene)` adapts the `GameScene`. Glides are exponential smoothing; `prefers-reduced-motion` cuts instead. `update()` allocates nothing. |
 | `spectate/controls.ts` | `installSpectatorControls({ canvas, actions, enabled })`: Q / E and ← / → cycle, 1 / 2 / 3 pick the mode, WASD pans (it switches to Free), drag pans, wheel zooms (Free only). Returns the uninstaller. |
 | `spectate/spectator.ts` | `Spectator`: model state plus camera plus a `Store<SpectateUiModel>` for React. `onSnapshot(snap, now, reset?)` goes per snapshot, `frame(now, dt, position)` per frame, and the actions are `follow`, `cycle`, `setMode`, `pan`, `drag` and `zoom`. |

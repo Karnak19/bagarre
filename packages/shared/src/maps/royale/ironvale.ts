@@ -395,7 +395,7 @@ export const IRONVALE: RoyaleMapDef = {
   // +x / +z side, so a tree just outside those walls would hide the floor
   // near them: the woods are on the north (-z) and west (-x) sides, the top
   // of the screen, and only a few stand far out (15 m) on the south and east.
-  // royale-maps.check.ts checks that no tree hides any floor.
+  // royale-maps.test.ts checks that no tree hides any floor.
   decor: [
     { prop: "PineTree_Snow_1", x: -58, z: -50, yaw: 0.0, scale: 2.2 },
     { prop: "PineTree_Snow_4", x: -50, z: -55, yaw: 4.7, scale: 2 },

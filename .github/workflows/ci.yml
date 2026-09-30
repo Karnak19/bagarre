@@ -2,7 +2,7 @@
 #
 # Three kinds of jobs run side by side, so the run takes as long as its
 # slowest job instead of the sum of all steps:
-#   check  install, build, typecheck, lint, map fairness, shared self-checks
+#   check  install, build, typecheck, lint, map fairness, unit tests
 #   smoke  the headless server smoke test
 #   e2e    the Playwright suite split into 4 shards, one job each
 #
@@ -51,10 +51,11 @@ jobs:
         working-directory: packages/shared
         run: bun scripts/validate.ts && bun scripts/ffa/validate.ts
 
-      - name: Shared self-checks
-        # Match tiebreaks, the skin and gun tables, and the grenade rules.
-        working-directory: packages/shared
-        run: bun run check
+      - name: Unit tests
+        # Every package's bun:test files (turbo runs each package's `test`
+        # script): the shared rules and maps, and the client's spectate model.
+        # Not the Playwright specs, which are the e2e job's.
+        run: bun run test
 
   smoke:
     runs-on: ubuntu-latest

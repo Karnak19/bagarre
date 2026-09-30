@@ -1,0 +1,9 @@
+{
+  // The bun:test files: the client's settings plus Bun's types.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["vite/client", "bun"]
+  },
+  "include": ["src/**/*.test.ts"],
+  "exclude": []
+}
