@@ -115,10 +115,8 @@ export interface PlayerState {
     medkits: number;
     shields: number;
     heal: number;
-    healTicks: number;
     healStop: number;
-    /** Shield bubble: ticks left and what it can still soak. */
-    shieldTicks: number;
+    /** What the shield bubble can still soak. */
     shieldHp: number;
     /** Final place once the match ended (0 before). */
     place: number;
@@ -203,9 +201,7 @@ export class Player {
           medkits: Number((p.kit as Record<string, number>)?.medkits ?? 0),
           shields: Number((p.kit as Record<string, number>)?.shields ?? 0),
           heal: Number((p.kit as Record<string, number>)?.heal ?? 255),
-          healTicks: Number((p.kit as Record<string, number>)?.healTicks ?? 0),
           healStop: Number((p.kit as Record<string, number>)?.healStop ?? 0),
-          shieldTicks: Number(p.shieldTicks ?? 0),
           shieldHp: Number(p.shieldHp ?? 0),
           place: Number(p.place ?? 0),
         }),

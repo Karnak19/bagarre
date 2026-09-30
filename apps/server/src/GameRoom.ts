@@ -120,7 +120,6 @@ import {
   zoneDamage,
   HEAL_STOP,
   cancelHeal,
-  keepCounters,
   readSim,
   respawnPoint,
   shotPellets,
@@ -1649,7 +1648,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     p.outTick = this.state.tick;
     this.floor.scatter(p, p.x, p.z);
     const sim = readSim(p);
-    writeSim(p, { ...sim, kit: keepCounters(startKit(), sim.kit) });
+    writeSim(p, { ...sim, kit: { ...startKit(), switchSeen: sim.kit.switchSeen, swapSeen: sim.kit.swapSeen, useSeen: sim.kit.useSeen } });
     p.weapon = PISTOL;
     this.knockedOut = true;
   }

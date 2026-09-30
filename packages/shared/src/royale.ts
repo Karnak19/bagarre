@@ -75,11 +75,6 @@ export function emptyKit(): KitSim {
   };
 }
 
-/** A fresh kit that keeps the press counters of `seen` (they track the client's running totals). */
-export function keepCounters(kit: KitSim, seen: KitSim): KitSim {
-  return { ...kit, switchSeen: seen.switchSeen, swapSeen: seen.swapSeen, useSeen: seen.useSeen };
-}
-
 /** The royale's start: the Pistol in slot 1 (in hand), the other slots empty, no grenades. */
 export function startKit(): KitSim {
   return { ...emptyKit(), gun0: PISTOL, mag0: WEAPONS[PISTOL].magazine };
