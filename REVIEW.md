@@ -4,6 +4,7 @@ Distilled from human replies to fouine's comments. These are review behaviours, 
 
 ## Reductions are welcome — but always as nits
 - The findings the author reliably applies are reductions: deleting dead code, collapsing duplicated helpers, dropping redundant defaults/constants, shortening the diff. Keep hunting this class, and say exactly what to delete and what (if anything) replaces it.
+- Prose that contradicts the code belongs to this class too: a doc block attached to the wrong declaration, a stale count or name, user-facing copy whose grammar breaks when a value changes. These are cheap, reliably applied, and still nits.
 - Never block on one. A shorter diff is not a correctness, security, or data-loss problem.
 
 ## Reuse before suggesting something new
@@ -11,6 +12,9 @@ Distilled from human replies to fouine's comments. These are review behaviours, 
 
 ## Dead code vs deliberate code
 - Dead-code shapes that recur: exports/imports with no importer; fields, counters, or per-frame values computed but never read; named constants that encode nothing; teardown/dispose methods with no caller; routes/handlers with no product caller; fallbacks for a branch the types say cannot happen.
+- "No production reader" is not "no reader". If the only consumers are tests or checks, weigh the rewrite: a field read by a dozen assertions usually costs more to remove than to keep. Check the tests before flagging.
+- A single-member union/switch, or a field that only restates a value, can be a deliberate seam for a planned or stacked follow-up. Ask whether one is coming; if the author names it and explains the seam, accept it and stop re-raising.
+- Locate a claimed duplicate before flagging it. Do not assert that a constant is "written out again" unless you have found the second definition in the checkout; a doc-comment rewrite is not a duplicate.
 - "No reader" and "unreachable under today's call graph" are different claims. Before flagging, check whether the branch documents a domain rule or guards the PR's stated invariant. Ask whether it is deliberate; if the author explains it is (a rule pinned by a check, belt-and-suspenders for the PR's invariant), accept it and stop re-flagging it on later passes.
 - For routes/handlers with no product caller, ask whether one is planned rather than assuming it, and suggest the smaller alternative (e.g. reading data directly) if not.
 
