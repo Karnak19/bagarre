@@ -6,15 +6,21 @@
 // 1. size 80..100 m a side; box heights and the thin-long rule; no narrow gaps;
 // 2. at least 10 start spots; every start and crate spot standable and in bounds;
 // 3. no two start spots see each other (any distance);
-// 4. 15..25 crate spots, none near a start, none on top of each other;
+// 4. 15..25 crate spots, none within 3 m of a start, none on top of each other;
 // 5. everything reachable on foot, and the whole floor one connected region;
 // 6. the final zone's rectangle well inside the map;
-// 7. endgame cover: every final circle centre has cover and room to stand;
+// 7. endgame cover: the real zone 30 s before it closes, for every final
+//    centre it may close on, has cover and room to stand in;
 // 8. tall decor (trees) outside the walls, and hiding no floor from the camera.
 //
 // The geometry comes from scripts/analyze.ts (the duel validator's helpers).
+// scripts/royale.check.ts checks the same maps against the mode's rules
+// (crates clear of cover and 3 m from spawns, the zone's limits).
 
+import { PLAYER_RADIUS, ROYALE, ZONE, ticks } from "../src/constants.ts";
 import { ROYALE_MAPS, type RoyaleMapDef } from "../src/maps/royale/index.ts";
+import type { ZoneView } from "../src/protocol.ts";
+import { zoneAt, type Circle } from "../src/royale.ts";
 import { WALL_THICKNESS } from "../src/arena.ts";
 import { TALL_DECOR, type Obstacle, type Spawn } from "../src/maps/types.ts";
 import { ffaSight, OPEN_M2, TIGHT_M2, type FfaSight } from "./ffa/analyze.ts";
@@ -24,18 +30,36 @@ import { bodiesSee, boxGap, cellOf, cellPt, circleHitsBox, flood, gapFilled, hid
 const SIZE: [number, number] = [80, 100];
 const MIN_STARTS = 10;
 const CRATE_COUNT: [number, number] = [15, 25];
-/** A crate this close to a start spot would hand that player a free crate. */
-const CRATE_START_MIN = 2;
+/** A crate this close to a start spot would hand that player a free crate (royale.check.ts's rule too). */
+const CRATE_START_MIN = 3;
+/** A crate spot keeps its crate and a player touching it clear of every box (royale.check.ts's rule too). */
+const CRATE_CLEAR = ROYALE.crateRadius + PLAYER_RADIUS;
 const CRATE_CRATE_MIN = 1.5;
 /** A spot must clear every box by this much on top of the player radius (like the duel validator's spawns). */
 const SPOT_CLEAR = 0.25;
 /** The final zone's rectangle keeps at least this far from every edge. */
 const FINAL_MARGIN = 12;
 /**
- * Radius of the final circle the endgame cover check assumes. Placeholder
- * until #32 (the royale mode) fixes the final circle's size.
+ * The endgame the cover check looks at: the zone this many seconds before it
+ * closes. The real zone (pickZone, ZONE) shrinks linearly from a circle round
+ * the whole map (r ~65.6 m on a 90 m map) to nothing over ZONE.close -
+ * ZONE.wait = 240 s, about 0.27 m/s, while its centre slides from the map's
+ * centre to the final one. 30 s before the end it is about 8.2 m across the
+ * radius (16 m wide, the issue's "last 10 to 15 m"), and it is the last
+ * circle two or three players still fight in: 20 s before, 5.5 m, is a
+ * shootout at arm's length.
  */
-export const FINAL_CIRCLE_RADIUS = 7;
+export const LATE_SECONDS = 30;
+
+/** The real zone's circle LATE_SECONDS before it closes, on a match whose final centre is (x, z) (pickZone's circles, zoneAt's shrink). */
+export function lateCircle(m: RoyaleMapDef, x: number, z: number): Circle {
+  const shrink = ZONE.close - ZONE.wait;
+  const zone: ZoneView = { x0: 0, z0: 0, x1: x, z1: z, r0: Math.hypot(m.halfX, m.halfZ) + ZONE.margin, r1: 0, start: 0, end: ticks(shrink) };
+  return zoneAt(zone, ticks(shrink - LATE_SECONDS))!;
+}
+
+/** The late circle's radius on a map (the same for every centre). */
+export const lateRadius = (m: RoyaleMapDef) => lateCircle(m, 0, 0).r;
 /** Every possible final circle has at least this many boxes in it... */
 const FINAL_MIN_BOXES = 2;
 /** ...and at least this share of it is floor a player can stand on. */
@@ -128,17 +152,21 @@ function checkMap(m: RoyaleMapDef) {
   check(gapErrors.length === 0, `no gap under ${MIN_GAP} m between boxes or a box and the wall`, gapErrors);
 
   // 2. Spots clear of boxes and in bounds.
-  const spotErrors = (kind: string, spots: readonly Spawn[]) => {
+  const spotErrors = (kind: string, spots: readonly Spawn[], clear = R + SPOT_CLEAR) => {
     const out: string[] = [];
     for (const s of spots) {
-      if (Math.abs(s.x) > m.halfX - R - SPOT_CLEAR || Math.abs(s.z) > m.halfZ - R - SPOT_CLEAR) out.push(`${kind} ${at(s)} too close to the edge`);
-      for (const o of m.obstacles) if (circleHitsBox(s.x, s.z, R + SPOT_CLEAR, o)) out.push(`${kind} ${at(s)} in or against ${name(o)}`);
+      if (Math.abs(s.x) > m.halfX - clear || Math.abs(s.z) > m.halfZ - clear) out.push(`${kind} ${at(s)} too close to the edge`);
+      for (const o of m.obstacles) if (circleHitsBox(s.x, s.z, clear, o)) out.push(`${kind} ${at(s)} in or against ${name(o)}`);
     }
     return out;
   };
   check(m.spawns.length >= MIN_STARTS, `${m.spawns.length} start spots (at least ${MIN_STARTS})`);
   check(spotErrors("start", m.spawns).length === 0, "every start spot clear of boxes and in bounds", spotErrors("start", m.spawns));
-  check(spotErrors("crate", m.royale.crates).length === 0, "every crate spot clear of boxes and in bounds", spotErrors("crate", m.royale.crates));
+  check(
+    spotErrors("crate", m.royale.crates, CRATE_CLEAR).length === 0,
+    `every crate spot ${CRATE_CLEAR} m clear of boxes and in bounds`,
+    spotErrors("crate", m.royale.crates, CRATE_CLEAR),
+  );
 
   // 3. Starts out of each other's sight.
   const seen: string[] = [];
@@ -188,18 +216,20 @@ function checkMap(m: RoyaleMapDef) {
   const margin = Math.min(z.x0 + m.halfX, m.halfX - z.x1, z.z0 + m.halfZ, m.halfZ - z.z1);
   check(z.x0 <= z.x1 && z.z0 <= z.z1 && margin >= FINAL_MARGIN - EPS, `final zone [${z.x0}, ${z.x1}] x [${z.z0}, ${z.z1}] at least ${FINAL_MARGIN} m from the edges (${f(margin)} m)`);
 
-  // 7. Endgame cover: every final circle centre on a 1 m grid.
-  const r = FINAL_CIRCLE_RADIUS;
-  const rc = Math.ceil(r / g.cell);
+  // 7. Endgame cover: every final centre on a 1 m grid, and the real zone
+  // LATE_SECONDS before it closes on it.
+  const r = lateRadius(m);
+  const rc = Math.ceil(r / g.cell) + 1;
   let worst = { x: 0, z: 0, boxes: Infinity, floor: Infinity, score: Infinity };
   const coverErrors: string[] = [];
   let centres = 0;
   for (let cz = Math.ceil(z.z0); cz <= z.z1 + EPS; cz++)
     for (let cx = Math.ceil(z.x0); cx <= z.x1 + EPS; cx++) {
       centres++;
+      const late = lateCircle(m, cx, cz);
       let boxes = 0;
-      for (const o of m.obstacles) if (circleHitsBox(cx, cz, r, o)) boxes++;
-      const c0 = cellOf(g, { x: cx, z: cz });
+      for (const o of m.obstacles) if (circleHitsBox(late.x, late.z, r, o)) boxes++;
+      const c0 = cellOf(g, late);
       const i0 = c0 % g.nx;
       const j0 = (c0 - i0) / g.nx;
       let cells = 0;
@@ -210,7 +240,7 @@ function checkMap(m: RoyaleMapDef) {
           const j = j0 + dj;
           if (i < 0 || j < 0 || i >= g.nx || j >= g.nz) continue;
           const p = cellPt(g, j * g.nx + i);
-          if ((p.x - cx) ** 2 + (p.z - cz) ** 2 > r * r) continue;
+          if ((p.x - late.x) ** 2 + (p.z - late.z) ** 2 > r * r) continue;
           cells++;
           if (g.walk[j * g.nx + i]) open++;
         }
@@ -218,11 +248,12 @@ function checkMap(m: RoyaleMapDef) {
       // How close to failing: the tighter of the two measures, as a share of its limit.
       const score = Math.min(boxes / FINAL_MIN_BOXES, floor / FINAL_MIN_FLOOR);
       if (score < worst.score) worst = { x: cx, z: cz, boxes, floor, score };
-      if (boxes < FINAL_MIN_BOXES || floor < FINAL_MIN_FLOOR) coverErrors.push(`circle at (${cx}, ${cz}): ${boxes} boxes, ${f(floor * 100, 0)} % floor`);
+      if (boxes < FINAL_MIN_BOXES || floor < FINAL_MIN_FLOOR)
+        coverErrors.push(`final centre (${cx}, ${cz}), circle at (${f(late.x)}, ${f(late.z)}): ${boxes} boxes, ${f(floor * 100, 0)} % floor`);
     }
   check(
     coverErrors.length === 0,
-    `every final circle (r ${r} m, ${centres} centres) has ${FINAL_MIN_BOXES}+ boxes and ${FINAL_MIN_FLOOR * 100}%+ standable floor`,
+    `the zone ${LATE_SECONDS} s before it closes (r ${f(r)} m), for all ${centres} final centres, has ${FINAL_MIN_BOXES}+ boxes and ${FINAL_MIN_FLOOR * 100}%+ standable floor`,
     coverErrors,
   );
 

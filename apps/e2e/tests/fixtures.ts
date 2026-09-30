@@ -19,8 +19,8 @@ import { GL, SERVER_PORT } from "../playwright.config.ts";
 /** Every game page pins the map, so a run is the same every time. FFA pins its own. */
 export const DUEL_MAP = "yard";
 export const FFA_MAP = "crossroads";
-/** The battle royale's test map (the one with crate spots). */
-export const ROYALE_MAP = "bastion";
+/** The battle royale's map: Ironvale, the only one in its pool. */
+export const ROYALE_MAP = "ironvale";
 /**
  * Frames drawn per second (`?fps=`, dev only): nothing here looks at pixels,
  * and a dozen pages drawing at 60 fps starve the machine (the GPU locally,
@@ -555,7 +555,7 @@ export class Players {
     return { players, code, invite };
   }
 
-  /** A private battle royale by link with `n` players (on Bastion); resolves once they are all in the room. */
+  /** A private battle royale by link with `n` players (on Ironvale); resolves once they are all in the room. */
   async royale(n: number): Promise<{ players: Player[]; code: string; invite: string }> {
     const { host, invite, code } = await this.host("royale", "A");
     // The countdown starts as soon as two are in and a started match takes no more seats: hold it until everyone is here.

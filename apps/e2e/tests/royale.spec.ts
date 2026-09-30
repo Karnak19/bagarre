@@ -1,4 +1,4 @@
-import { PISTOL } from "@bagarre/shared";
+import { PISTOL, ROYALE_RULES } from "@bagarre/shared";
 import { ROYALE_MAP, expect, kill, place, setLoot, setZone, test, type Player } from "./fixtures.ts";
 
 const RIFLE = 0;
@@ -41,9 +41,11 @@ test("a short battle royale: the Pistol, a crate, a gun, a switch, a knock-out s
     await expect(p.testId("hud-royale-alive")).toContainText("3 of 3");
     await expect(p.testId("hud-zone-time")).toContainText("Zone shrinks in");
   }
+  // Ironvale is the royale pool, so every match plays on it (the spec pins it too).
+  expect(ROYALE_RULES.maps.map((m) => m.id)).toEqual([ROYALE_MAP]);
   const s0 = await a.state();
   expect(s0.mapId).toBe(ROYALE_MAP);
-  expect(s0.crates.length).toBeGreaterThanOrEqual(10);
+  expect(s0.crates.length).toBe(ROYALE_RULES.maps[0].royale!.crates.length);
   expect(s0.zoneEnd).toBeGreaterThan(0);
 
   // Once it started, nobody can take a seat (the invite says so), but anyone can watch.
@@ -131,7 +133,7 @@ test("battle royale: a leaver is knocked out and placed, the zone closes and hur
   expect(left.alive).toBe(false);
   await expect(a.testId("hud-royale-alive")).toContainText("2 of 3");
 
-  // Stand A and B far apart near opposite corners, and close the zone now: both end up outside.
+  // Stand A and B far apart on open floor (Ironvale's north-west and south-east ring road), and close the zone now: both end up outside.
   await place(code, ida, -24, -26);
   await place(code, idb, 24, 26);
   await setZone(code, 0, 2);

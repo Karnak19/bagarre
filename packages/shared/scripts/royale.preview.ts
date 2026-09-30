@@ -1,6 +1,6 @@
 // Renders every battle royale map to PNG: a top-down plan (districts, boxes
 // by kind with their heights, start spots, crate spots, the final zone's
-// rectangle, landmarks, and the endgame cover of each final circle centre)
+// rectangle, landmarks, and the endgame cover of each final centre)
 // and an isometric view at the game's camera angle (ffa/preview.ts's).
 // SVG first, then `sips` (macOS).
 //
@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { ROYALE_MAPS, type RoyaleMapDef } from "../src/maps/royale/index.ts";
 import { bodiesSee, circleHitsBox, R } from "./analyze.ts";
 import { esc, hex, iso, KIND_COLOR, shade, toPng } from "./ffa/preview.ts";
-import { FINAL_CIRCLE_RADIUS, tightOpen } from "./royale-maps.check.ts";
+import { LATE_SECONDS, lateCircle, lateRadius, tightOpen } from "./royale-maps.check.ts";
 
 /** Git-ignored folder at the repo root. */
 const DEFAULT_OUT = join(fileURLToPath(new URL(".", import.meta.url)), "../../..", ".previews", "royale-maps");
@@ -35,7 +35,7 @@ function topDown(m: RoyaleMapDef, S = 10): string {
   o.push(`<rect width="${W}" height="${H}" fill="#15171c"/>`);
   o.push(`<text x="${pad}" y="30" font-size="22" font-weight="bold" fill="#fff">${esc(m.name)}  <tspan font-size="14" fill="#aaa">(${m.id}, royale ${m.players.min}-${m.players.max}, favours ${m.favours.join(" / ")})</tspan></text>`);
   o.push(`<text x="${pad}" y="52" font-size="13" fill="#ccc">${esc(m.blurb)}</text>`);
-  o.push(`<text x="${pad}" y="70" font-size="12" fill="#9ab">${2 * m.halfX}x${2 * m.halfZ} m, ${m.obstacles.length} boxes, ${m.spawns.length} starts, ${m.royale.crates.length} crates, final circle r ${FINAL_CIRCLE_RADIUS} m (placeholder), tight floor ${(to0(m).tightShare * 100).toFixed(0)}%, open ${(to0(m).openShare * 100).toFixed(0)}%</text>`);
+  o.push(`<text x="${pad}" y="70" font-size="12" fill="#9ab">${2 * m.halfX}x${2 * m.halfZ} m, ${m.obstacles.length} boxes, ${m.spawns.length} starts, ${m.royale.crates.length} crates, zone ${LATE_SECONDS} s before it closes r ${lateRadius(m).toFixed(1)} m, tight floor ${(to0(m).tightShare * 100).toFixed(0)}%, open ${(to0(m).openShare * 100).toFixed(0)}%</text>`);
   o.push(`<rect x="${X(-m.halfX) - 8}" y="${Z(-m.halfZ) - 8}" width="${2 * m.halfX * S + 16}" height="${2 * m.halfZ * S + 16}" fill="${shade(hex(m.theme.wall === "brick" ? 0x9a5a45 : 0xa7a9a3), 0.8)}"/>`);
   o.push(`<rect x="${X(-m.halfX)}" y="${Z(-m.halfZ)}" width="${2 * m.halfX * S}" height="${2 * m.halfZ * S}" fill="${shade(hex(m.theme.floor), 0.45)}"/>`);
   for (const z of m.zones) o.push(`<rect x="${X(z.x0)}" y="${Z(z.z0)}" width="${(z.x1 - z.x0) * S}" height="${(z.z1 - z.z0) * S}" fill="${hex(z.tint)}" fill-opacity="0.14" stroke="${hex(z.tint)}" stroke-opacity="0.6" stroke-dasharray="6 4"/>`);
@@ -50,8 +50,9 @@ function topDown(m: RoyaleMapDef, S = 10): string {
   const f = m.royale.zone;
   for (let cz = Math.ceil(f.z0); cz <= f.z1; cz++)
     for (let cx = Math.ceil(f.x0); cx <= f.x1; cx++) {
+      const late = lateCircle(m, cx, cz);
       let n = 0;
-      for (const b of m.obstacles) if (circleHitsBox(cx, cz, FINAL_CIRCLE_RADIUS, b)) n++;
+      for (const b of m.obstacles) if (circleHitsBox(late.x, late.z, late.r, b)) n++;
       const c = n < 2 ? "#ff3b1f" : n < 4 ? "#ffb13b" : "#5fd08a";
       o.push(`<rect x="${X(cx - 0.5)}" y="${Z(cz - 0.5)}" width="${S}" height="${S}" fill="${c}" opacity="${n < 2 ? 0.55 : 0.16}"/>`);
     }
@@ -94,7 +95,8 @@ function topDown(m: RoyaleMapDef, S = 10): string {
   const notes = [
     "blue dashes: where the final",
     "  zone's centre may land",
-    `cells: boxes in a r ${FINAL_CIRCLE_RADIUS} m circle`,
+    "cells: boxes in the zone",
+    `  ${LATE_SECONDS} s before it closes there`,
     "  green 4+, orange 2-3, red < 2",
     "red line: starts in sight",
     "violet: tight floor (sees < 250 m²",

@@ -329,9 +329,9 @@ const STARTS = [
 
 const CRATES = [
   // Headframe, in the compound's lanes.
-  { x: 5, z: -5 },
+  { x: 4.5, z: -5 },
   { x: -5, z: -4.5 },
-  { x: -5, z: 5 },
+  { x: -4.5, z: 5 },
   { x: 5, z: 4.5 },
   // Safe: in buildings and the cluttered districts.
   { x: 32, z: -38.5 },
@@ -341,7 +341,7 @@ const CRATES = [
   { x: -21.8, z: 38.5 },
   { x: 10.2, z: 38.5 },
   { x: -43, z: 36.5 },
-  { x: -34.5, z: -41 },
+  { x: -35, z: -41 },
   { x: 42.5, z: 37.5 },
   { x: -16, z: -37.5 },
   // Open: on the roads and the ring.
