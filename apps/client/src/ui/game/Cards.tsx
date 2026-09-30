@@ -497,7 +497,17 @@ function RoyaleWaitingCard() {
   countRender("card.waitingRoyale");
   const { app, view, gesture } = useEngine();
   const isPrivate = useSelector(app, (s) => s.isPrivate);
-  const players = useSelector(view, (v) => v?.snapshot?.players.size ?? 0);
+  const seats = useSelector(
+    view,
+    (v) => {
+      const away: string[] = [];
+      let connected = 0;
+      v?.snapshot?.players.forEach((p) => (p.connected ? connected++ : away.push(p.name)));
+      return { players: v?.snapshot?.players.size ?? 0, connected, away };
+    },
+    jsonEqual,
+  );
+  const players = seats.players;
   const host = useSelector(
     view,
     (v) => {
@@ -506,10 +516,14 @@ function RoyaleWaitingCard() {
     },
     shallowEqual,
   );
-  // The client's only copy of the start threshold, for display: the server enforces it (acceptsStart, ready()).
-  const need = Math.max(0, ROYALE_MIN_PLAYERS - players);
+  // The client's only copy of the start threshold, for display: the server enforces it (acceptsStart,
+  // ready()), on connected players, so a dropped one (held for the reconnect grace) doesn't count here either.
+  const need = Math.max(0, ROYALE_MIN_PLAYERS - seats.connected);
   const canStart = need === 0;
-  const missing = need === 1 ? "one more player" : `${need} more players`;
+  const reason =
+    seats.away.length >= need
+      ? `Waiting for ${seats.away.join(", ")} to reconnect`
+      : `Start needs ${need === 1 ? "one more player" : `${need} more players`}: send them the invite link`;
   const count = `${players}/${ROYALE_MAX_PLAYERS} players`;
   const start = useRef<HTMLButtonElement>(null);
   // Made host while the card is up (the host left): Start takes the focus, so Enter presses it.
@@ -567,7 +581,7 @@ function RoyaleWaitingCard() {
             // disabled), and the same element throughout, so the card's focus lands on it and Enter
             // presses it as soon as enough players are in.
             isDisabled={!canStart}
-            tooltip={canStart ? "Starts the match now: nobody can join after" : `Needs ${missing} to start`}
+            tooltip={canStart ? "Starts the match now: nobody can join after" : reason}
             data-autofocus=""
             data-testid="royale-start"
             data-ready={canStart}
@@ -579,7 +593,7 @@ function RoyaleWaitingCard() {
           />
           {!canStart && (
             <Text type="supporting" color="secondary" data-testid="royale-start-hint">
-              Start needs {missing}: send them the invite link.
+              {reason}.
             </Text>
           )}
         </VStack>
@@ -852,12 +866,16 @@ function ResultCard() {
           {why}
         </Text>
       )}
-      <Text color="secondary" xstyle={[styles.resultSub, shared.tabular]} data-testid="result-countdown">
+      <Text
+        color="secondary"
+        xstyle={[styles.resultSub, shared.tabular]}
+        data-testid="result-countdown"
+        // Battle royale: no Rematch to focus, and Enter must not land on Main menu: the card's focus goes here.
+        {...(royale ? { tabIndex: -1, "data-autofocus": "" } : null)}
+      >
         {royale
           ? // Battle royale: back to the lobby, where the host starts the next match.
-            staying
-            ? `Back to the lobby in ${left} s: the host starts the next match.`
-            : `Back to the lobby in ${left} s, where the host starts the next match. Stay, or head back to the menu.`
+            `Back to the lobby in ${left} s, where the host starts the next match.`
           : staying
             ? `Rematch in ${left} s, same game, next map.`
             : `Next match in ${left} s. Stay for a rematch, or head back to the menu.`}
@@ -879,17 +897,20 @@ function ResultCard() {
         </>
       )}
       <HStack gap={2} wrap="wrap" xstyle={styles.actions}>
-        <Button
-          label={staying ? "Staying" : "Rematch"}
-          variant="primary"
-          isDisabled={staying}
-          data-autofocus=""
-          data-testid="rematch"
-          onClick={() => {
-            gesture();
-            app.rematch();
-          }}
-        />
+        {/* Battle royale: no Rematch. The room goes back to the lobby when the result is over, whatever you press. */}
+        {!royale && (
+          <Button
+            label={staying ? "Staying" : "Rematch"}
+            variant="primary"
+            isDisabled={staying}
+            data-autofocus=""
+            data-testid="rematch"
+            onClick={() => {
+              gesture();
+              app.rematch();
+            }}
+          />
+        )}
         <Button label="Main menu" variant="secondary" onClick={() => app.leave()} data-testid="main-menu" />
       </HStack>
     </CardBox>

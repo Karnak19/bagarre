@@ -34,6 +34,7 @@ test("battle royale: the host sees Start, the others wait for them; nobody else 
   await expect(start).toBeDisabled();
   await expect(start).toBeFocused();
   await expect(a.testId("royale-start-hint")).toContainText(`needs ${ROYALE_MIN_PLAYERS - 1 === 1 ? "one more player" : `${ROYALE_MIN_PLAYERS - 1} more players`}`);
+  await expect(a.testId("royale-start-hint")).toContainText("invite link");
   await start.click({ force: true });
   await a.page.keyboard.press("Enter");
   await sendStart(a);
@@ -90,6 +91,9 @@ test("battle royale: after the result everyone is back in the lobby, on their fe
   await kill(code, ida, idb);
   for (const p of all) await p.expectState("phase", "ended");
   await expect(a.testId("result-countdown")).toContainText("Back to the lobby");
+  // No Rematch in a royale (nothing to stay for), and the card's focus isn't on Main menu, so Enter can't leave.
+  await expect(a.testId("rematch")).toHaveCount(0);
+  await expect(a.testId("main-menu")).not.toBeFocused();
 
   // After the result: waiting (no rematch on its own), the knocked-out player back up, the host's Start ready.
   for (const p of all) await p.expectState("phase", "waiting", 30_000);
@@ -102,4 +106,27 @@ test("battle royale: after the result everyone is back in the lobby, on their fe
 
   await pressStart(a, 2);
   for (const p of all) await p.expectState("phase", "playing");
+});
+
+test("battle royale: a dropped player doesn't count toward Start until they are back", async ({ players }) => {
+  const { players: all } = await players.royaleLobby(2);
+  const [a, b] = all;
+  const start = a.testId("royale-start");
+  await expect(start).toHaveAttribute("data-ready", "true");
+
+  // B's connection drops: the server holds B's seat but won't start without B, so Start is off and says why.
+  const nameB = b.me(await b.state())?.name ?? "";
+  await b.waitReconnectable();
+  await b.context.setOffline(true);
+  await expect(start).toHaveAttribute("data-ready", "false");
+  await expect(start).toBeDisabled();
+  await expect(a.testId("royale-start-hint")).toHaveText(`Waiting for ${nameB} to reconnect.`);
+  await a.page.keyboard.press("Enter");
+  await sendStart(a);
+  await a.expectState("phase", "waiting");
+
+  // Back: Start is ready again.
+  await b.context.setOffline(false);
+  await expect(start).toHaveAttribute("data-ready", "true");
+  await expect(a.testId("royale-start-hint")).toHaveCount(0);
 });
