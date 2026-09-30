@@ -17,6 +17,7 @@ import {
   FFA_MAPS,
   FFA_MAX_PLAYERS,
   MAPS,
+  RESET_PASSWORD_PAGE,
   ROYALE_MAPS,
   ROYALE_MAX_PLAYERS,
   TEAM_MAPS,
@@ -110,7 +111,7 @@ const WATCH: PageMeta = {
 const RESET_PASSWORD: PageMeta = {
   title: "Reset your password | Bagarre",
   description: "Choose a new password for your Bagarre account.",
-  path: "/reset-password",
+  path: RESET_PASSWORD_PAGE,
   image: SITE_IMAGE,
   imageAlt: HOME.imageAlt,
   noindex: true,
@@ -175,10 +176,10 @@ const trimSlash = (p: string) => (p.length > 1 ? p.replace(/\/+$/, "") : p);
 export function pageFor(pathname: string, hasImage?: (id: string) => boolean): Page {
   const path = trimSlash(pathname.split(/[?#]/)[0] || "/");
   if (path === "/maps") return { file: "maps.html", meta: MAPS_PAGE };
-  if (path === "/reset-password") return { file: "reset-password.html", meta: RESET_PASSWORD };
+  if (path === RESET_PASSWORD_PAGE) return { file: "reset-password.html", meta: RESET_PASSWORD };
   const map = /^\/maps\/([^/]+)$/.exec(path);
   if (map) {
-    const def = findMap(decodeURIComponent(map[1]));
+    const def = findMap(map[1]);
     if (def) return { file: `maps/${def.id}.html`, meta: mapMeta(def, hasImage) };
   }
   if (/^\/game\/[^/]+\/watch$/.test(path)) return { file: "watch.html", meta: WATCH };
@@ -194,7 +195,7 @@ export function allPages(hasImage?: (id: string) => boolean): Page[] {
     ...ALL_MAPS.map((m) => pageFor(`/maps/${m.id}`, hasImage)),
     pageFor("/game/code"),
     pageFor("/game/code/watch"),
-    pageFor("/reset-password"),
+    pageFor(RESET_PASSWORD_PAGE),
   ];
 }
 
@@ -262,7 +263,7 @@ export function withHeadTags(html: string, meta: PageMeta): string {
 }
 
 export function robotsTxt(): string {
-  return ["User-agent: *", "Allow: /", "Disallow: /game/", "Disallow: /reset-password", "", `Sitemap: ${abs("/sitemap.xml")}`, ""].join("\n");
+  return ["User-agent: *", "Allow: /", "Disallow: /game/", `Disallow: ${RESET_PASSWORD_PAGE}`, "", `Sitemap: ${abs("/sitemap.xml")}`, ""].join("\n");
 }
 
 export function sitemapXml(): string {

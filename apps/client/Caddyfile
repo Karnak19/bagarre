@@ -35,6 +35,10 @@
 		encode zstd gzip
 		header Cache-Control "no-cache"
 		route {
+			# One URL per page: /maps/ would otherwise hit the dist/maps/
+			# directory (no index.html there) and 404.
+			@trailing path_regexp trailing ^(.+)/$
+			redir @trailing {re.trailing.1} 308
 			@watch path_regexp ^/game/[^/]+/watch/?$
 			rewrite @watch /watch.html
 			@game path /game/*

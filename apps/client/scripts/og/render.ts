@@ -14,7 +14,7 @@
 // under 300 KB each.
 
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, statSync } from "node:fs";
+import { mkdirSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { chromium, type Page } from "@playwright/test";
 import { ALL_MAPS, IMAGE_HEIGHT, IMAGE_WIDTH, mapTagline } from "../../seo/meta.ts";
@@ -129,7 +129,7 @@ async function shoot(page: Page, file: string) {
   // 256 colours, dithered, max zlib: a 3D frame's ~1 MB down to ~150-250 KB.
   const r = spawnSync("magick", [raw, "-dither", "FloydSteinberg", "-colors", "256", "-strip", "-define", "png:compression-level=9", `PNG8:${file}`]);
   if (r.status !== 0) throw new Error(`magick failed: ${r.stderr}`);
-  spawnSync("rm", [raw]);
+  rmSync(raw);
   const size = statSync(file).size;
   console.log(`${file.replace(`${CLIENT}/`, "")}: ${Math.round(size / 1024)} KB`);
   if (size > MAX_BYTES) console.warn(`  over ${MAX_BYTES / 1024} KB`);
