@@ -376,11 +376,12 @@ export const TEAM_NAMES = ["Red", "Blue"] as const;
 export const ROYALE_ROOM_NAME = "royale";
 export const ROYALE_MIN_PLAYERS = 2;
 export const ROYALE_MAX_PLAYERS = 10;
-/** Seconds of countdown once ROYALE_MIN_PLAYERS are in (more can still join during it). */
-export const ROYALE_COUNTDOWN = 15;
-/** The pre-match: everyone on their start spot with the Pistol, nothing to pick. */
+/**
+ * The pre-match, once the host pressed Start (there is no countdown before
+ * it): everyone on their start spot with the Pistol, nothing to pick.
+ */
 export const ROYALE_WARMUP = 5;
-/** Seconds the placement table stays up before the rematch. */
+/** Seconds the placement table stays up before everyone is back in the lobby (the host starts the next match). */
 export const ROYALE_END_DELAY = 10;
 /**
  * A royale that started with fewer players than this isn't counted in the

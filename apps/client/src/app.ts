@@ -337,6 +337,11 @@ export class App {
     this.current?.net.sendTeam(team);
   }
 
+  /** Battle royale, while waiting: the host starts the match (the server checks it is the host, with enough players). */
+  startMatch() {
+    this.current?.net.sendStart();
+  }
+
   /** "Join the game" while watching: take the free seat, on the same connection. */
   joinSeat() {
     this.current?.net.takeSeat();

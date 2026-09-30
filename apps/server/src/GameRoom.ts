@@ -86,6 +86,7 @@ import {
   MSG_PICK,
   MSG_PING,
   MSG_PONG,
+  MSG_START,
   MSG_TAKE_SEAT,
   MSG_TEAM,
   CLOSE_NO_PLAYERS,
@@ -109,6 +110,8 @@ import {
   mapById,
   isSkinId,
   randomSkin,
+  acceptsStart,
+  hostOf,
   rank,
   rankRoyale,
   NO_GUN,
@@ -131,6 +134,7 @@ import {
   parseInput,
   parsePick,
   parsePong,
+  parseStart,
   parseTakeSeat,
   parseTeam,
   sameTeam,
@@ -331,6 +335,12 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       this.takeSeat(client);
     },
 
+    // Battle royale: the host starts the match (see startRequested).
+    [MSG_START]: (client: Client, raw: unknown) => {
+      if (this.spectators.has(client.sessionId) || !parseStart(raw)) return;
+      this.startRequested(client.sessionId);
+    },
+
     // Any other type is dropped. Without this fallback Colyseus closes the
     // sender's connection in production (and answers with an error in dev).
     "*": () => {},
@@ -377,7 +387,12 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   /** A match has been started on `map`, so the next one moves to another map. */
   private mapPlayed = false;
   private createdAt = Date.now();
-  /** Session ids in join order: the first one is the host shown in the open games list. */
+  /**
+   * Session ids of the seated players in join order (spectators never are):
+   * the first one still seated is the host (`hostOf`, synced as
+   * `state.host`), shown in the open games list and, in a battle royale,
+   * the one who starts the match.
+   */
   private joinOrder: string[] = [];
   /** Last metadata written, to skip no-op writes. */
   private metaKey = "";
@@ -758,9 +773,27 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     return r.startNeedsAll ? this.connectedSeats() === this.seats : this.connectedSeats() >= r.minPlayers;
   }
 
-  /** While waiting: start now if the mode has no countdown (the countdown itself runs in `tick`). */
+  /**
+   * While waiting: start now if the mode has no countdown (the countdown
+   * itself runs in `tick`). Never in a mode whose host starts it.
+   */
   private maybeStart() {
-    if (this.state.phase === "waiting" && this.rules.countdown === 0 && this.ready()) this.startMatch();
+    if (this.state.phase === "waiting" && !this.rules.hostStarts && this.rules.countdown === 0 && this.ready()) this.startMatch();
+  }
+
+  /**
+   * MSG_START: the match starts now, straight into the usual warmup, if the
+   * sender is the host, the room is waiting and enough players are in
+   * (`acceptsStart`). Anything else is ignored: the client is never trusted.
+   */
+  private startRequested(sender: string) {
+    const ok = acceptsStart(this.rules, { phase: this.state.phase, sender, host: this.state.host, ready: this.ready() });
+    if (ok) this.startMatch();
+  }
+
+  /** The seated player who hosts the room, "" with none (see `joinOrder`). */
+  private hostId(): string {
+    return hostOf(this.joinOrder, (id) => this.state.players.has(id) && !this.internals.get(id)?.gone);
   }
 
   /**
@@ -887,11 +920,13 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
 
   /**
    * Keeps the matchmaking metadata (mode, host, map, phase, seats) in step
-   * with the room, for the menu's open games list. Written only when it
-   * changed.
+   * with the room, for the menu's open games list, and the synced host.
+   * Written only when it changed.
    */
   private syncListing() {
-    const host = this.joinOrder.length > 0 ? this.state.players.get(this.joinOrder[0]) : undefined;
+    // The host changes with the join order, so it is kept in step here too.
+    this.state.host = this.hostId();
+    const host = this.state.host ? this.state.players.get(this.state.host) : undefined;
     const meta: RoomMeta = {
       mode: this.rules.mode,
       hostName: host?.name ?? "",
@@ -1167,7 +1202,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     } else if (this.state.phase === "playing") this.stepTimeLimit();
     else if (this.state.phase === "ended") {
       // After the result delay: the rematch, or back to waiting if too few
-      // are left. In a duel, a player who dropped holds the result card up
+      // are left. A mode whose host starts it goes back to waiting either
+      // way: the host starts the next match too. In a duel, a player who dropped holds the result card up
       // until they are back (or their grace period ends and onLeave sends the
       // room back to waiting): a match never starts against an empty seat.
       if (this.matchResetTicks > 0) this.matchResetTicks--;
@@ -1176,7 +1212,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
         this.purgeGone();
         // Teams: leavers may have left them lopsided; even them out first.
         if (this.rules.teams) this.rebalance();
-        if (this.seats < this.rules.minPlayers) this.setPhase("waiting");
+        if (this.seats < this.rules.minPlayers || this.rules.hostStarts) this.backToWaiting();
         else if (this.ready()) this.startMatch();
         else if (!this.rules.startNeedsAll) this.setPhase("waiting");
       }
@@ -1189,9 +1225,26 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     this.broadcastPatch();
   }
 
-  /** Pre-match countdown (FFA): runs while enough players are connected, cancelled when they aren't. */
+  /**
+   * After a result: back to waiting. Battle royale: everyone knocked out is
+   * back on their feet in the lobby (with the Pistol, spread out), as they
+   * were before the match; the next match is started by the host.
+   */
+  private backToWaiting() {
+    this.setPhase("waiting");
+    if (!this.rules.royale) return;
+    const starts = ffaStartSpawns(this.map, this.map.spawns, this.seats);
+    let i = 0;
+    this.state.players.forEach((p) => {
+      const spawn = starts[i++ % starts.length];
+      this.spawnAt(p, spawn.x, spawn.z);
+      p.aim = this.hubAim(spawn);
+    });
+  }
+
+  /** Pre-match countdown (FFA): runs while enough players are connected, cancelled when they aren't. Never with `hostStarts`. */
   private stepCountdown() {
-    if (this.rules.countdown === 0) return;
+    if (this.rules.countdown === 0 || this.rules.hostStarts) return;
     if (!this.ready()) {
       this.state.countdown = 0;
       return;

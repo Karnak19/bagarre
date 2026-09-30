@@ -57,6 +57,8 @@ const styles = stylex.create({
     inset: 0,
     zIndex: 40,
     display: "grid",
+    // One column no wider than the screen: a card's content (the invite row) never pushes it past the edge on a phone.
+    gridTemplateColumns: "minmax(0, 1fr)",
     placeItems: "center",
     padding: "16px",
     overflowY: "auto",
@@ -110,11 +112,14 @@ const styles = stylex.create({
   seatOpen: { color: "rgba(242, 242, 242, 0.5)", fontWeight: 600 },
   seatName: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   seatAway: { opacity: 0.6 },
+  seatHostMark: { marginInlineStart: "auto", flexShrink: 0, color: "var(--bagarre-gold)", fontSize: "12px", fontWeight: 600 },
   seatAwayMark: { marginInlineStart: "auto", flexShrink: 0, color: "var(--color-text-yellow)", fontSize: "12px", fontWeight: 600 },
   countdown: { fontSize: "44px", lineHeight: 1, color: "var(--bagarre-sand)" },
   countdownNumber: { color: "var(--bagarre-gold)" },
   resultSmall: { fontSize: "40px" },
   invite: { flexGrow: 1, minWidth: 0 },
+  nowrap: { whiteSpace: "nowrap", font: "inherit", letterSpacing: "inherit" },
+  startBlock: { marginBlockStart: "18px", marginBlockEnd: "14px" },
   resultTitle: {
     fontSize: "48px",
     lineHeight: 1,
@@ -265,10 +270,11 @@ async function copyText(text: string, fallback: HTMLInputElement | null): Promis
 
 /**
  * The seats: players in seat order, then the open ones up to `total`.
- * `showAway` marks dropped connections. `team`: only that team's players
- * (a team deathmatch lists each team on its own).
+ * `showAway` marks dropped connections, `showHost` the host (the battle
+ * royale's, who starts the match). `team`: only that team's players (a team
+ * deathmatch lists each team on its own).
  */
-function Seats({ total = 2, showAway = false, team }: { total?: number; showAway?: boolean; team?: number }) {
+function Seats({ total = 2, showAway = false, showHost = false, team }: { total?: number; showAway?: boolean; showHost?: boolean; team?: number }) {
   countRender("card.seats");
   const { view } = useEngine();
   const seats = useSelector(
@@ -278,7 +284,14 @@ function Seats({ total = 2, showAway = false, team }: { total?: number; showAway
       v?.snapshot?.players.forEach((p) => (team === undefined || p.team === team ? players.push(p) : 0));
       players.sort((a, b) => a.slot - b.slot);
       const me = v?.snapshot?.players.get(v.you);
-      return players.map((p) => ({ slot: p.slot, paint: paintOf(p), name: p === me ? `${p.name} (you)` : p.name, away: !p.connected }));
+      const host = v?.snapshot ? v.snapshot.players.get(v.snapshot.host) : undefined;
+      return players.map((p) => ({
+        slot: p.slot,
+        paint: paintOf(p),
+        name: p === me ? `${p.name} (you)` : p.name,
+        away: !p.connected,
+        host: p === host,
+      }));
     },
     jsonEqual,
   );
@@ -300,11 +313,17 @@ function Seats({ total = 2, showAway = false, team }: { total?: number; showAway
           xstyle={[styles.seat, showAway && s.away && styles.seatAway]}
           data-testid="seat"
           data-away={(showAway && s.away) || undefined}
+          data-host={(showHost && s.host) || undefined}
         >
           <HStack as="span" xstyle={[shared.dot, slotDot(s.paint)]} aria-hidden="true" />
           <Text as="span" color="inherit" xstyle={[styles.seatName, showAway && slotText(s.paint)]}>
             {s.name}
           </Text>
+          {showHost && s.host && !(showAway && s.away) && (
+            <Text as="span" xstyle={styles.seatHostMark}>
+              host
+            </Text>
+          )}
           {showAway && s.away && (
             <Text as="span" xstyle={styles.seatAwayMark}>
               reconnecting…
@@ -467,46 +486,102 @@ function FfaWaitingCard() {
 }
 
 /**
- * A battle royale waiting for players: who's in, then the pre-match
- * countdown once ROYALE_MIN_PLAYERS are in (more can join until it ends).
- * No loadout: everyone starts with the Pistol.
+ * A battle royale waiting for players: who's in, and the host's Start. The
+ * host (the first player in, then the next one in when they leave) sees
+ * Start, usable once ROYALE_MIN_PLAYERS are in, and starts the match when
+ * they like (more can join until then); everyone else sees who they are
+ * waiting for. Start goes straight into the warmup. No loadout: everyone
+ * starts with the Pistol.
  */
 function RoyaleWaitingCard() {
   countRender("card.waitingRoyale");
-  const { app, view } = useEngine();
-  const { opponentLeft, isPrivate } = useSelector(app, (s) => ({ opponentLeft: s.opponentLeft, isPrivate: s.isPrivate }), shallowEqual);
+  const { app, view, gesture } = useEngine();
+  const isPrivate = useSelector(app, (s) => s.isPrivate);
   const players = useSelector(view, (v) => v?.snapshot?.players.size ?? 0);
-  const seconds = useSelector(view, (v) => Math.ceil((v?.snapshot?.countdown ?? 0) / TICK_RATE));
+  const host = useSelector(
+    view,
+    (v) => {
+      const id = v?.snapshot?.host ?? "";
+      return { you: !!id && id === v?.you, name: (id && v?.snapshot?.players.get(id)?.name) || "" };
+    },
+    shallowEqual,
+  );
+  const canStart = players >= ROYALE_MIN_PLAYERS;
   const count = `${players}/${ROYALE_MAX_PLAYERS} players`;
-  const [title, sub] =
-    seconds > 0
-      ? [null, `${count}. Others can still join until it starts, not after.`]
-      : opponentLeft
-        ? ["Too few players left", `Waiting for more to join. It starts again when ${ROYALE_MIN_PLAYERS} are in (${count}).`]
-        : [
-            isPrivate ? "Waiting for your friends…" : "Waiting for players…",
-            `Starts when ${ROYALE_MIN_PLAYERS} are in · ${count}.${isPrivate ? " Send them the link." : ""}`,
-          ];
+  const start = useRef<HTMLButtonElement>(null);
+  // Made host while the card is up (the host left): Start takes the focus, so Enter presses it.
+  const wasHost = useRef(host.you);
+  useEffect(() => {
+    if (host.you && !wasHost.current) start.current?.focus({ preventScroll: true });
+    wasHost.current = host.you;
+  }, [host.you]);
+  const title: ReactNode = host.you ? (
+    canStart ? (
+      "Start when you're ready"
+    ) : isPrivate ? (
+      "Waiting for your friends…"
+    ) : (
+      "Waiting for players…"
+    )
+  ) : host.name ? (
+    <>
+      Waiting for{" "}
+      <Text as="span" color="inherit" xstyle={styles.nowrap}>
+        {host.name}
+      </Text>{" "}
+      to start
+    </>
+  ) : (
+    "Waiting for players…"
+  );
+  const need = ROYALE_MIN_PLAYERS - players;
+  const sub = host.you
+    ? canStart
+      ? `${count}. You're the host: others can still join until you start, not after.`
+      : `You're the host · ${count}.${isPrivate ? " Send them the link." : ""}`
+    : `${count}. The host starts the match; others can still join until then.`;
   return (
     <CardBox name="waiting">
       <HStack gap={3} align="start">
-        {seconds === 0 && <Spinner size="lg" xstyle={styles.spinner} aria-label="Waiting" />}
+        {!(host.you && canStart) && <Spinner size="lg" xstyle={styles.spinner} aria-label="Waiting" />}
         <VStack>
-          {title ? (
-            <Title name="waiting">{title}</Title>
-          ) : (
-            <Title name="waiting" xstyle={[shared.display, styles.countdown, shared.tabular]} testId="royale-countdown">
-              Starting in{" "}
-              <Text as="span" color="inherit" xstyle={styles.countdownNumber}>
-                {seconds}
-              </Text>
-            </Title>
-          )}
-          <Text color="secondary" xstyle={[styles.sub, shared.tabular]} data-testid="royale-players">
+          <Title name="waiting" testId={host.you ? undefined : "royale-waiting-host"}>
+            {title}
+          </Title>
+          <Text color="secondary" xstyle={[styles.sub, shared.tabular]} data-testid="royale-players" data-players={players}>
             {sub}
           </Text>
         </VStack>
       </HStack>
+      {host.you && (
+        <VStack gap={1} xstyle={styles.startBlock}>
+          <Button
+            ref={start}
+            label={`Start · ${count}`}
+            variant="primary"
+            size="lg"
+            xstyle={[shared.blueButton, styles.stackButton]}
+            // Always a tooltip: a disabled Button with one stays focusable (aria-disabled, never native
+            // disabled), and the same element throughout, so the card's focus lands on it and Enter
+            // presses it as soon as enough players are in.
+            isDisabled={!canStart}
+            tooltip={canStart ? "Starts the match now: nobody can join after" : `It takes ${ROYALE_MIN_PLAYERS} players to start`}
+            data-autofocus=""
+            data-testid="royale-start"
+            data-ready={canStart}
+            data-players={players}
+            onClick={() => {
+              gesture();
+              app.startMatch();
+            }}
+          />
+          {!canStart && (
+            <Text type="supporting" color="secondary" data-testid="royale-start-hint">
+              It takes {ROYALE_MIN_PLAYERS} players to start: waiting for {need === 1 ? "one more" : `${need} more`}.
+            </Text>
+          )}
+        </VStack>
+      )}
       <Text color="secondary" xstyle={styles.sub}>
         One life. Everyone starts with the Pistol: find guns, grenades, bandages, medkits and shield charges in crates,
         stay inside the zone. The last one standing wins.
@@ -514,7 +589,7 @@ function RoyaleWaitingCard() {
       <Text as="p" xstyle={shared.eyebrow}>
         Players
       </Text>
-      <Seats total={ROYALE_MAX_PLAYERS} showAway />
+      <Seats total={ROYALE_MAX_PLAYERS} showAway showHost />
       <Text as="p" xstyle={shared.eyebrow}>
         Invite link
       </Text>
@@ -776,9 +851,14 @@ function ResultCard() {
         </Text>
       )}
       <Text color="secondary" xstyle={[styles.resultSub, shared.tabular]} data-testid="result-countdown">
-        {staying
-          ? `Rematch in ${left} s, same game, next map.`
-          : `Next match in ${left} s. Stay for a rematch, or head back to the menu.`}
+        {royale
+          ? // Battle royale: back to the lobby, where the host starts the next match.
+            staying
+            ? `Back to the lobby in ${left} s: the host starts the next match.`
+            : `Back to the lobby in ${left} s, where the host starts the next match. Stay, or head back to the menu.`
+          : staying
+            ? `Rematch in ${left} s, same game, next map.`
+            : `Next match in ${left} s. Stay for a rematch, or head back to the menu.`}
       </Text>
       {!staying && (
         <>
