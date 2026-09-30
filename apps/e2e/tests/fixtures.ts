@@ -110,6 +110,14 @@ export interface PlayerState {
     mags: number[];
     grenades: number;
     outTick: number;
+    /** Battle royale: healing items and shield charges carried, the heal in progress (255: none), its steps left, and how the last one ended (HEAL_STOP). */
+    bandages: number;
+    medkits: number;
+    shields: number;
+    heal: number;
+    healStop: number;
+    /** What the shield bubble can still soak. */
+    shieldHp: number;
     /** Final place once the match ended (0 before). */
     place: number;
   }[];
@@ -189,6 +197,12 @@ export class Player {
           mags: [0, 1, 2].map((i) => Number((p.kit as Record<string, number>)?.[`mag${i}`] ?? 0)),
           grenades: Number((p.kit as Record<string, number>)?.grenades ?? 0),
           outTick: Number(p.outTick ?? 0),
+          bandages: Number((p.kit as Record<string, number>)?.bandages ?? 0),
+          medkits: Number((p.kit as Record<string, number>)?.medkits ?? 0),
+          shields: Number((p.kit as Record<string, number>)?.shields ?? 0),
+          heal: Number((p.kit as Record<string, number>)?.heal ?? 255),
+          healStop: Number((p.kit as Record<string, number>)?.healStop ?? 0),
+          shieldHp: Number(p.shieldHp ?? 0),
           place: Number(p.place ?? 0),
         }),
       );
@@ -431,9 +445,14 @@ export async function place(roomId: string, id: string, x: number, z: number) {
   expect(res.status, await res.text()).toBe(200);
 }
 
-/** Battle royale: from now on that room's crates drop this gun (server.ts' /loot). */
-export async function setLoot(roomId: string, weapon: number) {
-  const res = await fetch(`http://localhost:${SERVER_PORT + 1}/loot`, { method: "POST", body: JSON.stringify({ roomId, weapon }) });
+/**
+ * Battle royale: from now on that room's crates drop this gun (a WEAPONS
+ * index), or this floor item (`{ kind, item, amount }`: healing items,
+ * shield charges...) (server.ts' /loot).
+ */
+export async function setLoot(roomId: string, drop: number | { kind: number; item: number; amount: number }) {
+  const body = typeof drop === "number" ? { roomId, weapon: drop } : { roomId, ...drop };
+  const res = await fetch(`http://localhost:${SERVER_PORT + 1}/loot`, { method: "POST", body: JSON.stringify(body) });
   expect(res.status, await res.text()).toBe(200);
 }
 

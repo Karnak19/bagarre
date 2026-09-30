@@ -74,6 +74,14 @@ export interface InputMessage {
   slot?: number;
   switch?: number;
   swap?: number;
+  /**
+   * Battle royale: `use` is the press counter of the healing keys (4 and 5):
+   * when it goes up, a heal with the item `heal` (a HEAL_ITEMS index) starts,
+   * if the step allows it (one carried, not at full health, nothing else
+   * going on). Like a switch, the step decides on both sides.
+   */
+  heal?: number;
+  use?: number;
 }
 
 /**
@@ -134,6 +142,13 @@ export interface PlayerSim {
    */
   stunTicks: number;
   /**
+   * Health (0..MAX_HP). Part of the sim for the battle royale's healing
+   * items: the step refuses a heal at full health and adds the heal when it
+   * completes, so the client predicts both. Everything else that changes it
+   * (damage, the heal grenade, a respawn) is the server's alone.
+   */
+  hp: number;
+  /**
    * The battle royale's gun slots and grenade stack (KitSim, royale.ts). In
    * the other modes it stays empty and nothing reads it. A nested object, as
    * it is a child Schema on the server (`Player.kit`): room for healing
@@ -163,6 +178,21 @@ export interface KitSim {
   /** Highest `switch` / `swap` press counter already consumed (InputMessage). */
   switchSeen: number;
   swapSeen: number;
+  /** Healing items carried (HEAL_BANDAGE, HEAL_MEDKIT) and shield charges. */
+  bandages: number;
+  medkits: number;
+  shields: number;
+  /**
+   * The heal in progress: the HEAL_ITEMS index being used (NO_HEAL: none) and
+   * the steps left before it completes. The step walks at
+   * ROYALE.healSpeedScale while it runs, which is why it is predicted.
+   */
+  heal: number;
+  healTicks: number;
+  /** How the last heal ended (a HEAL_STOP value, 0 before any): the HUD says why a heal stopped. */
+  healStop: number;
+  /** Highest `use` press counter already consumed (InputMessage). */
+  useSeen: number;
 }
 
 export const KIT_KEYS = [
@@ -176,6 +206,13 @@ export const KIT_KEYS = [
   "grenades",
   "switchSeen",
   "swapSeen",
+  "bandages",
+  "medkits",
+  "shields",
+  "heal",
+  "healTicks",
+  "healStop",
+  "useSeen",
 ] as const satisfies readonly (keyof KitSim)[];
 
 /** The flat fields of PlayerSim (everything but `kit`), copied one by one. */
@@ -197,12 +234,12 @@ export const PLAYER_SIM_KEYS = [
   "reloadSeen",
   "burstLeft",
   "stunTicks",
+  "hp",
 ] as const satisfies readonly (keyof PlayerSim)[];
 
 /** What the client reads from a player in the synced room state. */
 export interface PlayerView extends PlayerSim {
   aim: number;
-  hp: number;
   kills: number;
   alive: boolean;
   /** Last input seq the server applied for this player (for reconciliation). */
@@ -279,7 +316,6 @@ export interface PlayerView extends PlayerSim {
 export const PLAYER_VIEW_KEYS = [
   ...PLAYER_SIM_KEYS,
   "aim",
-  "hp",
   "kills",
   "alive",
   "lastSeq",
@@ -354,9 +390,9 @@ export interface SmokeView {
 export interface FloorItemView {
   x: number;
   z: number;
-  /** An ITEM_KINDS index (ITEM_GUN, ITEM_GRENADE). */
+  /** An ITEM_KINDS index (ITEM_GUN, ITEM_GRENADE, ITEM_HEAL, ITEM_SHIELD). */
   kind: number;
-  /** Which one: a WEAPONS index for a gun, a GRENADES index for grenades. */
+  /** Which one: a WEAPONS index for a gun, a GRENADES index for grenades, a HEAL_ITEMS index for healing (0 for shield charges). */
   item: number;
   /** How many: a gun's magazine, a stack's count. */
   amount: number;

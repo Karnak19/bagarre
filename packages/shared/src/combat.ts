@@ -14,9 +14,11 @@ import {
   DEFAULT_GRENADE,
   DEFAULT_WEAPON,
   GRENADE,
+  MAX_HP,
   NO_TEAM,
   PLAYER_SPEED,
   ROYALE,
+  SHIELD_CHARGE_TICKS,
   SHIELD_COOLDOWN_TICKS,
   STUN,
   TICK_DT,
@@ -28,7 +30,7 @@ import {
 import { grenadeCooldownTicks } from "./grenades.ts";
 import { clamp, clampMove, movePlayer, muzzle, type BulletSim, type Vec2 } from "./physics.ts";
 import { KIT_KEYS, PLAYER_SIM_KEYS, type InputMessage, type KitSim, type Phase, type PlayerSim } from "./protocol.ts";
-import { NO_GUN, emptyKit, gunInHand, switchGun, useGrenade } from "./royale.ts";
+import { HEAL_STOP, NO_GUN, canStartHeal, cancelHeal, emptyKit, gunInHand, healing, startHeal, switchGun, tickHeal, useGrenade } from "./royale.ts";
 
 export function weaponDef(id: number): WeaponDef {
   return WEAPONS[id] ?? WEAPONS[DEFAULT_WEAPON];
@@ -85,7 +87,14 @@ export function spawnSim(x: number, z: number, weapon: number, seen?: PlayerSim,
     reloadSeen: seen?.reloadSeen ?? 0,
     burstLeft: 0,
     stunTicks: 0,
-    kit: { ...kit, switchSeen: seen?.kit.switchSeen ?? kit.switchSeen, swapSeen: seen?.kit.swapSeen ?? kit.swapSeen },
+    // Health is the server's (a spawn sets it on its own): kept as it was.
+    hp: seen?.hp ?? MAX_HP,
+    kit: {
+      ...kit,
+      switchSeen: seen?.kit.switchSeen ?? kit.switchSeen,
+      swapSeen: seen?.kit.swapSeen ?? kit.swapSeen,
+      useSeen: seen?.kit.useSeen ?? kit.useSeen,
+    },
   };
 }
 
@@ -153,6 +162,9 @@ export interface StepResult {
   swap: boolean;
   /** This step moved at dash speed (for visuals). */
   dashing: boolean;
+  /** Battle royale: a heal started on this input, and the HP a heal gave on it (0: none completed). */
+  healStart: boolean;
+  healed: number;
 }
 
 const dec = (v: number) => (v > 0 ? v - 1 : 0);
@@ -180,6 +192,12 @@ const dec = (v: number) => (v > 0 ? v - 1 : 0);
  * spends it, and blocks the next throw for ROYALE.throwGap instead of the
  * type's cooldown. The switch is predicted like a shot, so the client fires
  * the right gun from the next input on.
+ *
+ * Slots also bring the healing items and shield charges (royale.ts, "Healing"):
+ * a `use` press starts a heal with `input.heal`, which slows walking to
+ * ROYALE.healSpeedScale and blocks the dash until it completes (`healed`:
+ * the HP it gave, already in `sim.hp`) or a shot, throw or switch cancels
+ * it. The shield needs a charge (`kit.shields`) instead of its cooldown.
  */
 export function stepPlayer(
   arena: Arena,
@@ -193,7 +211,7 @@ export function stepPlayer(
   const { act, armed } = typeof canAct === "boolean" ? { act: canAct, armed: canAct } : canAct;
   const slots = kit === "slots";
   const s: PlayerSim = { ...prev, kit: { ...prev.kit } };
-  const res: StepResult = { sim: s, fired: false, grenade: null, shield: false, dashing: false, swap: false };
+  const res: StepResult = { sim: s, fired: false, grenade: null, shield: false, dashing: false, swap: false, healStart: false, healed: 0 };
 
   const pressDash = input.dash > s.dashSeen;
   const pressGrenade = input.grenade > s.grenadeSeen;
@@ -201,12 +219,14 @@ export function stepPlayer(
   const pressReload = input.reload > s.reloadSeen;
   const pressSwitch = (input.switch ?? 0) > s.kit.switchSeen;
   const pressSwap = (input.swap ?? 0) > s.kit.swapSeen;
+  const pressUse = (input.use ?? 0) > s.kit.useSeen;
   s.dashSeen = Math.max(s.dashSeen, input.dash);
   s.grenadeSeen = Math.max(s.grenadeSeen, input.grenade);
   s.shieldSeen = Math.max(s.shieldSeen, input.shield);
   s.reloadSeen = Math.max(s.reloadSeen, input.reload);
   s.kit.switchSeen = Math.max(s.kit.switchSeen, input.switch ?? 0);
   s.kit.swapSeen = Math.max(s.kit.swapSeen, input.swap ?? 0);
+  s.kit.useSeen = Math.max(s.kit.useSeen, input.use ?? 0);
 
   s.dashCd = dec(s.dashCd);
   s.fireCd = dec(s.fireCd);
@@ -215,7 +235,7 @@ export function stepPlayer(
   const stunned = s.stunTicks > 0;
   s.stunTicks = dec(s.stunTicks);
   // The switch comes first: everything below (reload, fire) is the new gun's.
-  if (slots && act && pressSwitch) switchGun(s, input.slot ?? -1);
+  const switched = slots && act && pressSwitch && switchGun(s, input.slot ?? -1);
   const hand = slots ? gunInHand(s.kit) : weaponId;
   const w = weaponDef(hand === NO_GUN ? weaponId : hand);
   if (s.reloadTicks > 0) {
@@ -226,14 +246,29 @@ export function stepPlayer(
   if (!act) {
     s.dashTicks = 0;
     s.burstLeft = 0;
+    cancelHeal(s.kit, 0);
     return res;
   }
 
   if (pressReload && s.reloadTicks === 0 && s.ammo < w.magazine) s.reloadTicks = ticks(w.reloadTime);
 
+  // Healing (slots only, see royale.ts): the heal in progress counts down
+  // and completes first, before anything this input does could cancel it.
+  // A new one starts with the trigger up and no burst running (either would
+  // cancel it at once), and slows this very step.
+  if (slots) {
+    res.healed = tickHeal(s);
+    const item = input.heal ?? -1;
+    if (pressUse && armed && !input.fire && s.burstLeft === 0 && canStartHeal(s, item)) {
+      startHeal(s, item);
+      res.healStart = true;
+    }
+  }
+  const heals = healing(s.kit);
+
   const move = clampMove(input.mx, input.mz);
-  if (stunned) s.dashTicks = 0;
-  if (pressDash && !stunned && s.dashCd === 0 && s.dashTicks === 0) {
+  if (stunned || heals) s.dashTicks = 0;
+  if (pressDash && !stunned && !heals && s.dashCd === 0 && s.dashTicks === 0) {
     // Move direction if moving, otherwise where we're facing.
     const len = Math.sqrt(move.x * move.x + move.z * move.z);
     if (len > 1e-3) {
@@ -253,7 +288,7 @@ export function stepPlayer(
     res.dashing = true;
     p = movePlayer(arena, s, s.dashDx * DASH_SPEED * TICK_DT, s.dashDz * DASH_SPEED * TICK_DT);
   } else {
-    const speed = stunned ? PLAYER_SPEED * STUN.speedScale : PLAYER_SPEED;
+    const speed = PLAYER_SPEED * (stunned ? STUN.speedScale : 1) * (heals ? ROYALE.healSpeedScale : 1);
     p = movePlayer(arena, s, move.x * speed * TICK_DT, move.z * speed * TICK_DT);
   }
   s.x = p.x;
@@ -292,9 +327,20 @@ export function stepPlayer(
 
   if (slots && pressSwap) res.swap = true;
 
-  if (pressShield && s.shieldCd === 0) {
-    s.shieldCd = SHIELD_COOLDOWN_TICKS;
+  // Battle royale: the shield uses a charge, and the next waits for this
+  // bubble to end plus ROYALE.shieldGap. It never cancels a heal.
+  if (pressShield && s.shieldCd === 0 && (!slots || s.kit.shields > 0)) {
+    if (slots) s.kit.shields--;
+    s.shieldCd = slots ? SHIELD_CHARGE_TICKS : SHIELD_COOLDOWN_TICKS;
     res.shield = true;
+  }
+
+  // A shot, a throw or a switch on this input cancels the heal: nothing
+  // healed, the item kept. (An F swap and damage are the server's.)
+  if (heals) {
+    if (res.fired) cancelHeal(s.kit, HEAL_STOP.fire);
+    else if (res.grenade) cancelHeal(s.kit, HEAL_STOP.throw);
+    else if (switched) cancelHeal(s.kit, HEAL_STOP.switch);
   }
 
   return res;

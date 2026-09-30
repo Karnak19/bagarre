@@ -118,6 +118,11 @@ class PlaceholderBody {
   }
 }
 
+/** The healing ring's radii, and how many steps its fill moves in. */
+const HEAL_RING_R0 = PLAYER_RADIUS + 0.5;
+const HEAL_RING_R1 = PLAYER_RADIUS + 0.64;
+const HEAL_RING_STEPS = 60;
+
 export class PlayerMesh {
   readonly group = new THREE.Group();
   readonly slot: number;
@@ -151,6 +156,11 @@ export class PlayerMesh {
   private healAt = -1;
   private stunRing: THREE.Mesh;
   private stunRingMat: THREE.MeshBasicMaterial;
+  /** Battle royale: the healing ring (a faint track, and an arc that fills), and the fill drawn, in HEAL_RING_STEPS (-1: hidden). */
+  private healTrack: THREE.Mesh;
+  private healArc: THREE.Mesh;
+  private healMat: THREE.MeshBasicMaterial;
+  private healStep = -1;
 
   /**
    * `skin`: the SKINS id worn. Until that skin's model has loaded (and for
@@ -206,6 +216,20 @@ export class PlayerMesh {
     this.stunRing.visible = false;
     this.group.add(this.stunRing);
 
+    // The healing ring: a green arc that fills clockwise round the player
+    // while a healing item is used (setHealing), over a faint full track.
+    this.healMat = new THREE.MeshBasicMaterial({ color: 0x6dff9a, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide });
+    const track = new THREE.MeshBasicMaterial({ color: 0x6dff9a, transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide });
+    this.healTrack = new THREE.Mesh(new THREE.RingGeometry(HEAL_RING_R0, HEAL_RING_R1, 48), track);
+    this.healArc = new THREE.Mesh(new THREE.RingGeometry(HEAL_RING_R0, HEAL_RING_R1, 48, 1, 0, 0.01), this.healMat);
+    for (const m of [this.healTrack, this.healArc]) {
+      m.rotation.x = -Math.PI / 2;
+      m.position.y = 0.05;
+      m.renderOrder = 3;
+      m.visible = false;
+      this.group.add(m);
+    }
+
     this.shieldMat = shieldMaterial(this.baseColor);
     this.shield = new THREE.Mesh(new THREE.SphereGeometry(1.05, 32, 20), this.shieldMat);
     this.shield.position.y = 0.95;
@@ -260,6 +284,10 @@ export class PlayerMesh {
     this.shieldMat.dispose();
     this.stunRing.geometry.dispose();
     this.stunRingMat.dispose();
+    this.healTrack.geometry.dispose();
+    (this.healTrack.material as THREE.Material).dispose();
+    this.healArc.geometry.dispose();
+    this.healMat.dispose();
     this.dropPlaceholder();
   }
 
@@ -267,6 +295,24 @@ export class PlayerMesh {
   setShield(fraction: number) {
     this.shield.visible = fraction > 0;
     this.shieldMat.uniforms.strength.value = 0.45 + 0.55 * fraction;
+  }
+
+  /**
+   * A heal in progress, `fraction` 0..1 of the way (below 0: none): the
+   * green ring fills round the player. Rebuilt only when it moves a step.
+   */
+  setHealing(fraction: number) {
+    const step = fraction < 0 ? -1 : Math.round(Math.min(1, fraction) * HEAL_RING_STEPS);
+    if (step === this.healStep) return;
+    this.healStep = step;
+    const on = step >= 0;
+    this.healTrack.visible = on;
+    this.healArc.visible = on && step > 0;
+    if (!on || step === 0) return;
+    this.healArc.geometry.dispose();
+    // From the top of the screen's view (-z), clockwise seen from above.
+    const len = (step / HEAL_RING_STEPS) * Math.PI * 2;
+    this.healArc.geometry = new THREE.RingGeometry(HEAL_RING_R0, HEAL_RING_R1, 48, 1, Math.PI / 2 - len, len);
   }
 
   setColor(color: number) {
@@ -295,7 +341,7 @@ export class PlayerMesh {
     this.fadedApplied = on;
     this.group.traverse((o) => {
       const mesh = o as THREE.Mesh;
-      if (!mesh.isMesh || mesh === this.shield || mesh === this.stunRing) return;
+      if (!mesh.isMesh || mesh === this.shield || mesh === this.stunRing || mesh === this.healArc || mesh === this.healTrack) return;
       for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
         let saved = this.fadeSaved.get(m);
         if (!saved) {

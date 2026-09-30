@@ -21,6 +21,7 @@ import {
   GRENADES,
   KILLS_TO_WIN,
   MAX_HP,
+  SHIELD_CHARGE_TICKS,
   SHIELD_COOLDOWN_TICKS,
   STUN_TICKS,
   TICK_RATE,
@@ -38,7 +39,7 @@ import { paintOf } from "../../paint.ts";
 import { shallowEqual, useEngine, useSelector, useStoreEffect } from "../hooks.ts";
 import { shared, slotFill } from "../styles.ts";
 import { FfaPanel, KillFeed, MinimapBox } from "./HudFfa.tsx";
-import { GunSlots, RoyalePanel, ZoneArrow } from "./HudRoyale.tsx";
+import { GunSlots, HealItems, HealStatus, RoyalePanel, ZoneArrow } from "./HudRoyale.tsx";
 import { TeamPanel } from "./HudTeam.tsx";
 import { PICKABLE_WEAPONS, WEAPON_KEYS, grenadeView } from "../../items.ts";
 import { GrenadePicker, WeaponPicker } from "./WeaponPicker.tsx";
@@ -178,12 +179,14 @@ export function Hud() {
       {!royale && <Picker />}
       <HStack gap={2} align="stretch" xstyle={styles.bottom}>
         {royale ? <GunSlots /> : <Weapon />}
+        {royale && <HealItems />}
         <Ability kind="dash" keyLabel="Space" label="Dash" />
         <Ability kind="grenade" keyLabel="Q" label="Grenade" />
         <Ability kind="shield" keyLabel="E" label="Shield" />
         <Sound />
       </HStack>
       <Stunned />
+      {royale && <HealStatus />}
       <Watchers />
       <Debug />
       <FlashScreen />
@@ -370,7 +373,8 @@ const ABILITY: Record<"dash" | "grenade" | "shield", { cd: (m: HudModel) => numb
   dash: { cd: (m) => m.sim?.dashCd ?? 0, total: () => DASH_COOLDOWN_TICKS },
   // Each grenade type has its own cooldown: the sweep is out of the one in hand's.
   grenade: { cd: (m) => m.sim?.grenadeCd ?? 0, total: (m) => grenadeCooldownTicks(m.me?.grenade ?? 0) },
-  shield: { cd: (m) => m.sim?.shieldCd ?? 0, total: () => SHIELD_COOLDOWN_TICKS },
+  // Battle royale: charges, with a short wait between two (the bubble, then ROYALE.shieldGap).
+  shield: { cd: (m) => m.sim?.shieldCd ?? 0, total: (m) => (m.royale ? SHIELD_CHARGE_TICKS : SHIELD_COOLDOWN_TICKS) },
 };
 
 function Ability({ kind, keyLabel, label }: { kind: keyof typeof ABILITY; keyLabel: string; label: string }) {
@@ -380,8 +384,8 @@ function Ability({ kind, keyLabel, label }: { kind: keyof typeof ABILITY; keyLab
   const state = useSelector(
     hud,
     (m) => {
-      // Battle royale: grenades are counted, not on a cooldown; none left is never ready.
-      const count = kind === "grenade" && m?.royale ? m.royale.grenades : -1;
+      // Battle royale: grenades and shield charges are counted; none left is never ready.
+      const count = !m?.royale ? -1 : kind === "grenade" ? m.royale.grenades : kind === "shield" ? m.royale.shields : -1;
       return {
         ready: (!m || a.cd(m) === 0) && count !== 0,
         active: kind === "shield" && (m?.me?.shieldHp ?? 0) > 0,
@@ -397,14 +401,16 @@ function Ability({ kind, keyLabel, label }: { kind: keyof typeof ABILITY; keyLab
       ? "None"
       : state.grenade >= 0
         ? `${grenadeView(state.grenade).icon} ${grenadeDef(state.grenade).name}${state.count > 0 ? ` ×${state.count}` : ""}`
-        : label;
+        : state.count > 0
+          ? `${label} ×${state.count}`
+          : label;
   // The sweep and the timer move every tick while cooling down: written here.
   const cd = useRef<HTMLElement>(null);
   const t = useRef<HTMLElement>(null);
   useStoreEffect(hud, (m) => {
     const left = m ? a.cd(m) : 0;
     const height = `${m ? Math.min(1, left / a.total(m)) * 100 : 0}%`;
-    const none = kind === "grenade" && m?.royale?.grenades === 0;
+    const none = (kind === "grenade" && m?.royale?.grenades === 0) || (kind === "shield" && m?.royale?.shields === 0);
     const text = none ? "find some" : left > 0 ? `${(left / TICK_RATE).toFixed(1)}s` : "ready";
     if (cd.current && cd.current.style.height !== height) cd.current.style.height = height;
     if (t.current && t.current.textContent !== text) t.current.textContent = text;
@@ -462,8 +468,9 @@ function Warmup() {
       {royale ? (
         // Battle royale: nothing to pick.
         <Text xstyle={styles.warmupSub}>
-          One life. Everyone starts with the Pistol: break crates for guns and grenades (1-3 or the wheel switch guns, F swaps
-          with one on the floor). Stay inside the zone. Last one standing wins.
+          One life. Everyone starts with the Pistol: break crates for guns, grenades, healing and shield charges (1-3 or the
+          wheel switch guns, F swaps with one on the floor, 4 bandage, 5 medkit, E uses a shield charge). Stay inside the
+          zone. Last one standing wins.
         </Text>
       ) : (
         <>

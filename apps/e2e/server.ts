@@ -20,6 +20,8 @@
 //                                          dead player respawns `seconds` from now)
 //   POST /loot { roomId, weapon }          battle royale: that room's crates drop this gun
 //                                          (a WEAPONS index) instead of a random item
+//   POST /loot { roomId, kind, item, amount }  the same with any floor item (an ITEM_KINDS
+//                                          index, which one, how many): healing, shields
 //   POST /zone { roomId, wait, close }     battle royale: the running match's zone starts
 //                                          shrinking `wait` seconds from now and is closed
 //                                          `close` seconds from now
@@ -29,7 +31,7 @@
 import { createServer as createHttpServer } from "node:http";
 import { matchMaker } from "@colyseus/core";
 import { createServer } from "@bagarre/server/app";
-import { ITEM_GUN, MAX_HP, TICK_RATE, WEAPONS, type ItemDrop } from "@bagarre/shared";
+import { ITEM_GUN, ITEM_KINDS, MAX_HP, TICK_RATE, WEAPONS, type ItemDrop } from "@bagarre/shared";
 
 /**
  * Every match starts with a 1 s warmup instead of WARMUP_SECONDS (8 s): most
@@ -215,12 +217,21 @@ function setSmoke(body: string, reply: (status: number, text: string) => void) {
  * POST /loot { roomId, weapon }: from now on that room's crates drop this gun
  * (with a full magazine) instead of a random line of the loot table, so a
  * spec knows what it will pick up. Only the room's Floor changes (its draw).
+ * With `kind`, `item` and `amount` instead of `weapon`: that floor item
+ * (a stack of healing items, shield charges, grenades).
  */
 function setLoot(body: string, reply: (status: number, text: string) => void) {
-  const { roomId, weapon } = JSON.parse(body || "{}") as { roomId?: string; weapon?: number };
+  const { roomId, weapon, kind, item, amount } = JSON.parse(body || "{}") as { roomId?: string; weapon?: number; kind?: number; item?: number; amount?: number };
   const room = roomId ? (matchMaker.getLocalRoomById(roomId) as unknown as { floor?: { force: ItemDrop | null } } | undefined) : undefined;
   if (!room) return reply(404, `no room ${roomId}`);
   if (!room.floor || !("force" in room.floor)) return reply(500, "GameRoom.floor.force is gone: update apps/e2e/server.ts");
+  if (kind !== undefined) {
+    const whole = (v: unknown, max: number) => typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= max;
+    if (!whole(kind, ITEM_KINDS.length - 1) || !whole(item, 255) || !whole(amount, 255) || amount === 0)
+      return reply(400, `bad item ${kind} / ${item} / ${amount}`);
+    room.floor.force = { kind, item: item as number, amount: amount as number };
+    return reply(200, "ok");
+  }
   if (typeof weapon !== "number" || !WEAPONS[weapon]) return reply(400, `bad weapon ${weapon}`);
   room.floor.force = { kind: ITEM_GUN, item: weapon, amount: WEAPONS[weapon].magazine };
   reply(200, "ok");
