@@ -1,6 +1,6 @@
 # Battle royale maps
 
-One map for the battle royale mode (up to 10 players, one life, crates to
+One map for the battle royale mode (up to 10 players, one life, chests to
 loot, a zone that closes on a final circle; the rules are in the README's
 battle royale section). It lives in `packages/shared/src/maps/royale/`,
 and `ROYALE_MAPS` there is the mode's pool (`ROYALE_RULES.maps`): Ironvale
@@ -45,7 +45,7 @@ shapes), and:
 - `royale` (`RoyaleMapData` in `maps/types.ts`, optional on a MapDef and
   required here): `crates`, the crate spots, and `zone`, the rectangle the
   zone's final centre is drawn in (`pickZone` in `src/royale.ts`, from the
-  match id). The server stands a crate on every spot at the start
+  match id). The server stands a closed chest on every spot at the start
   (`GameRoom`, `floor.reset`) and aims the starts toward `hub`
   (`ffaStartSpawns` spreads the players over `spawns`).
 

@@ -352,10 +352,11 @@ describe("gun slots", () => {
   });
 
   // Which floor gun F takes (swapTarget): the server's F and the HUD's prompt both ask it.
-  const gunItem = (item: number, x: number, blockedFor = ""): FloorItemView => ({ x, z: 0, kind: ITEM_GUN, item, amount: WEAPONS[item].magazine, blockedFor });
+  const LANDED = { fromX: 0, fromZ: 0, dropTick: 0, readyTick: 0 };
+  const gunItem = (item: number, x: number, blockedFor = ""): FloorItemView => ({ x, z: 0, kind: ITEM_GUN, item, amount: WEAPONS[item].magazine, blockedFor, ...LANDED });
   const floor = (...its: [string, FloorItemView][]) => new Map(its);
   const reach = ROYALE.pickupRadius;
-  const tgt = (items: Map<string, FloorItemView>, kit = held.kit, pid = "me") => swapTarget(kit, 0, 0, items, pid)?.id ?? null;
+  const tgt = (items: Map<string, FloorItemView>, kit = held.kit, pid = "me") => swapTarget(kit, 0, 0, items, pid, 0)?.id ?? null;
   test("swapTarget: a gun in reach, not carried", () => {
     expect(tgt(floor(["a", gunItem(SNIPER, 0.5)]))).toBe("a");
   });
@@ -370,7 +371,7 @@ describe("gun slots", () => {
     expect(tgt(floor(["a", gunItem(SNIPER, 0.5)], ["b", gunItem(DMR, -0.5)]))).toBe("a");
   });
   test("swapTarget: only guns count", () => {
-    const frag: FloorItemView = { x: 0.1, z: 0, kind: ITEM_GRENADE, item: GRENADE_FRAG, amount: 2, blockedFor: "" };
+    const frag: FloorItemView = { x: 0.1, z: 0, kind: ITEM_GRENADE, item: GRENADE_FRAG, amount: 2, blockedFor: "", ...LANDED };
     expect(tgt(floor(["g", frag], ["a", gunItem(SNIPER, 0.6)]))).toBe("a");
   });
   test("swapTarget: a gun blocked for us (dropped under our feet) is skipped", () => {
@@ -392,7 +393,7 @@ describe("gun slots", () => {
     expect(tgt(floor())).toBeNull();
   });
   test("swapTarget's pick is one swapGun accepts", () => {
-    const t0 = swapTarget(held.kit, 0, 0, floor(["a", gunItem(SNIPER, 0.5)]), "me");
+    const t0 = swapTarget(held.kit, 0, 0, floor(["a", gunItem(SNIPER, 0.5)]), "me", 0);
     expect(t0).not.toBeNull();
     expect(swapGun(held, t0!.item.item, t0!.item.amount)).not.toBeNull();
   });

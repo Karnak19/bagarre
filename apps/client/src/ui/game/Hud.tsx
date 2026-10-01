@@ -469,9 +469,9 @@ function Warmup() {
       {royale ? (
         // Battle royale: nothing to pick.
         <Text xstyle={styles.warmupSub}>
-          One life. Everyone starts with the Pistol: break crates for guns, grenades, healing and shield charges (1-3 or the
-          wheel switch guns, F swaps with one on the floor, 4 bandage, 5 medkit, E uses a shield charge). Stay inside the
-          zone. Last one standing wins.
+          One life. Everyone starts with the Pistol: open the glowing chests with F for guns, grenades, healing and shield
+          charges (1-3 or the wheel switch guns, F swaps with one on the floor, 4 bandage, 5 medkit, E uses a shield charge).
+          Stay inside the zone. Last one standing wins.
         </Text>
       ) : (
         <>

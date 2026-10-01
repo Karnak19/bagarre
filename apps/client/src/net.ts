@@ -81,7 +81,7 @@ export interface Snapshot {
   spectators: number;
   /** Seats in this game (the mode's cap). */
   maxPlayers: number;
-  /** Battle royale: the items on the floor, the crates still standing, and the zone (`end` 0: none). */
+  /** Battle royale: the items on the floor, the chests, and the zone (`end` 0: none). */
   items: Map<string, FloorItemView>;
   crates: Map<string, CrateView>;
   zone: ZoneView;
@@ -118,9 +118,22 @@ function capture(state: RoomStateView): Omit<Snapshot, "t" | "epoch"> {
   const smokes = new Map<string, SmokeView>();
   state.smokes?.forEach((c, id) => smokes.set(id, { x: c.x, z: c.z, start: c.start, end: c.end, owner: c.owner, team: c.team }));
   const items = new Map<string, FloorItemView>();
-  state.items?.forEach((it, id) => items.set(id, { x: it.x, z: it.z, kind: it.kind, item: it.item, amount: it.amount, blockedFor: it.blockedFor ?? "" }));
+  state.items?.forEach((it, id) =>
+    items.set(id, {
+      x: it.x,
+      z: it.z,
+      kind: it.kind,
+      item: it.item,
+      amount: it.amount,
+      blockedFor: it.blockedFor ?? "",
+      fromX: it.fromX ?? 0,
+      fromZ: it.fromZ ?? 0,
+      dropTick: it.dropTick ?? 0,
+      readyTick: it.readyTick ?? 0,
+    }),
+  );
   const crates = new Map<string, CrateView>();
-  state.crates?.forEach((c, id) => crates.set(id, { x: c.x, z: c.z }));
+  state.crates?.forEach((c, id) => crates.set(id, { x: c.x, z: c.z, open: !!c.open }));
   const z = state.zone;
   const zone: ZoneView = z ? { x0: z.x0, z0: z.z0, x1: z.x1, z1: z.z1, r0: z.r0, r1: z.r1, start: z.start, end: z.end } : NO_ZONE;
   const feed: KillView[] = [];

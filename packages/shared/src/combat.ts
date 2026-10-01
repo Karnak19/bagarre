@@ -158,7 +158,7 @@ export interface StepResult {
   grenade: Vec2 | null;
   /** This input activated the shield. */
   shield: boolean;
-  /** Battle royale: this input pressed F (swap for a gun on the floor). The server does the swap (floor.ts). */
+  /** Battle royale: this input pressed F (open a chest, or a swap with the floor). The server does it (floor.ts). */
   swap: boolean;
   /** This step moved at dash speed (for visuals). */
   dashing: boolean;

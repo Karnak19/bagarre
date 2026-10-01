@@ -400,8 +400,19 @@ export const ROYALE = {
   throwGap: 1,
   /** An item is picked up when the player's centre is this close to it. */
   pickupRadius: 0.9,
-  /** A crate breaks open when a player's body touches this circle. */
+  /** A chest's footprint: nothing it drops lands inside this circle. */
   crateRadius: 0.6,
+  /** F opens a chest when the player's centre is this close to the chest's. */
+  openRadius: 1.5,
+  /**
+   * Seconds a chest's loot takes to pop out and land. Until then nobody can
+   * pick it up (the server's rule, `itemReady`); the client draws the arc.
+   */
+  lootDrop: 0.6,
+  /** A chest's loot lands this far from the chest's centre (toward whoever opened it). */
+  lootSpread: 1.1,
+  /** Two dropped items land at least this far apart, so they never stack on one spot. */
+  lootGap: 0.6,
   /** Items on the floor at most; past it the oldest one goes. */
   maxItems: 60,
   /** A dead player's items land this far round where they fell. */

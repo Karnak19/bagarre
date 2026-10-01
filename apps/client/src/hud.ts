@@ -90,12 +90,14 @@ export interface RoyaleHud {
   healNote: string;
   stopKind: string;
   /**
-   * What F would do right now (the swap prompt): the gun in hand it
-   * replaces (`from`) with the one on the floor (`to`), WEAPONS indices. Null when F would do nothing: not playing,
-   * out, a free slot (walking over a gun picks it up), or no gun `swapTarget`
-   * would take. From the predicted position and kit.
+   * What F would do right now (the F prompt, `fTarget`'s pick): open a chest,
+   * or swap the gun in hand or the grenade stack held (`from`) for the one
+   * on the floor (`to`), as stable keys and display names ("" for a chest).
+   * Null when F would do nothing: not playing, out, or nothing in reach F
+   * acts on (with a free slot, walking over a gun picks it up). From the
+   * predicted position and kit.
    */
-  swap: { from: number; to: number } | null;
+  prompt: { kind: "chest" | "gun" | "grenade"; from: string; to: string; fromName: string; toName: string } | null;
 }
 
 export interface HudModel {

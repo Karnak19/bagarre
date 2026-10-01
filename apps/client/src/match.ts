@@ -37,7 +37,6 @@ import {
   carriedGuns,
   cycleSlot,
   findMap,
-  freeGunSlot,
   gunAt,
   gunInHand,
   healProgress,
@@ -51,7 +50,8 @@ import {
   ownsCloud,
   smokeCover,
   smokeVeil,
-  swapTarget,
+  fTarget,
+  grenadeDef,
   weaponDef,
   zoneAt,
   zoneProgress,
@@ -768,11 +768,12 @@ export class Match {
     }
 
     // Battle royale: the zone as of now (the latest tick plus the time since
-    // it came in), the crates and the items on the floor.
+    // it came in), the chests and the items on the floor (loot falling out
+    // of a chest drawn at that tick too).
     const tickNow = latest ? latest.tick + (now - latest.t) / TICK_MS : 0;
     if (royale && latest) {
       scene.royale.setZone(zoneAt(latest.zone, tickNow));
-      scene.royale.sync(latest.crates, latest.items, now);
+      scene.royale.sync(latest.crates, latest.items, now, tickNow);
     }
 
     // 3. Remote players and bullets: interpolated ~100 ms in the past.
@@ -994,13 +995,26 @@ export class Match {
         reloading: !!sim && sim.kit.hand === i && sim.reloadTicks > 0,
       });
     }
-    // F's target, the same pick as the server's (swapTarget): only while
-    // playing, alive, with all three slots full. Items come with the latest
-    // snapshot and the kit with the prediction, so it changes on a snapshot
-    // or a step, never between two.
+    // F's target, the same pick as the server's (fTarget): only while
+    // playing and alive. Items and chests come with the latest snapshot (and
+    // its tick: loot still falling isn't offered) and the kit with the
+    // prediction, so it changes on a snapshot or a step, never between two.
+    // The grenade held is the server's (the step never changes its type).
     const target =
-      s.phase === "playing" && me?.alive && sim && freeGunSlot(sim.kit) === -1 ? swapTarget(sim.kit, sim.x, sim.z, s.items, this.net.sessionId) : null;
-    const swap = target && sim ? { from: gunInHand(sim.kit), to: target.item.item } : null;
+      s.phase === "playing" && me?.alive && sim
+        ? fTarget(sim.kit, { type: me.grenade, count: sim.kit.grenades }, sim.x, sim.z, s.items, s.crates, this.net.sessionId, s.tick)
+        : null;
+    let prompt: RoyaleHud["prompt"] = null;
+    if (target?.kind === "chest") prompt = { kind: "chest", from: "", to: "", fromName: "", toName: "" };
+    else if (target?.kind === "gun" && sim) {
+      const from = weaponDef(gunInHand(sim.kit));
+      const to = weaponDef(target.item.item);
+      prompt = { kind: "gun", from: from.key, to: to.key, fromName: from.name, toName: to.name };
+    } else if (target?.kind === "grenade" && me) {
+      const from = grenadeDef(me.grenade);
+      const to = grenadeDef(target.item.item);
+      prompt = { kind: "grenade", from: from.key, to: to.key, fromName: from.name, toName: to.name };
+    }
     return {
       alive,
       players: s.players.size,
@@ -1016,7 +1030,7 @@ export class Match {
       healing: sim && sim.kit.heal !== NO_HEAL ? sim.kit.heal : -1,
       healNote: note?.text ?? "",
       stopKind: note?.kind ?? "",
-      swap,
+      prompt,
     };
   }
 

@@ -102,9 +102,12 @@ The first run may need the browser: `bunx playwright install chromium` in
   open, checks, then lets it go (`setCountdown()`, `setRespawn()`).
   The battle royale's rules are short too (the zone waiting 60 s and
   closed at 90 s; it has no countdown, its host starts it), and two more calls drive it:
-  `POST /loot` makes a room's crates drop a given gun, or any floor item
-  (healing items, shield charges), instead of a random item (`setLoot()`), `POST /zone` moves the running zone's shrink to start
-  and end some seconds from now (`setZone()`).
+  `POST /loot` makes a room's chests drop a given gun, or any floor item
+  (healing items, shield charges), instead of a random item (`setLoot()`),
+  `POST /lootdrop` slows a chest's loot falling out, so a slow page still
+  sees it fall (`setLootDrop()`), and `POST /zone` moves the running zone's shrink to start
+  and end some seconds from now (`setZone()`). `openChest()` stands a player
+  by a chest, presses F and returns its loot.
 - `tests/fixtures.ts` holds the fixtures. `players.open()` is a new player
   (its own browser context); `players.duel()`, `players.teams(n)`, `players.royale(n)` and `players.host()` /
   `players.join()` open a private game by its link, so tests running in
@@ -574,10 +577,11 @@ each. The rules are `ROYALE_RULES` in `packages/shared/src/modes.ts` (with
 `royale: RoyaleRules`, the zone's timings), the numbers `ROYALE`, `ZONE` and
 `LOOT`, and one definition per healing item (`HEAL_ITEMS`) in
 `constants.ts`, and the pure rules (gun slots, grenade stacks, healing and
-shield charges, the zone, the loot draw) in `packages/shared/src/royale.ts`.
-`bun run test` runs their tests
+shield charges, the zone, the chests and F, the loot draw) in
+`packages/shared/src/royale.ts`. `bun run test` runs their tests
 (`src/royale.test.ts`: the ranking, the zone over time, the stacks, the
-slots, the loot, the maps' crate spots; `src/heal.test.ts`: the heals,
+slots, the loot, the maps' crate spots; `src/chests.test.ts`: what F does,
+loot that can't be taken while it falls, where it lands; `src/heal.test.ts`: the heals,
 what cancels them, the stacks and the shield charges; `src/maps/royale/royale-maps.test.ts`:
 the royale map's layout, see [docs/royale-maps.md](docs/royale-maps.md)).
 
@@ -597,16 +601,34 @@ the royale map's layout, see [docs/royale-maps.md](docs/royale-maps.md)).
   still works.
 - **The map**: Ironvale, a 90 x 90 m mining town in the snow, the only map
   in the royale pool (`ROYALE_MAPS`, [docs/royale-maps.md](docs/royale-maps.md)).
-- **Crates**: the map lists crate spots (`MapDef.royale.crates`, 23 on
-  Ironvale). A crate stands on each at the start; walking into one
-  breaks it and drops one item drawn from `LOOT` by weight: a gun with a
-  full magazine, a stack of grenades, bandages (common), a medkit (rare) or
-  a shield charge.
+- **Chests**: the map lists crate spots (`MapDef.royale.crates`, 23 on
+  Ironvale). A closed chest stands on each at the start (`state.crates`,
+  with `open`), drawn glowing (a pulsing emissive and a soft halo on the
+  ground) so it reads as something to open, not as cover. Walking into one
+  does nothing: standing within `ROYALE.openRadius` (1.5 m), **F** opens it.
+  The server checks the reach and that it is still closed. It stays, open
+  and no longer glowing, until the match ends, and drops one item drawn
+  from `LOOT` by weight: a gun with a full magazine, a stack of grenades,
+  bandages (common), a medkit (rare) or a shield charge. The item pops out
+  toward whoever opened it and lands `ROYALE.lootSpread` from the chest, on
+  open floor clear of the cover, the chests and the other items
+  (`lootSpot`). Nobody can take it until it has landed,
+  `ROYALE.lootDrop` (0.6 s) later: the server stores the drop's ticks on the
+  item (`dropTick`, `readyTick`, with the chest's spot in `fromX` /
+  `fromZ`) and skips it for every pickup and swap until then (`itemReady`);
+  the client only draws the arc between the two ticks.
+- **F** does one thing, picked by `fTarget` (shared, so the server's F and
+  the HUD's prompt never disagree): open the nearest closed chest in reach,
+  swap the gun in hand (all three slots full), or swap the grenade stack
+  held for another type. With several in reach, the nearest wins (a tie:
+  the chest, then the gun). The prompt above the slots says what it will
+  do: "F Open chest", "F Swap Pistol → Rifle", "F Swap Frag → Smoke".
 - **Items on the floor** (`state.items`: kind, which one, how many) are the
-  server's (`apps/server/src/floor.ts`): each tick every item goes to the
-  nearest living player who can take it, so two players on one item never
-  both get it. At most `ROYALE.maxItems` (the oldest goes); cleared with the
-  match. What a player just dropped can't be taken back before they step off it.
+  server's (`apps/server/src/floor.ts`): each tick every item that has
+  landed goes to the nearest living player who can take it, so two players
+  on one item never both get it. At most `ROYALE.maxItems` (the oldest
+  goes); cleared with the match. What a player just dropped can't be taken
+  back before they step off it.
 - **Three gun slots** (`Player.kit`, a child schema, KitSim in
   `protocol.ts`): 1-3 or the mouse wheel switch (the wheel skips empty
   slots), a switch waits 0.3 s before the gun fires and cancels a reload,
@@ -617,8 +639,10 @@ the royale map's layout, see [docs/royale-maps.md](docs/royale-maps.md)).
   predicts it and fires the new gun at once; a pickup or a swap reaches the
   prediction in the next snapshot's kit.
 - **Grenades** are counted, one type at a time, up to the type's `stack`
-  (frag 3, the others 2). The same type adds up, another type swaps in and
-  the old stack drops. A throw uses one, with a 1 s gap between two.
+  (frag 3, the others 2). Like guns, walking over a stack takes it only when
+  that swaps nothing (`walkTakesGrenades`): with none held, or the same type
+  (it adds up). Another type stays on the floor, and **F** swaps it in: the
+  old stack drops under your feet. A throw uses one, with a 1 s gap between two.
 - **Healing**: health never comes back on its own. **4** uses a bandage
   (+25 HP in 1.5 s, up to 5 carried), **5** a medkit (back to 100 in 4 s, up
   to 2); never past 100, and not at full health. Meanwhile you walk at half
@@ -666,10 +690,10 @@ In a game the HUD shows who is still in and the zone's timer (top right),
 the three slots with their magazines in place of the weapon box, the
 bandages and medkits, the grenade and shield charge counts, the heal in
 progress (or how it ended), and an arrow back to the zone when you are outside; the ground shows
-the zone's edge with a tint outside, the crates and the items. On the menu,
+the zone's edge with a tint outside, the chests (glowing until opened) and the items. On the menu,
 **Battle royale** quick-matches one and **Private royale** makes a private
 one; in dev, `?play=royale`. The e2e specs are `apps/e2e/tests/royale.spec.ts`
-and `apps/e2e/tests/royale-start.spec.ts` (the host's Start); the host rules'
+and `apps/e2e/tests/royale-start.spec.ts` (the host's Start), `apps/e2e/tests/royale-chests.spec.ts` (F on a chest, the loot's fall, F on a grenade stack); the host rules'
 unit tests are `packages/shared/src/host.test.ts`.
 
 ### Rooms and modes
@@ -948,7 +972,7 @@ looks, in the client. Nothing is matched by position.
   `audio.ts`. The number keys, the HUD and How to play follow `WEAPONS`
   (up to 9 guns, keys 1-9; a `pickable: false` gun, like the royale's
   Pistol, has no key and never shows in the picker, and goes after the
-  others). To have crates drop it in the battle royale, give it a weight in
+  others). To have chests drop it in the battle royale, give it a weight in
   `LOOT`.
 - **Grenade:** append a line to `GRENADES` with a new `key`, its `effect`
   (`damage`, `cloud`, `stun`, `flash`, `heal`) and who it `affects`
@@ -957,7 +981,7 @@ looks, in the client. Nothing is matched by position.
   blast drawing, How to play line). A new effect also needs its tuning
   block, a `GrenadeEffect` member and a handler in `blastEffects`
   (`apps/server/src/GameRoom.ts`). Its `stack` is how many one player
-  carries in the battle royale; a weight in `LOOT` makes crates drop it.
+  carries in the battle royale; a weight in `LOOT` makes chests drop it.
 - **Ids are append-only.** An item's index is its id on the wire (picks,
   `Player.weapon` / `Player.grenade`, `Grenade.kind`, the kill feed): never
   reorder, rename or remove one. Append the new key to `WEAPON_IDS` or

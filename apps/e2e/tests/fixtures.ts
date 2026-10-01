@@ -71,10 +71,25 @@ export interface PlayerState {
   spectator: { followId: string; mode: string } | null;
   /** Battle royale: we are out and watch the rest of the match from our seat. */
   knockedOut: boolean;
-  /** Battle royale: crates still standing, items on the floor, and the zone's end tick (0: none). */
-  crates: { id: string; x: number; z: number }[];
-  /** `blockedFor`: who dropped it under their feet and hasn't stepped off it yet ("": nobody). */
-  items: { id: string; x: number; z: number; kind: number; item: number; amount: number; blockedFor: string }[];
+  /** Battle royale: the chests (`open` once F opened one), items on the floor, and the zone's end tick (0: none). */
+  crates: { id: string; x: number; z: number; open: boolean }[];
+  /**
+   * `blockedFor`: who dropped it under their feet and hasn't stepped off it yet ("": nobody).
+   * A chest's loot: the chest it fell from (`fromX`, `fromZ`), and the ticks it fell on and lands on (0: there at once).
+   */
+  items: {
+    id: string;
+    x: number;
+    z: number;
+    kind: number;
+    item: number;
+    amount: number;
+    blockedFor: string;
+    fromX: number;
+    fromZ: number;
+    dropTick: number;
+    readyTick: number;
+  }[];
   zoneEnd: number;
   /** Our gun in hand as the prediction has it (a switch shows here first). */
   predictedWeapon: number | null;
@@ -214,7 +229,7 @@ export class Player {
         }),
       );
       const crates: PlayerState["crates"] = [];
-      latest?.crates?.forEach((c: { x: number; z: number }, id: string) => crates.push({ id, x: c.x, z: c.z }));
+      latest?.crates?.forEach((c: { x: number; z: number; open: boolean }, id: string) => crates.push({ id, x: c.x, z: c.z, open: !!c.open }));
       const items: PlayerState["items"] = [];
       latest?.items?.forEach((it: Omit<PlayerState["items"][number], "id">, id: string) => items.push({ id, ...it }));
       players.sort((a, c) => a.slot - c.slot);
@@ -454,7 +469,32 @@ export async function place(roomId: string, id: string, x: number, z: number) {
 }
 
 /**
- * Battle royale: from now on that room's crates drop this gun (a WEAPONS
+ * Battle royale: player `p` (session `id`) stands 1 m east of `chest`,
+ * presses F and the chest opens. Resolves with the loot it dropped (as `p`'s
+ * page sees it), with `p` moved onto where it lands (it falls toward them,
+ * so about at their feet): it is theirs by walking over it once it has
+ * landed, if they can take it.
+ */
+export async function openChest(p: Player, roomId: string, id: string, chest: { id: string; x: number; z: number }) {
+  await place(roomId, id, chest.x + 1, chest.z);
+  await p.focusGame();
+  await p.page.keyboard.press("KeyF");
+  await expect.poll(async () => (await p.state()).crates.find((c) => c.id === chest.id)?.open, { message: `${p.name} opened the chest` }).toBe(true);
+  const fromChest = async () => (await p.state()).items.find((it) => it.readyTick > 0 && Math.hypot(it.fromX - chest.x, it.fromZ - chest.z) < 0.01);
+  await expect.poll(fromChest, { message: "the chest's loot" }).toBeTruthy();
+  const loot = (await fromChest())!;
+  await place(roomId, id, loot.x, loot.z);
+  return loot;
+}
+
+/** Battle royale: from now on a chest's loot in that room takes `seconds` to land (server.ts' /lootdrop). */
+export async function setLootDrop(roomId: string, seconds: number) {
+  const res = await fetch(`http://localhost:${SERVER_PORT + 1}/lootdrop`, { method: "POST", body: JSON.stringify({ roomId, seconds }) });
+  expect(res.status, await res.text()).toBe(200);
+}
+
+/**
+ * Battle royale: from now on that room's chests drop this gun (a WEAPONS
  * index), or this floor item (`{ kind, item, amount }`: healing items,
  * shield charges...) (server.ts' /loot).
  */

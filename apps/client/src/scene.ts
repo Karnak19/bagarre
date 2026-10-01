@@ -459,7 +459,7 @@ export class GameScene {
   private vfx: Vfx;
   /** Name plates and health bars over the players' heads (filled by match.ts every frame). */
   readonly plates: Plates;
-  /** Battle royale: the zone, the crates and the items on the floor (filled by match.ts every frame). */
+  /** Battle royale: the zone, the chests and the items on the floor (filled by match.ts every frame). */
   readonly royale: RoyaleView;
   private lastRender = -1;
   private trauma = 0;
@@ -511,7 +511,8 @@ export class GameScene {
       this.grenadeModel.scale.setScalar(0.55);
     }
     this.vfx = new Vfx(this.scene, this.camera, loaded?.atlas ?? null);
-    this.royale = new RoyaleView(loaded?.props?.get("Crate") ?? null, loaded?.guns ?? [], loaded?.props?.get("Grenade") ?? null);
+    // The chest model; without it (a failed load), the old crate prop, or a plain box.
+    this.royale = new RoyaleView(loaded?.chest ?? null, loaded?.props?.get("Crate") ?? null, loaded?.guns ?? [], loaded?.props?.get("Grenade") ?? null);
     this.scene.add(this.royale.group);
     this.plates = new Plates(this.renderer, PLAYER_CSS_COLORS);
     this.scene.add(this.plates.mesh);
