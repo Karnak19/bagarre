@@ -4,11 +4,16 @@ Distilled from human replies to fouine's comments. These are review behaviours, 
 
 ## Reductions are welcome — but always as nits
 - The findings the author reliably applies are reductions: deleting dead code, collapsing duplicated helpers, dropping redundant defaults/constants, shortening the diff. Keep hunting this class, and say exactly what to delete and what (if anything) replaces it.
-- Prose that contradicts the code belongs to this class too: a doc block attached to the wrong declaration, a stale count or name, user-facing copy whose grammar breaks when a value changes. These are cheap, reliably applied, and still nits.
+- Prose that contradicts the code belongs to this class too: a doc block attached to the wrong declaration, a stale count or name, user-facing copy whose grammar breaks when a value changes, and a PR-description claim that overstates what the code does. These are cheap, reliably applied, and still nits — the fix is sometimes the description rather than the code, and the author may deliberately correct it there and leave the code alone.
+- A client re-implementing an authoritative server computation (hit test, validation) only to decide a cosmetic cue — a sound or effect the author already admits misfires — is a reduction target. Suggest the one-line unconditional cue (play it always, let the real outcome's sound carry it) instead of the copy; extra imports and gathering to feed a cue are the giveaway.
 - Never block on one. A shorter diff is not a correctness, security, or data-loss problem.
 
 ## Reuse before suggesting something new
 - Before proposing a new helper, formatter, constant, type, or test fixture/harness, search the repo for an existing one. If it exists, point at it by file:line and say to import it instead of retyping it.
+
+## New members of a tagged union
+- When a PR adds a member to a kind/string enum/union, audit every switch, lookup map and renderer that branches on the old members before approving. Client-side renderers are where a missed branch hides, because tests usually assert the data, not the drawing: a new floor/loot kind silently falling through to an existing renderer is a real gap.
+- Keep the ask targeted — name the consumer to extend and its current fallthrough behaviour. Do not turn it into a request to refactor the union.
 
 ## Dead code vs deliberate code
 - Dead-code shapes that recur: exports/imports with no importer; fields, counters, or per-frame values computed but never read; named constants that encode nothing; teardown/dispose methods with no caller; routes/handlers with no product caller; fallbacks for a branch the types say cannot happen.
