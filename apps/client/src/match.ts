@@ -826,7 +826,11 @@ export class Match {
     // of a chest drawn at that tick too).
     const tickNow = latest ? latest.tick + (now - latest.t) / TICK_MS : 0;
     if (royale && latest) {
-      scene.royale.setZone(zoneAt(latest.zone, tickNow));
+      const zone = zoneAt(latest.zone, tickNow);
+      scene.royale.setZone(zone);
+      // The minimap: the circle now, and the one it closes on.
+      const z = latest.zone;
+      this.minimap.setZone(zone, { x: z.x1, z: z.z1, r: z.r1 });
       scene.royale.sync(latest.crates, latest.items, now, tickNow);
     }
 

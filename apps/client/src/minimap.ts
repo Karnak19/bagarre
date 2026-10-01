@@ -1,16 +1,19 @@
-// The minimap of the big maps (free for all and team deathmatch): a small
-// canvas in a corner, drawn by the frame loop (never by React). It shows the
-// map's zones (tinted), the cover, the landmarks, your position and facing,
-// your teammates always (team deathmatch), and enemies only when they fire: a
-// dot where the shot came from, fading over PING_MS. Staying quiet keeps you
-// hidden (see docs/ffa-maps.md, "Finding each other").
+// The minimap of the big maps (free for all, team deathmatch, battle royale):
+// a small canvas in a corner, drawn by the frame loop (never by React). It
+// shows the map's zones (tinted), the cover, the landmarks, your position and
+// facing, your teammates always (team deathmatch), and enemies only when they
+// fire: a dot where the shot came from, fading over PING_MS. Staying quiet
+// keeps you hidden (see docs/ffa-maps.md, "Finding each other"). In a battle
+// royale it also shows the closing zone: the safe circle (tinted outside it)
+// and, thinly, where it closes on.
 //
 // React only mounts the <canvas> and hands it over with `attach()`. The
 // static layer (zones, cover, labels) is drawn once per map into an offscreen
-// canvas; each frame only copies it and draws the few dots, and at most
-// every other frame.
+// canvas; each frame only copies it and draws the zone and the few dots, and
+// at most every other frame. The canvas says what it shows in `data-map` and
+// `data-zone` (for the e2e tests).
 
-import { SMOKE, type FfaMapDef, type MapDef, type RoyaleMapDef } from "@bagarre/shared";
+import { SMOKE, type Circle, type FfaMapDef, type MapDef, type RoyaleMapDef } from "@bagarre/shared";
 import { PLAYER_CSS_COLORS } from "./scene.ts";
 
 /** How long a shot stays on the minimap, fading out. */
@@ -58,7 +61,10 @@ export class Minimap {
   private ctx: CanvasRenderingContext2D | null = null;
   private base: HTMLCanvasElement | null = null;
   private baseKey = "";
-  private map: FfaMapDef | null = null;
+  private map: FfaMapDef | RoyaleMapDef | null = null;
+  /** The royale zone: its circle now, and the one it closes on (null: no zone). */
+  private zone: Circle | null = null;
+  private zoneEnd: Circle | null = null;
   private pings: MinimapPing[] = [];
   private lastDraw = 0;
   /** CSS pixels of the canvas side, and the device pixel ratio it was sized for. */
@@ -78,11 +84,19 @@ export class Minimap {
 
   /** The map on screen (null: nothing to draw, e.g. a duel map). */
   setMap(map: MapDef | null) {
-    const next = isFfa(map) ? map : null;
+    const next = isFfa(map) || isRoyale(map) ? map : null;
     if (next === this.map) return;
     this.map = next;
     this.pings.length = 0;
+    this.zone = this.zoneEnd = null;
     this.baseKey = "";
+    if (this.canvas) delete this.canvas.dataset.map;
+  }
+
+  /** The battle royale's zone, per frame: its circle now and the one it closes on (null: no zone). */
+  setZone(now: Circle | null, end: Circle | null) {
+    this.zone = now;
+    this.zoneEnd = now ? end : null;
   }
 
   /** An enemy fired from (x, z). `slot` is their paint index; `who` tells shooters of one colour apart (teams). */
@@ -122,6 +136,7 @@ export class Minimap {
     if (key !== this.baseKey || !this.base) {
       this.base = this.drawBase(map);
       this.baseKey = key;
+      canvas.dataset.map = map.id;
     }
     const s = this.size;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -129,11 +144,56 @@ export class Minimap {
     ctx.drawImage(this.base, 0, 0, s, s);
 
     const toPx = planProjector(map, this.size);
+    // Metres to pixels (the plan is only turned, so a circle stays a circle).
+    const [ox, oy] = toPx(0, 0);
+    const [kx, ky] = toPx(1, 0);
+    const k = Math.hypot(kx - ox, ky - oy);
+
+    // The royale zone: a red tint outside the safe circle (on the floor
+    // only), its edge in the 3D edge's blue, and a thin dashed ring where it
+    // closes on (a small one round the final centre when that's a point).
+    const zone = this.zone;
+    if (zone) {
+      const [cx, cy] = toPx(zone.x, zone.z);
+      const r = zone.r * k;
+      ctx.save();
+      const [a, b, c, d] = [toPx(-map.halfX, -map.halfZ), toPx(map.halfX, -map.halfZ), toPx(map.halfX, map.halfZ), toPx(-map.halfX, map.halfZ)];
+      ctx.beginPath();
+      ctx.moveTo(a[0], a[1]);
+      ctx.lineTo(b[0], b[1]);
+      ctx.lineTo(c[0], c[1]);
+      ctx.lineTo(d[0], d[1]);
+      ctx.closePath();
+      ctx.clip();
+      ctx.beginPath();
+      ctx.rect(0, 0, s, s);
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255, 90, 60, 0.22)";
+      ctx.fill("evenodd");
+      ctx.restore();
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(159, 216, 255, 0.95)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      const end = this.zoneEnd;
+      if (end && end.r < zone.r) {
+        const [ex, ey] = toPx(end.x, end.z);
+        ctx.beginPath();
+        ctx.arc(ex, ey, Math.max(3, end.r * k), 0, Math.PI * 2);
+        ctx.setLineDash([2, 2]);
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.7)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+    const shown = zone ? "on" : "off";
+    if (canvas.dataset.zone !== shown) canvas.dataset.zone = shown;
+
     // Smoke clouds, grey discs (what's in them never shows: match.ts skips their pings).
     if (smokes.length > 0) {
-      const [ox, oy] = toPx(0, 0);
-      const [rx, ry] = toPx(SMOKE.radius, 0);
-      const r = Math.hypot(rx - ox, ry - oy);
+      const r = SMOKE.radius * k;
       ctx.fillStyle = "rgba(200, 200, 195, 0.45)";
       for (const c of smokes) {
         const [px, py] = toPx(c.x, c.z);
@@ -211,7 +271,7 @@ export class Minimap {
   }
 
   /** Zones, cover, walls and landmark labels: drawn once per map (and size). */
-  private drawBase(map: FfaMapDef): HTMLCanvasElement {
+  private drawBase(map: FfaMapDef | RoyaleMapDef): HTMLCanvasElement {
     const s = this.size;
     const out = document.createElement("canvas");
     out.width = Math.round(s * this.dpr);

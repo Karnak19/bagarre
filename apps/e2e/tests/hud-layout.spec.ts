@@ -88,7 +88,7 @@ test("the duel HUD: score at the top, the opponent top right, you and your abili
   }
 });
 
-test("the battle royale HUD: minimap and panel top left, slots and heals bottom right, the F prompt under the character, nothing overlapping", async ({ players }) => {
+test("the battle royale HUD: minimap (map and zone) and panel top left, slots and heals bottom right, the F prompt under the character, nothing overlapping", async ({ players }) => {
   const { players: all, code } = await players.royale(2);
   const [a] = all;
   await Promise.all(all.map((p) => p.expectState("phase", "playing")));
@@ -105,6 +105,17 @@ test("the battle royale HUD: minimap and panel top left, slots and heals bottom 
   await openChest(a, code, ida, c2);
   await expect(a.testId("hud-swap")).toHaveAttribute("data-state", "on");
   await expect(a.testId("hud-alert")).toHaveAttribute("data-top", "swap");
+
+  // The minimap draws the royale map and its zone, not an empty box.
+  await expect(a.testId("hud-minimap")).toHaveAttribute("data-map", "ironvale");
+  await expect(a.testId("hud-minimap")).toHaveAttribute("data-zone", "on");
+  const painted = await a.testId("hud-minimap").evaluate((c: HTMLCanvasElement) => {
+    const px = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 3; i < px.length; i += 4) if (px[i] > 0) n++;
+    return n / (px.length / 4);
+  });
+  expect(painted, "share of the minimap drawn").toBeGreaterThan(0.3);
 
   for (const size of SIZES) {
     await a.page.setViewportSize(size);

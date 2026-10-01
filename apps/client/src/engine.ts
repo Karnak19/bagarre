@@ -30,7 +30,7 @@ export interface Engine {
   lobby: Lobby;
   hud: Hud;
   input: Input;
-  /** The FFA minimap: the HUD mounts its canvas with `minimap.attach()`, the frame loop draws it. */
+  /** The big maps' minimap: the HUD mounts its canvas with `minimap.attach()`, the frame loop draws it. */
   minimap: Minimap;
   /** What the game's cards show, republished every frame in a game (null elsewhere). */
   view: Store<GameView | null>;
