@@ -129,7 +129,7 @@ export const GUN_VIEW: Record<WeaponKey, GunViewDef> = {
     flash: { cell: Cell.MuzzleSmall, w: 0.26, h: 0.4 },
     tracer: { width: 0.03, length: 0.5, head: 0.11, glow: 0.8 },
     sfx: "pistol",
-    role: "The battle royale's starting gun: weak, find better in crates",
+    role: "The battle royale's starting gun: weak, find better in chests",
   },
 };
 

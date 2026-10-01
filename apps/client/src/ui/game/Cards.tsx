@@ -599,7 +599,7 @@ function RoyaleWaitingCard() {
         </VStack>
       )}
       <Text color="secondary" xstyle={styles.sub}>
-        One life. Everyone starts with the Pistol: find guns, grenades, bandages, medkits and shield charges in crates,
+        One life. Everyone starts with the Pistol: find guns, grenades, bandages, medkits and shield charges in chests,
         stay inside the zone. The last one standing wins.
       </Text>
       <Text as="p" xstyle={shared.eyebrow}>
