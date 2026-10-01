@@ -976,13 +976,18 @@ looks, in the client. Nothing is matched by position.
 - **Gun:** append a line to `WEAPONS` (`packages/shared/src/constants.ts`)
   with a new `key`. Firing, spread, bursts and reloads are generic, so the
   server needs nothing. Then give that key an entry in `GUN_VIEW`
-  (`apps/client/src/items.ts`: model, scale, muzzle flash, shot sound, How to
-  play line), add its model under `public/models/guns/` and its sound to
+  (`apps/client/src/items.ts`: model, scale, muzzle flash, bullet tracer, shot
+  sound, How to play line), add its model under `public/models/guns/` and its sound to
   `audio.ts`. The number keys, the HUD and How to play follow `WEAPONS`
   (up to 9 guns, keys 1-9; a `pickable: false` gun, like the royale's
   Pistol, has no key and never shows in the picker, and goes after the
   others). To have chests drop it in the battle royale, give it a weight in
-  `LOOT`.
+  `LOOT`. Its tracer (`tracer`: thickness, length, head length, glow) is
+  drawn by `tracers.ts`: one geometry per gun, built once, a near-white head
+  with a warm streak fading out behind it, the same colour for every player.
+  It is only a look: the hit size is `BULLET_RADIUS`. The tracer is turned
+  along the bullet's own velocity from its first frame and stays level
+  (`tracers.spec.ts`).
 - **Grenade:** append a line to `GRENADES` with a new `key`, its `effect`
   (`damage`, `cloud`, `stun`, `flash`, `heal`) and who it `affects`
   (`enemies` or `allies`). Then give it an

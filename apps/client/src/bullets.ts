@@ -14,6 +14,7 @@ import {
   type Vec2,
 } from "@bagarre/shared";
 import type { Snapshot } from "./net.ts";
+import type { BulletDraw } from "./scene.ts";
 
 interface Predicted {
   seq: number;
@@ -115,12 +116,15 @@ export class LocalBullets {
   }
 
   /** Visible predicted bullets, blended between ticks like the local player. */
-  render(alpha: number, slot: number, out: Map<string, { x: number; z: number; slot: number; owner?: string; weapon?: number }>, owner?: string) {
+  render(alpha: number, slot: number, out: Map<string, BulletDraw>, owner?: string) {
     for (const [id, b] of this.bullets) {
       if (b.dead) continue;
       out.set(id, {
         x: b.prev.x + (b.sim.x - b.prev.x) * alpha,
         z: b.prev.z + (b.sim.z - b.prev.z) * alpha,
+        // The sim's own velocity: the tracer's heading from its first frame.
+        vx: b.sim.vx,
+        vz: b.sim.vz,
         slot,
         owner,
         weapon: b.weapon,

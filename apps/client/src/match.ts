@@ -73,7 +73,7 @@ import type { Minimap } from "./minimap.ts";
 import type { Net, Snapshot } from "./net.ts";
 import { Predictor } from "./prediction.ts";
 import { paintFor, paintOf } from "./paint.ts";
-import { FADED_OPACITY, GameScene, PLAYER_CSS_COLORS, PlayerMesh, playerColor } from "./scene.ts";
+import { FADED_OPACITY, GameScene, PLAYER_CSS_COLORS, PlayerMesh, playerColor, type BulletDraw } from "./scene.ts";
 import type { SmokeCloud } from "./vfx.ts";
 import { byPlace, clock, secondsLeft, warmupLeft } from "./scoreboard.ts";
 import { sceneRig } from "./spectate/camera.ts";
@@ -882,13 +882,14 @@ export class Match {
 
     // Our own bullets are drawn from the prediction; the server's copies of
     // them are skipped (see LocalBullets). Everyone else's are interpolated.
-    const bullets = new Map<string, { x: number; z: number; slot: number; owner?: string; weapon?: number; hidden?: boolean }>();
+    const bullets = new Map<string, BulletDraw>();
     for (const [id, b] of buffer.sampleBullets(renderTime)) {
       if (localBullets.owns(id)) continue;
       const owner = latest?.players.get(b.owner);
       // An enemy's bullet in or behind smoke isn't drawn (see above); a spectator sees them all.
       const hidden = !!viewer && clouds.length > 0 && !sameTeam(owner?.team ?? NO_TEAM, myTeam) && smokeCover(viewer, b, seenClouds) === "foreign";
-      bullets.set(id, { x: b.x, z: b.z, slot: owner ? paintOf(owner) : 0, owner: b.owner, hidden });
+      // The tracer's look: the shooter's gun in hand (snapshots don't say which gun fired a bullet).
+      bullets.set(id, { x: b.x, z: b.z, vx: b.vx, vz: b.vz, slot: owner ? paintOf(owner) : 0, owner: b.owner, weapon: owner?.weapon, hidden });
     }
     if (meServer) localBullets.render(this.accumulator / TICK_MS, paintOf(meServer), bullets, sessionId);
     scene.syncBullets(bullets);

@@ -19,6 +19,23 @@ export interface GunModel {
   muzzle: readonly [number, number, number];
 }
 
+/**
+ * A gun's bullet tracer: a small bright head with a warm streak behind it
+ * that fades out (see tracers.ts). Visual only: the hit size is
+ * BULLET_RADIUS whatever the look. All are much thinner than the old shared
+ * 0.08 m bar, so they read as tracers rather than blaster bolts.
+ */
+export interface TracerLook {
+  /** The streak's thickness, metres (the head is a bit thicker). */
+  width: number;
+  /** Head to tail tip, metres. */
+  length: number;
+  /** The bright head's length, metres. */
+  head: number;
+  /** The streak's opacity just behind the head (0-1); it fades to 0 at the tail. */
+  glow: number;
+}
+
 export interface GunViewDef {
   /**
    * The gun in the hand. Grip and muzzle were measured by convert-guns.py
@@ -33,6 +50,8 @@ export interface GunViewDef {
   scale: number;
   /** Muzzle flash: atlas cell, width and length in metres. */
   flash: MuzzleFlash;
+  /** The bullet tracer. */
+  tracer: TracerLook;
   /** The shot sound. */
   sfx: SfxName;
   /** Its line in How to play. */
@@ -45,6 +64,7 @@ export const GUN_VIEW: Record<WeaponKey, GunViewDef> = {
     model: { file: "guns/rifle.glb", grip: [-0.05, 0, 0], muzzle: [3.8168, 0.6423, 0] },
     scale: 0.35,
     flash: { cell: Cell.MuzzleRifle, w: 0.45, h: 0.9 },
+    tracer: { width: 0.04, length: 1.2, head: 0.15, glow: 0.85 },
     sfx: "rifle",
     role: "All-rounder",
   },
@@ -53,6 +73,7 @@ export const GUN_VIEW: Record<WeaponKey, GunViewDef> = {
     model: { file: "guns/shotgun.glb", grip: [0, -0.05, 0], muzzle: [4.049, 0.3578, 0] },
     scale: 0.36,
     flash: { cell: Cell.MuzzleRound, w: 0.95, h: 1.05 },
+    tracer: { width: 0.034, length: 0.45, head: 0.1, glow: 0.8 },
     sfx: "shotgun",
     role: "Close range",
   },
@@ -61,6 +82,7 @@ export const GUN_VIEW: Record<WeaponKey, GunViewDef> = {
     model: { file: "guns/sniper.glb", grip: [-0.4, -0.15, 0.0747], muzzle: [5.2512, 0.2959, 0] },
     scale: 0.33,
     flash: { cell: Cell.MuzzleLong, w: 0.6, h: 1.5 },
+    tracer: { width: 0.034, length: 2.8, head: 0.22, glow: 0.95 },
     sfx: "sniper",
     role: "Long range",
   },
@@ -69,6 +91,7 @@ export const GUN_VIEW: Record<WeaponKey, GunViewDef> = {
     model: { file: "guns/smg.glb", grip: [-0.15, 0, 0], muzzle: [2.2713, 0.621, 0] },
     scale: 0.42,
     flash: { cell: Cell.MuzzleSmall, w: 0.35, h: 0.6 },
+    tracer: { width: 0.03, length: 0.8, head: 0.1, glow: 0.8 },
     sfx: "smg",
     role: "Mid range, fast",
   },
@@ -77,6 +100,7 @@ export const GUN_VIEW: Record<WeaponKey, GunViewDef> = {
     model: { file: "guns/revolver.glb", grip: [-0.1, -0.1, 0], muzzle: [1.7399, 0.4635, 0] },
     scale: 0.48,
     flash: { cell: Cell.MuzzleRound, w: 0.55, h: 0.7 },
+    tracer: { width: 0.044, length: 0.9, head: 0.16, glow: 0.9 },
     sfx: "revolver",
     role: "Six heavy, precise shots",
   },
@@ -85,6 +109,7 @@ export const GUN_VIEW: Record<WeaponKey, GunViewDef> = {
     model: { file: "guns/burst-pistol.glb", grip: [-0.13, -0.1, 0], muzzle: [2.1092, 0.5807, 0] },
     scale: 0.46,
     flash: { cell: Cell.MuzzleSmall, w: 0.3, h: 0.45 },
+    tracer: { width: 0.032, length: 0.6, head: 0.12, glow: 0.85 },
     sfx: "burst",
     role: "Three rounds per click",
   },
@@ -93,6 +118,7 @@ export const GUN_VIEW: Record<WeaponKey, GunViewDef> = {
     model: { file: "guns/dmr.glb", grip: [-0.2, 0, 0.0017], muzzle: [3.6092, 0.6381, 0.0017] },
     scale: 0.35,
     flash: { cell: Cell.MuzzleLong, w: 0.5, h: 1.15 },
+    tracer: { width: 0.036, length: 2.0, head: 0.18, glow: 0.9 },
     sfx: "dmr",
     role: "Long range, semi-auto",
   },
@@ -101,6 +127,7 @@ export const GUN_VIEW: Record<WeaponKey, GunViewDef> = {
     model: { file: "guns/burst-pistol.glb", grip: [-0.13, -0.1, 0], muzzle: [2.1092, 0.5807, 0] },
     scale: 0.4,
     flash: { cell: Cell.MuzzleSmall, w: 0.26, h: 0.4 },
+    tracer: { width: 0.03, length: 0.5, head: 0.11, glow: 0.8 },
     sfx: "pistol",
     role: "The battle royale's starting gun: weak, find better in crates",
   },
