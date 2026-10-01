@@ -135,6 +135,11 @@ test("battle royale: a chest's perk is taken by walking over it, a second one on
   await expect(prompt).toHaveAttribute("data-to", "big-mag");
   expect((await a.state()).items.some((it) => it.id === big.id)).toBe(true);
   expect((await meA()).perk).toBe(DOUBLE);
+  // Drawn as a perk on the floor (its glyph badge), not as anything else.
+  const floorKinds = () =>
+    // oxlint-disable-next-line typescript/no-explicit-any
+    a.page.evaluate(() => ((window as any).__bagarre.scene.royale.group.children as { name: string }[]).map((o) => o.name).filter((n) => n.startsWith("item:")));
+  await expect.poll(floorKinds).toEqual(["item:perk"]);
 
   // F: Bigger mag held, Double dash left where A stands (not A's to take back until A steps off).
   await a.focusGame();
