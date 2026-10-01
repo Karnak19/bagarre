@@ -513,6 +513,8 @@ export class GameScene {
   private telegraphGeo = new THREE.CircleGeometry(GRENADE.radius, 40);
   private raycaster = new THREE.Raycaster();
   private ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  /** The flat plane bullets fly in: aiming against it puts the shot under the cursor. */
+  private bulletPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -BULLET_HEIGHT);
   private players = new Set<PlayerMesh>();
   private vfx: Vfx;
   /** Name plates and health bars over the players' heads (filled by match.ts every frame). */
@@ -738,6 +740,19 @@ export class GameScene {
 
   /** Where the cursor ray hits the ground plane, or null. */
   cursorOnGround(ndc: THREE.Vector2): THREE.Vector3 | null {
+    return this.cursorOn(ndc, this.ground);
+  }
+
+  /**
+   * Where the cursor ray hits the plane bullets fly in (BULLET_HEIGHT), or null.
+   * Aim at this, not the ground: under the tilted camera the ground point lies
+   * off the bullet's line, and the shot passes above and beside the cursor.
+   */
+  cursorOnBulletPlane(ndc: THREE.Vector2): THREE.Vector3 | null {
+    return this.cursorOn(ndc, this.bulletPlane);
+  }
+
+  private cursorOn(ndc: THREE.Vector2, plane: THREE.Plane): THREE.Vector3 | null {
     // Aim against the unshaken camera, so a shake never moves the cursor.
     this.camera.position.sub(this.shakeOffset);
     this.camera.updateMatrixWorld();
@@ -745,7 +760,7 @@ export class GameScene {
     this.camera.position.add(this.shakeOffset);
     this.camera.updateMatrixWorld();
     const hit = new THREE.Vector3();
-    return this.raycaster.ray.intersectPlane(this.ground, hit);
+    return this.raycaster.ray.intersectPlane(plane, hit);
   }
 
   addPlayer(mesh: PlayerMesh) {
