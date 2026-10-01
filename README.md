@@ -856,8 +856,8 @@ press is one strike, decided on the tick you press it: every enemy within
 aim) takes 50 damage, the shield first, so two strikes kill. It never goes
 through cover, however thin, and never hurts a teammate. Its cooldown is
 0.8 s (the HUD's V slot sweeps), it doesn't stop a reload, and the gun can't
-fire for 0.25 s after it. A miss swishes; a hit sounds like any hit, and
-reads "Melee" in the kill feed. It doesn't count as a shot on the
+fire for 0.25 s after it. Every strike swishes, hit or miss; a hit adds
+the usual hit sound on top, and reads "Melee" in the kill feed. It doesn't count as a shot on the
 scoreboard (accuracy is untouched), but its damage and kills do.
 
 How it works: `melee` is one more press counter in the input (missing from an

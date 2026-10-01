@@ -428,7 +428,7 @@ export function shotPellets(weaponId: number, x: number, z: number, aim: number,
  * MELEE.angle of the aim (to its centre), and with no cover box between the
  * two centres (`lineOfSight`: a strike never goes through a wall, however
  * thin). Pure, so the server judges with it (against the rewound poses, like
- * bullets) and the client guesses a whiff with it (the swing's whoosh).
+ * bullets).
  * Teams are not looked at here: that is `canDamage`.
  */
 export function meleeReaches(arena: Arena, a: Vec2, aim: number, t: Vec2): boolean {

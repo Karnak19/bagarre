@@ -92,7 +92,7 @@ const DEFS: Record<SfxName, SfxDef> = {
   empty_click: { files: ["empty_click"], gain: 0.7, voices: 2 },
   dash: { files: [], gain: 0.55, voices: 2 },
   grenade_throw: { files: [], gain: 0.4, voices: 2 },
-  // A melee strike that found nobody: a short, sharp swish (synthesized).
+  // Every melee strike, hit or miss: a short, sharp swish (synthesized).
   melee_swing: { files: [], gain: 0.45, voices: 3 },
   grenade_bounce: { files: variants("grenade_bounce", 2), gain: 0.8, voices: 3 },
   explosion: { files: variants("explosion", 2), gain: 1, voices: 3 },

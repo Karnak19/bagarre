@@ -74,9 +74,9 @@ test("a strike hits the enemy right in front (half their health, no shot counted
   await strike(a, 0);
   await sweep;
   await expect.poll(async () => (await server(a, idb)).hp).toBe(MAX_HP - MELEE.damage);
-  // Heard as a hit (the HP drop), not as a whiff.
+  // Heard as the swing's whoosh, with the hit (the HP drop) on top.
   await expect.poll(() => a.sfxSince(sounds)).toContain("hit");
-  expect(await a.sfxSince(sounds)).not.toContain("melee_swing");
+  expect(await a.sfxSince(sounds)).toContain("melee_swing");
   // A strike is not a shot: accuracy stays untouched, the damage counts.
   const me = a.me(await a.state())!;
   expect([me.shots, me.hits, me.damage]).toEqual([0, 0, MELEE.damage]);

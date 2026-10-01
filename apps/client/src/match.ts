@@ -43,7 +43,6 @@ import {
   healsOf,
   isGrenadeType,
   magAt,
-  meleeReaches,
   ordinal,
   outsideZone,
   playerCan,
@@ -617,14 +616,10 @@ export class Match {
       }
       if (p.dashCd > prev.dashCd) this.sfx("dash", at);
       // A melee strike: their cooldown jumped up. The swing when they are
-      // drawn, and the whoosh if it found nobody (a hit is heard as the HP drop).
+      // drawn, and the whoosh on every strike (a hit adds the HP drop's sound).
       if (p.meleeCd > prev.meleeCd) {
         this.meshFor(id, paintOf(p), p.skin).melee(now + INTERP_DELAY_MS);
-        const enemies: Vec2[] = [];
-        s.players.forEach((q, qid) => {
-          if (qid !== id && q.alive && canDamage(p.team, q.team, false)) enemies.push(q);
-        });
-        if (!this.strikeLands(p, p.aim, enemies)) this.sfx("melee_swing", at);
+        this.sfx("melee_swing", at);
       }
       if (prev.reloadTicks === 0 && p.reloadTicks > 0) this.sfx("reload", { ...at, volume: 0.7 });
       if (p.shieldTicks > prev.shieldTicks) this.sfx("shield_up", at);
@@ -754,11 +749,11 @@ export class Match {
           if (res.sim.dashCd > before.dashCd) this.sfx("dash");
           if (res.grenade) this.sfx("grenade_throw");
           if (res.shield) this.sfx("shield_up");
-          // Our strike swings at once; the hit itself is the server's (heard
-          // as their HP drop). The whoosh when nobody we draw is in reach.
+          // Our strike swings and whooshes at once, hit or miss; the hit
+          // itself is the server's (heard on top, as their HP drop).
           if (res.melee) {
             this.meshFor(sessionId, paintOf(meServer), meServer.skin).melee(now);
-            if (!this.strikeLands(res.sim, msg.aim, this.opponentsDrawn)) this.sfx("melee_swing");
+            this.sfx("melee_swing");
           }
           if (before.reloadTicks === 0 && res.sim.reloadTicks > 0) this.sfx("reload");
           else if (msg.fire && !this.wasFiring && !res.fired && res.sim.reloadTicks > 0) this.sfx("empty_click");
@@ -1094,15 +1089,6 @@ export class Match {
       from: l.from,
       opacity: Math.min(1, (LOOT_FEED_MS - (now - l.at)) / LOOT_FEED_FADE_MS),
     }));
-  }
-
-  /**
-   * Whether a melee strike from `from` at `aim` reaches any of `enemies` (as
-   * drawn or last synced): only a guess, for the whoosh of a whiff. Who is
-   * hit is the server's, against its rewound poses.
-   */
-  private strikeLands(from: Vec2, aim: number, enemies: readonly Vec2[]): boolean {
-    return enemies.some((e) => meleeReaches(this.predictor.map, from, aim, e));
   }
 
   /**
