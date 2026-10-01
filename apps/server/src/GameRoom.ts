@@ -118,6 +118,7 @@ import {
   rank,
   rankRoyale,
   NO_GUN,
+  NO_PERK,
   emptyKit,
   gunInHand,
   outsideZone,
@@ -293,10 +294,10 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       internal.queue.push(input);
     },
 
-    // Loadout pick (weapon, grenade type, or both): only valid ids, only
-    // while dead, between matches or during warmup. Stored as `pick` /
-    // `grenadePick` and put in hand on the next (re)spawn (spawnAt); during
-    // warmup, a living player gets it in hand at once (equip).
+    // Loadout pick (weapon, grenade type, perk, or several): only valid ids,
+    // only while dead, between matches or during warmup. Stored as `pick` /
+    // `grenadePick` / `perkPick` and put in hand on the next (re)spawn
+    // (spawnAt); during warmup, a living player gets it in hand at once (equip).
     [MSG_PICK]: (client: Client, raw: unknown) => {
       if (this.spectators.has(client.sessionId)) return;
       const pick = parsePick(raw);
@@ -307,6 +308,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       if (player.alive && this.state.phase === "playing") return;
       if (pick.weapon !== undefined) player.pick = pick.weapon;
       if (pick.grenade !== undefined) player.grenadePick = pick.grenade;
+      if (pick.perk !== undefined) player.perkPick = pick.perk;
       if (player.alive && this.state.phase === "warmup") this.equip(player);
     },
 
@@ -1081,13 +1083,15 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   }
 
   /**
-   * A pick during warmup, for a living player: the picked weapon and grenade
-   * type in hand at once, with a full magazine and nothing of the old gun
-   * left over (equipSim), and the grenade ready. Where they stand doesn't change.
+   * A pick during warmup, for a living player: the picked weapon, grenade
+   * type and perk in hand at once, with a full magazine (the perk's) and
+   * nothing of the old gun left over (equipSim), and the grenade ready.
+   * Where they stand doesn't change.
    */
   private equip(p: Player) {
     p.weapon = p.pick;
     p.grenade = p.grenadePick;
+    p.perk = p.perkPick;
     writeSim(p, equipSim(readSim(p), p.weapon));
   }
 
@@ -1098,14 +1102,16 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   }
 
   /**
-   * Puts a player back in the game: picked weapon and grenade type in hand,
-   * fresh HP, ammo and cooldowns (the grenade ready, and its next throw on
-   * the new type's cooldown), no stun, no flash.
+   * Puts a player back in the game: picked weapon, grenade type and perk in
+   * hand, fresh HP, ammo and cooldowns (the grenade ready, and its next throw
+   * on the new type's cooldown), no stun, no flash.
    */
   private spawnAt(p: Player, x: number, z: number) {
-    // Battle royale: the Pistol and no grenades, whatever was picked (nothing can be).
+    // Battle royale: the Pistol, no grenades and no perk, whatever was picked (nothing can be).
     p.weapon = this.rules.royale ? PISTOL : p.pick;
     p.grenade = this.rules.royale ? DEFAULT_GRENADE : p.grenadePick;
+    // Before the sim is rebuilt: spawnSim keeps the perk it reads, and fills the magazine for it.
+    p.perk = this.rules.royale ? NO_PERK : p.perkPick;
     p.flashEnd = 0;
     p.flashTicks = 0;
     p.outTick = 0;
@@ -1332,7 +1338,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     if (!can.act) return;
     player.aim = input.aim;
     // F (royale, while playing): open a chest, or swap a gun or a grenade
-    // stack for one on the floor. A new gun in hand cancels a heal, like a
+    // stack or a perk for one on the floor. A new gun in hand cancels a heal, like a
     // switch does in the step.
     if (res.swap && this.rules.royale && this.state.phase === "playing" && this.floor.interact(id, player) === "gun") cancelHeal(player.kit, HEAL_STOP.switch);
 

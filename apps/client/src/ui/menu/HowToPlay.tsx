@@ -1,4 +1,4 @@
-// The How to play panel: the rules, the keys, the weapons and the abilities,
+// The How to play panel: the rules, the keys, the weapons, the abilities and the perks,
 // all read from the shared balance tables so it never drifts from the game.
 
 import { Grid } from "@astryxdesign/core/Grid";
@@ -19,6 +19,7 @@ import {
   ROYALE_MAX_PLAYERS,
   ROYALE_MIN_PLAYERS,
   MELEE,
+  PERKS,
   SHIELD,
   TEAM_KILLS_TO_WIN,
   TEAM_SIZE,
@@ -28,7 +29,7 @@ import {
 } from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
 import type { ReactNode } from "react";
-import { GRENADE_VIEW, GUN_VIEW } from "../../items.ts";
+import { GRENADE_VIEW, GUN_VIEW, PERK_VIEW } from "../../items.ts";
 import { shared } from "../styles.ts";
 
 /** Every grenade type in a line: "<Name>: <what it does> (<cooldown> s)." (GRENADE_VIEW's blurbs). */
@@ -93,7 +94,8 @@ export function HowToPlay() {
         swap the one in hand for one on the floor) and one grenade type at a time, counted ({k("F")} swaps in another type). Health doesn't come back on its own: {k("4")} uses a bandage (+{HEAL_ITEMS[HEAL_BANDAGE].amount} HP,{" "}
         {HEAL_ITEMS[HEAL_BANDAGE].duration} s), {k("5")} a medkit (back to full, {HEAL_ITEMS[HEAL_MEDKIT].duration} s). You walk at
         half speed meanwhile, and any damage, a shot, a throw or a switch cancels it (the item is kept). The shield ({k("E")})
-        uses a charge, up to {ROYALE.shieldStack}. The zone closes in over {Math.round(ZONE.close / 60)} minutes and hurts
+        uses a charge, up to {ROYALE.shieldStack}. Chests also hold perks: you carry one, and {k("F")} swaps it for another
+        on the floor. The zone closes in over {Math.round(ZONE.close / 60)} minutes and hurts
         anyone outside it. The last one standing wins; your place is the order you went out in.
       </Text>
 
@@ -161,6 +163,17 @@ export function HowToPlay() {
           description={`A quick strike, always there next to your gun: ${MELEE.damage} damage to every enemy within ${MELEE.range} m in front of you, never through cover. It doesn't stop a reload, but you can't fire for ${MELEE.fireLockout} s after it. ${MELEE.cooldown} s cooldown.`}
         />
       </List>
+
+      <Section>Perks</Section>
+      <List density="compact">
+        {PERKS.map((p) => (
+          <ListItem key={p.key} startContent={<Text aria-hidden>{PERK_VIEW[p.key].icon}</Text>} label={p.name} description={PERK_VIEW[p.key].blurb} />
+        ))}
+      </List>
+      <Text type="supporting" color="secondary">
+        One perk at a time, or none. Pick it with your weapon before the match; in the battle royale, find one in a chest.
+        Everyone sees yours, next to your name.
+      </Text>
     </VStack>
   );
 }

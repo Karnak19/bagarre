@@ -14,8 +14,11 @@
 //   spends one per throw. Like a gun, a stack is only taken by walking over
 //   it when that swaps nothing (`walkTakesGrenades`); F swaps the other
 //   type in (`grenadeSwapTarget`).
+// - Perks: one slot. Walking over one takes it only with none held
+//   (`walkTakesPerk`); holding one, F swaps it for the one on the floor
+//   (`perkSwapTarget`), and the old one drops in its place, like a gun.
 // - Chests and F: `fTarget` is what an F press does (open a chest, swap a
-//   gun, swap a grenade stack: the nearest wins). A chest's loot lands next
+//   gun, a grenade stack or a perk: the nearest wins). A chest's loot lands next
 //   to it (`lootSpot`) and can't be taken until it has (`itemReady`).
 // - The zone: `zoneAt` is its circle at a tick, `zoneDamage` what standing
 //   outside costs on that tick. Both read the synced ZoneView only.
@@ -34,10 +37,13 @@ import {
   ITEM_GRENADE,
   ITEM_GUN,
   ITEM_HEAL,
+  ITEM_PERK,
   ITEM_SHIELD,
   LOOT,
   MAX_HP,
   NO_HEAL,
+  NO_PERK,
+  PERKS,
   PISTOL,
   ROYALE,
   TICK_RATE,
@@ -48,6 +54,7 @@ import {
 } from "./constants.ts";
 import type { MapDef, Spawn } from "./maps/types.ts";
 import { fnv1a } from "./modes.ts";
+import { switchTicks } from "./perks.ts";
 import { circleOverlapsBox } from "./physics.ts";
 import type { CrateView, FloorItemView, KitSim, MapLike, PlayerSim, ZoneView } from "./protocol.ts";
 
@@ -150,13 +157,14 @@ export function takeGun(sim: PlayerSim, weapon: number, mag: number): PlayerSim 
 /**
  * What a switch or a swap does to the gun that comes in hand: nothing of
  * the old gun's reload or burst carries over, and it can't fire for
- * ROYALE.switchTime (or the old gun's fire interval, if longer), so switching
- * never skips a reload or a fire interval.
+ * ROYALE.switchTime (shorter with Quick hands, `switchTicks`; or the old
+ * gun's fire interval, if longer), so switching never skips a reload or a
+ * fire interval.
  */
 function drawGun(s: PlayerSim) {
   s.reloadTicks = 0;
   s.burstLeft = 0;
-  s.fireCd = Math.max(s.fireCd, ticks(ROYALE.switchTime));
+  s.fireCd = Math.max(s.fireCd, switchTicks(s.perk));
 }
 
 /**
@@ -289,6 +297,32 @@ export function walkTakesGrenades(held: GrenadeStack, type: number): boolean {
 export function grenadeSwapTarget<T extends FloorItemView>(held: GrenadeStack, x: number, z: number, items: MapLike<T>, pid: string, tick: number): { id: string; item: T } | null {
   const pick = nearestItem(ITEM_GRENADE, x, z, items, pid, tick);
   if (!pick || walkTakesGrenades(held, pick.item.item)) return null;
+  return { id: pick.id, item: pick.item };
+}
+
+// --- Perks ---------------------------------------------------------------------------
+
+/**
+ * Whether walking over a perk takes it, holding `held` (a PERKS index or
+ * NO_PERK): only with none held, like a gun into a free slot. Holding one,
+ * another stays on the floor for F (`perkSwapTarget`), and the same one is
+ * no use.
+ */
+export function walkTakesPerk(held: number): boolean {
+  return held === NO_PERK;
+}
+
+/**
+ * The floor perk an F press swaps in, holding `held`, for a player at (x, z)
+ * at `tick`: the nearest perk in reach they may take (`nearestItem`), like
+ * `swapTarget` for guns. Null when there is none, when none is held (walking
+ * over it already takes it), or when that nearest one is the perk held
+ * (nothing to swap).
+ */
+export function perkSwapTarget<T extends FloorItemView>(held: number, x: number, z: number, items: MapLike<T>, pid: string, tick: number): { id: string; item: T } | null {
+  if (walkTakesPerk(held)) return null;
+  const pick = nearestItem(ITEM_PERK, x, z, items, pid, tick);
+  if (!pick || pick.item.item === held) return null;
   return { id: pick.id, item: pick.item };
 }
 
@@ -535,11 +569,12 @@ export function chestTarget<T extends CrateView>(x: number, z: number, crates: M
   return best;
 }
 
-/** What an F press does (`fTarget`): open a chest, or swap the gun in hand or the grenade stack held for one on the floor. */
+/** What an F press does (`fTarget`): open a chest, or swap the gun in hand, the grenade stack held or the perk for one on the floor. */
 export type FTarget<T extends FloorItemView = FloorItemView> =
   | { kind: "chest"; id: string }
   | { kind: "gun"; id: string; item: T }
-  | { kind: "grenade"; id: string; item: T };
+  | { kind: "grenade"; id: string; item: T }
+  | { kind: "perk"; id: string; item: T };
 
 /**
  * What an F press does, for player `pid` at (x, z) carrying `kit` and
@@ -547,9 +582,10 @@ export type FTarget<T extends FloorItemView = FloorItemView> =
  * - the nearest closed chest within ROYALE.openRadius (`chestTarget`);
  * - the gun `swapTarget` picks, with all three slots full (with a free one,
  *   walking over a gun takes it: F has nothing to do);
- * - the grenade stack `grenadeSwapTarget` picks.
+ * - the grenade stack `grenadeSwapTarget` picks;
+ * - the perk `perkSwapTarget` picks, holding `perk` (with NO_PERK, none).
  * The nearest of them wins, by the distance from the player's centre; a tie
- * goes to the chest, then the gun. Null: F does nothing. The server's F
+ * goes to the chest, then the gun, then the grenades. Null: F does nothing. The server's F
  * (floor.ts) does this one and the HUD's prompt names it, so the two never
  * disagree.
  */
@@ -562,6 +598,7 @@ export function fTarget<T extends FloorItemView, C extends CrateView>(
   crates: MapLike<C>,
   pid: string,
   tick: number,
+  perk: number = NO_PERK,
 ): FTarget<T> | null {
   const dist = (o: { x: number; z: number }) => Math.hypot(x - o.x, z - o.z);
   const options: { t: FTarget<T>; d: number }[] = [];
@@ -571,6 +608,8 @@ export function fTarget<T extends FloorItemView, C extends CrateView>(
   if (gun) options.push({ t: { kind: "gun", ...gun }, d: dist(gun.item) });
   const nade = grenadeSwapTarget(held, x, z, items, pid, tick);
   if (nade) options.push({ t: { kind: "grenade", ...nade }, d: dist(nade.item) });
+  const perkItem = perkSwapTarget(perk, x, z, items, pid, tick);
+  if (perkItem) options.push({ t: { kind: "perk", ...perkItem }, d: dist(perkItem.item) });
   // A stable sort: the order above breaks a tie.
   options.sort((a, b) => a.d - b.d);
   return options[0]?.t ?? null;
@@ -613,7 +652,7 @@ export interface ItemDrop {
   amount: number;
 }
 
-/** The floor item a loot line gives (a gun with a full magazine, a stack of grenades, healing items or shield charges). */
+/** The floor item a loot line gives (a gun with a full magazine, a stack of grenades, healing items or shield charges, a perk). */
 export function lootItem(e: LootEntry): ItemDrop {
   if (e.kind === "gun") {
     const id = WEAPONS.findIndex((w) => w.key === e.key);
@@ -621,6 +660,7 @@ export function lootItem(e: LootEntry): ItemDrop {
   }
   if (e.kind === "grenade") return { kind: ITEM_GRENADE, item: GRENADES.findIndex((g) => g.key === e.key), amount: e.amount };
   if (e.kind === "heal") return { kind: ITEM_HEAL, item: HEAL_ITEMS.findIndex((h) => h.key === e.key), amount: e.amount };
+  if (e.kind === "perk") return { kind: ITEM_PERK, item: PERKS.findIndex((p) => p.key === e.key), amount: 1 };
   return { kind: ITEM_SHIELD, item: 0, amount: e.amount };
 }
 

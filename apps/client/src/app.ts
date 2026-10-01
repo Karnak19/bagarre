@@ -24,7 +24,7 @@
 //   replaces the page with `/game/<code>`, whose `routeGame` is a no-op; a
 //   player who lost the race for the last seat is moved the other way.
 
-import { CLOSE_NO_PLAYERS, type GameMode, type Phase } from "@bagarre/shared";
+import { CLOSE_NO_PLAYERS, NO_PERK, type GameMode, type Phase } from "@bagarre/shared";
 import { guestName } from "./auth.ts";
 import type { Match } from "./match.ts";
 import { CloseCode } from "@colyseus/sdk";
@@ -93,6 +93,8 @@ export interface GameView {
   pick: number;
   /** The grenade type picked for the next spawn (GRENADES index). */
   grenadePick: number;
+  /** The perk picked for the next spawn (PERKS index, NO_PERK: none). */
+  perkPick: number;
   canPick: boolean;
   /** Watching, not playing: no waiting or result card, the spectator overlay instead of the HUD. */
   spectating: boolean;
@@ -254,6 +256,7 @@ export class App {
       endedAt: m.endedAt,
       pick: me?.pick ?? 0,
       grenadePick: me?.grenadePick ?? 0,
+      perkPick: me?.perkPick ?? NO_PERK,
       canPick: m.canPick,
       spectating,
       knockedOut: m.knockedOut,
@@ -377,6 +380,10 @@ export class App {
 
   pickGrenade(type: number) {
     this.current?.pickGrenade(type);
+  }
+
+  pickPerk(perk: number) {
+    this.current?.pickPerk(perk);
   }
 
   /** G: the next grenade type. */

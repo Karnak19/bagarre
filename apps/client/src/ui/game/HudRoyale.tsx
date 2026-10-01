@@ -4,9 +4,10 @@
 // gun slots in place of the single weapon box, the healing items (keys 4
 // and 5) next to them, and the heal's progress, or how it ended, over the
 // ability bar (above all when the zone's damage cancelled it), and the F
-// prompt ("F  Open chest", "F  Swap Pistol → Rifle", "F  Swap Frag → Smoke")
-// while F would do something, and the loot feed at the bottom left (what we
-// just picked up: "+ Rifle", "+ 2 💥 Frag", "Pistol → Rifle").
+// prompt ("F  Open chest", "F  Swap Pistol → Rifle", "F  Swap Frag → Smoke",
+// "F  Swap ⏩ Double dash → 🔋 Bigger mag") while F would do something, and
+// the loot feed at the bottom left (what we just picked up: "+ Rifle",
+// "+ 2 💥 Frag", "Pistol → Rifle", "+ ⏩ Double dash").
 //
 // Like the rest of the HUD, nothing renders per frame: the panel re-renders
 // when the count or the timer's seconds change, the slots on a switch, a shot
@@ -16,7 +17,7 @@
 import { Kbd } from "@astryxdesign/core/Kbd";
 import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { Text } from "@astryxdesign/core/Text";
-import { HEAL_ITEMS, healProgress, ticks, weaponDef } from "@bagarre/shared";
+import { HEAL_ITEMS, healProgress, reloadTicksOf, weaponDef } from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
 import { useRef } from "react";
 import { countRender } from "../../renders.ts";
@@ -115,6 +116,7 @@ const styles = stylex.create({
   lootGun: { color: "var(--bagarre-gold)" },
   lootHeal: { color: "#6dff9a" },
   lootShield: { color: "#9fe6ff" },
+  lootPerk: { color: "#e0b4ff" },
 });
 
 /** Players still in and the zone's timer, at the top right. */
@@ -187,7 +189,7 @@ export function GunSlots() {
   useStoreEffect(hud, (m) => {
     const s = m?.sim;
     const hand = m?.royale?.slots.find((x) => x.hand);
-    const frac = s && hand && hand.weapon >= 0 && s.reloadTicks > 0 ? 1 - s.reloadTicks / ticks(weaponDef(hand.weapon).reloadTime) : 0;
+    const frac = s && hand && hand.weapon >= 0 && s.reloadTicks > 0 ? 1 - s.reloadTicks / reloadTicksOf(weaponDef(hand.weapon), s.perk) : 0;
     const width = `${frac * 100}%`;
     if (fill.current && fill.current.style.width !== width) fill.current.style.width = width;
   });
@@ -288,8 +290,8 @@ export function HealStatus() {
 /**
  * While F would do something: the key and what it does, from the HUD
  * model's `prompt` (the same pick as the server's, fTarget): "F  Open chest",
- * or the gun in hand / grenades held and what F takes instead ("F  Swap
- * Pistol → Rifle"). Re-renders only when that changes. Always mounted, faded
+ * or the gun in hand / grenades held / perk held and what F takes instead
+ * ("F  Swap Pistol → Rifle"). Re-renders only when that changes. Always mounted, faded
  * in and out (opacity only); it keeps the last text while it fades out.
  * `data-state` "on" / "off" and `data-kind` for the tests.
  */
@@ -335,7 +337,7 @@ export function SwapPrompt() {
   );
 }
 
-const LOOT_COLOR = { gun: styles.lootGun, grenade: styles.lootGun, heal: styles.lootHeal, shield: styles.lootShield };
+const LOOT_COLOR = { gun: styles.lootGun, grenade: styles.lootGun, heal: styles.lootHeal, shield: styles.lootShield, perk: styles.lootPerk };
 
 /**
  * The loot feed: our last few pickups and F swaps, a line each ("+ Rifle",

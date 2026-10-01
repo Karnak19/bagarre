@@ -1,5 +1,5 @@
-// The loadout: the weapons as toggle buttons (the number keys do the same) and the
-// grenade types (G cycles them), for the waiting and result cards and the
+// The loadout: the weapons as toggle buttons (the number keys do the same), the
+// grenade types (G cycles them) and the perk (or none), for the waiting and result cards and the
 // warmup panel. Only live while picks are accepted (dead, waiting, warmup, or
 // between matches). `live`: the warmup's, over the running game, which hands
 // the keyboard back to the game after a click (Space must dash, not press
@@ -9,9 +9,9 @@ import { Kbd } from "@astryxdesign/core/Kbd";
 import { HStack } from "@astryxdesign/core/Layout";
 import { ToggleButton, ToggleButtonGroup } from "@astryxdesign/core/ToggleButton";
 import { Text } from "@astryxdesign/core/Text";
-import { GRENADES, WEAPONS } from "@bagarre/shared";
+import { GRENADES, NO_PERK, PERKS, WEAPONS } from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
-import { GRENADE_VIEW, PICKABLE_WEAPONS } from "../../items.ts";
+import { GRENADE_VIEW, PERK_VIEW, PICKABLE_WEAPONS } from "../../items.ts";
 import { countRender } from "../../renders.ts";
 import { shallowEqual, useEngine, useSelector } from "../hooks.ts";
 import { shared } from "../styles.ts";
@@ -92,6 +92,50 @@ export function GrenadePicker({ heading, live = false }: { heading: string; live
                 {GRENADE_VIEW[g.key].icon}
               </Text>
               {g.name}
+            </HStack>
+          </ToggleButton>
+        ))}
+      </ToggleButtonGroup>
+    </>
+  );
+}
+
+/**
+ * The perk, next to the grenade: one or none (one slot), same rules as the
+ * weapon, put in hand on the next spawn (at once in warmup). The battle
+ * royale has no picker: its perks are loot.
+ */
+export function PerkPicker({ heading, live = false }: { heading: string; live?: boolean }) {
+  countRender("perkPicker");
+  const { app, view, gesture } = useEngine();
+  const { pick, canPick } = useSelector(view, (v) => ({ pick: v?.perkPick ?? NO_PERK, canPick: !!v?.canPick }), shallowEqual);
+  return (
+    <>
+      <Text as="p" xstyle={shared.eyebrow}>
+        {heading}
+      </Text>
+      <ToggleButtonGroup
+        type="single"
+        label="Perk for your next spawn"
+        value={String(pick)}
+        onChange={(v) => {
+          if (v === null) return;
+          gesture();
+          app.pickPerk(Number(v));
+          if (live) releaseFocus();
+        }}
+        isDisabled={!canPick}
+        xstyle={styles.group}
+        data-testid="perk-picker"
+      >
+        <ToggleButton value={String(NO_PERK)} label="None" data-testid="perk-pick-none" />
+        {PERKS.map((p, i) => (
+          <ToggleButton key={p.key} value={String(i)} label={p.name} tooltip={PERK_VIEW[p.key].blurb} data-testid={`perk-pick-${p.key}`}>
+            <HStack as="span" gap={1.5} align="center">
+              <Text as="span" aria-hidden>
+                {PERK_VIEW[p.key].icon}
+              </Text>
+              {p.name}
             </HStack>
           </ToggleButton>
         ))}

@@ -316,6 +316,63 @@ export const MELEE = {
   fireLockout: 0.25,
 } as const;
 
+/**
+ * A perk: a passive bonus on something everyone already has (the dash, the
+ * magazine, the reload). One slot: a player holds one perk at most. Every
+ * field but `key` and `name` is optional and leaves that thing as it is when
+ * absent; the multipliers scale the base number (DASH, the gun's WeaponDef,
+ * ROYALE.switchTime). The step reads them through perks.ts, on the server and
+ * in the client's prediction alike.
+ */
+export interface PerkDef<K extends string = PerkKey> {
+  /** Stable key (test ids, the HUD, the client's PERK_VIEW). Never renamed. */
+  key: K;
+  name: string;
+  /** Dash charges held at most (default 1). The cooldown brings them back one at a time. */
+  dashCharges?: number;
+  /** Multiplier on DASH.distance (the dash lasts as long, and goes faster). */
+  dashDistance?: number;
+  /** Multiplier on DASH.cooldown. */
+  dashCooldown?: number;
+  /** Multiplier on every gun's magazine, rounded to whole rounds. */
+  magazine?: number;
+  /** Multiplier on every gun's reload time, and on the battle royale's gun switch (ROYALE.switchTime). */
+  handling?: number;
+}
+
+/**
+ * Index = perk id: sent over the wire (MSG_PICK, `Player.perk`,
+ * `FloorItem.item` of an ITEM_PERK). Ids are frozen: never reorder or remove
+ * a perk, only append. NO_PERK (255) is "none".
+ *
+ * Adding a perk:
+ * 1. Append its line here, with a new `key`, and its tuning fields (a new
+ *    kind of effect also needs a PerkDef field and its helper in perks.ts,
+ *    read by the step).
+ * 2. Add its `key` to PERK_VIEW (apps/client/src/items.ts): icon, How to play
+ *    blurb. It won't compile without it.
+ * 3. Append its key to PERK_IDS in packages/shared/src/items.test.ts.
+ * 4. For the battle royale: give it a weight in LOOT below.
+ *
+ * Bigger mag: rifle 12 -> 16, shotgun 5 -> 7, sniper 4 -> 5, SMG 30 -> 39,
+ * revolver 6 -> 8, burst pistol 15 -> 20, DMR 8 -> 10, pistol 10 -> 13.
+ */
+const PERK_LIST = [
+  { key: "double-dash", name: "Double dash", dashCharges: 2 },
+  // 7.5 m instead of 5.
+  { key: "long-dash", name: "Long dash", dashDistance: 1.5 },
+  // 1.8 s instead of 3.
+  { key: "quick-dash", name: "Quick dash", dashCooldown: 0.6 },
+  { key: "big-mag", name: "Bigger mag", magazine: 1.3 },
+  // Rifle 1.5 s -> 1 s, sniper 2.5 s -> 1.63 s; the royale's switch 0.3 s -> 0.2 s.
+  { key: "quick-hands", name: "Quick hands", handling: 0.65 },
+] as const satisfies readonly PerkDef<string>[];
+/** A perk's stable key ("double-dash", "big-mag", ...). */
+export type PerkKey = (typeof PERK_LIST)[number]["key"];
+export const PERKS: readonly PerkDef[] = PERK_LIST;
+/** `Player.perk` / `Player.perkPick` with no perk (the default). */
+export const NO_PERK = 255;
+
 // Derived tick counts (do not tune these, tune the tables above).
 export const DASH_TICKS = ticks(DASH.duration);
 export const DASH_SPEED = DASH.distance / (DASH_TICKS * TICK_DT);
@@ -510,9 +567,9 @@ export const ZONE = {
  * append-only, like WEAPONS and GRENADES. `item` says which one (a WEAPONS
  * index for a gun, a GRENADES index for grenades) and `amount` how many (a
  * gun's magazine, a stack's count). Healing items (a HEAL_ITEMS index) and
- * shield charges came after (#34).
+ * shield charges came after (#34), perks (a PERKS index) after them.
  */
-export const ITEM_KINDS = ["gun", "grenade", "heal", "shield"] as const;
+export const ITEM_KINDS = ["gun", "grenade", "heal", "shield", "perk"] as const;
 export type ItemKind = (typeof ITEM_KINDS)[number];
 export const ITEM_GUN = 0;
 export const ITEM_GRENADE = 1;
@@ -520,13 +577,16 @@ export const ITEM_GRENADE = 1;
 export const ITEM_HEAL = 2;
 /** Shield charges: `item` is always 0. */
 export const ITEM_SHIELD = 3;
+/** A perk: `item` is a PERKS index, `amount` always 1. */
+export const ITEM_PERK = 4;
 
 /** One line of the loot table: what a crate may drop, and how often (weights, not percentages). */
 export type LootEntry =
   | { weight: number; kind: "gun"; key: WeaponKey }
   | { weight: number; kind: "grenade"; key: GrenadeKey; amount: number }
   | { weight: number; kind: "heal"; key: HealKey; amount: number }
-  | { weight: number; kind: "shield"; amount: number };
+  | { weight: number; kind: "shield"; amount: number }
+  | { weight: number; kind: "perk"; key: PerkKey };
 
 /**
  * What a crate drops, one entry drawn by weight (`rollLoot` in royale.ts).
@@ -549,6 +609,12 @@ export const LOOT: readonly LootEntry[] = [
   { weight: 14, kind: "heal", key: "bandage", amount: 2 },
   { weight: 3, kind: "heal", key: "medkit", amount: 1 },
   { weight: 7, kind: "shield", amount: 1 },
+  // Perks: one slot, so a second one is an F swap.
+  { weight: 3, kind: "perk", key: "double-dash" },
+  { weight: 3, kind: "perk", key: "long-dash" },
+  { weight: 3, kind: "perk", key: "quick-dash" },
+  { weight: 3, kind: "perk", key: "big-mag" },
+  { weight: 3, kind: "perk", key: "quick-hands" },
 ];
 
 // --- Netcode ---

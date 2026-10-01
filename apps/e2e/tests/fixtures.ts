@@ -148,6 +148,13 @@ export interface PlayerState {
     /** Melee: ticks of cooldown left, and the last V press counter the server consumed. */
     meleeCd: number;
     meleeSeen: number;
+    /** The perk held and the one picked for the next spawn (PERKS index, 255: none). */
+    perk: number;
+    perkPick: number;
+    /** Dash: ticks until every charge is back, ticks of dash left, and the last Space press counter the server consumed. */
+    dashCd: number;
+    dashTicks: number;
+    dashSeen: number;
   }[];
 }
 
@@ -238,6 +245,11 @@ export class Player {
           damage: Number(p.damage ?? 0),
           meleeCd: Number(p.meleeCd ?? 0),
           meleeSeen: Number(p.meleeSeen ?? 0),
+          perk: Number(p.perk ?? 255),
+          perkPick: Number(p.perkPick ?? 255),
+          dashCd: Number(p.dashCd ?? 0),
+          dashTicks: Number(p.dashTicks ?? 0),
+          dashSeen: Number(p.dashSeen ?? 0),
         }),
       );
       const crates: PlayerState["crates"] = [];

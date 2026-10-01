@@ -8,8 +8,6 @@
 import type { Arena } from "./arena.ts";
 import {
   BULLET_RADIUS,
-  DASH_COOLDOWN_TICKS,
-  DASH_SPEED,
   DASH_TICKS,
   DEFAULT_GRENADE,
   DEFAULT_WEAPON,
@@ -18,6 +16,7 @@ import {
   MELEE,
   MELEE_COOLDOWN_TICKS,
   MELEE_LOCKOUT_TICKS,
+  NO_PERK,
   NO_TEAM,
   PLAYER_RADIUS,
   PLAYER_SPEED,
@@ -32,6 +31,7 @@ import {
   type WeaponDef,
 } from "./constants.ts";
 import { grenadeCooldownTicks } from "./grenades.ts";
+import { dashCharges, dashCooldownTicks, dashSpeed, magazineOf, reloadTicksOf } from "./perks.ts";
 import { clamp, clampMove, lineOfSight, movePlayer, muzzle, type BulletSim, type Vec2 } from "./physics.ts";
 import { KIT_KEYS, PLAYER_SIM_KEYS, type InputMessage, type KitSim, type Phase, type PlayerSim } from "./protocol.ts";
 import { HEAL_STOP, NO_GUN, canStartHeal, cancelHeal, emptyKit, gunInHand, healing, startHeal, switchGun, tickHeal, useGrenade } from "./royale.ts";
@@ -68,10 +68,12 @@ export function bulletLifeTicks(w: WeaponDef): number {
 /**
  * A fresh player at (x, z): full magazine, everything off cooldown. `kit`:
  * what they carry in a battle royale (royale.ts' startKit), empty elsewhere.
- * With slots, the gun in the kit's hand is what `ammo` is filled for.
+ * With slots, the gun in the kit's hand is what `ammo` is filled for. The
+ * perk is `seen`'s (the server sets the one to spawn with first), else none.
  */
 export function spawnSim(x: number, z: number, weapon: number, seen?: PlayerSim, kit: KitSim = emptyKit()): PlayerSim {
   const hand = gunInHand(kit);
+  const perk = seen?.perk ?? NO_PERK;
   return {
     x,
     z,
@@ -82,7 +84,7 @@ export function spawnSim(x: number, z: number, weapon: number, seen?: PlayerSim,
     fireCd: 0,
     grenadeCd: 0,
     shieldCd: 0,
-    ammo: weaponDef(hand !== NO_GUN ? hand : weapon).magazine,
+    ammo: magazineOf(weaponDef(hand !== NO_GUN ? hand : weapon), perk),
     reloadTicks: 0,
     // Press counters carry over: they track the client's running totals.
     dashSeen: seen?.dashSeen ?? 0,
@@ -95,6 +97,7 @@ export function spawnSim(x: number, z: number, weapon: number, seen?: PlayerSim,
     meleeCd: 0,
     // Health is the server's (a spawn sets it on its own): kept as it was.
     hp: seen?.hp ?? MAX_HP,
+    perk,
     kit: {
       ...kit,
       switchSeen: seen?.kit.switchSeen ?? kit.switchSeen,
@@ -110,10 +113,11 @@ export function spawnSim(x: number, z: number, weapon: number, seen?: PlayerSim,
  * progress, no fire interval or burst running), and the grenade ready (its
  * cooldown reset). Position, dash, shield, stun and the press counters are
  * kept. (Spread needs no reset: it is seeded by the input seq, see
- * `shotPellets`, never stored.)
+ * `shotPellets`, never stored.) The magazine is the perk's: the server puts
+ * the picked perk in `sim.perk` first.
  */
 export function equipSim(sim: PlayerSim, weapon: number): PlayerSim {
-  return { ...sim, ammo: weaponDef(weapon).magazine, reloadTicks: 0, fireCd: 0, burstLeft: 0, grenadeCd: 0 };
+  return { ...sim, ammo: magazineOf(weaponDef(weapon), sim.perk), reloadTicks: 0, fireCd: 0, burstLeft: 0, grenadeCd: 0 };
 }
 
 /**
@@ -206,6 +210,10 @@ const dec = (v: number) => (v > 0 ? v - 1 : 0);
  * ROYALE.healSpeedScale and blocks the dash until it completes (`healed`:
  * the HP it gave, already in `sim.hp`) or a shot, throw or switch cancels
  * it. The shield needs a charge (`kit.shields`) instead of its cooldown.
+ *
+ * The perk (`sim.perk`, perks.ts) sets the dash's charges, distance and
+ * cooldown, the magazine and the reload (and, with slots, the switch delay):
+ * the step reads it from the sim, so the prediction uses the same numbers.
  */
 export function stepPlayer(
   arena: Arena,
@@ -249,9 +257,10 @@ export function stepPlayer(
   const switched = slots && act && pressSwitch && switchGun(s, input.slot ?? -1);
   const hand = slots ? gunInHand(s.kit) : weaponId;
   const w = weaponDef(hand === NO_GUN ? weaponId : hand);
+  const magazine = magazineOf(w, s.perk);
   if (s.reloadTicks > 0) {
     s.reloadTicks--;
-    if (s.reloadTicks === 0) s.ammo = w.magazine;
+    if (s.reloadTicks === 0) s.ammo = magazine;
   }
 
   if (!act) {
@@ -261,7 +270,7 @@ export function stepPlayer(
     return res;
   }
 
-  if (pressReload && s.reloadTicks === 0 && s.ammo < w.magazine) s.reloadTicks = ticks(w.reloadTime);
+  if (pressReload && s.reloadTicks === 0 && s.ammo < magazine) s.reloadTicks = reloadTicksOf(w, s.perk);
 
   // Healing (slots only, see royale.ts): the heal in progress counts down
   // and completes first, before anything this input does could cancel it.
@@ -279,7 +288,14 @@ export function stepPlayer(
 
   const move = clampMove(input.mx, input.mz);
   if (stunned || heals) s.dashTicks = 0;
-  if (pressDash && !stunned && !heals && s.dashCd === 0 && s.dashTicks === 0) {
+  // Dash charges (perks.ts): `dashCd` is the time until all are back, one
+  // cooldown per charge spent, so a dash is allowed while one is back. One
+  // charge: a dash needs `dashCd` at 0, the plain cooldown. The cap keeps a
+  // perk swapped mid-life (royale) from leaving more than it allows.
+  const dashCd = dashCooldownTicks(s.perk);
+  const charges = dashCharges(s.perk);
+  s.dashCd = Math.min(s.dashCd, charges * dashCd);
+  if (pressDash && !stunned && !heals && s.dashCd <= (charges - 1) * dashCd && s.dashTicks === 0) {
     // Move direction if moving, otherwise where we're facing.
     const len = Math.sqrt(move.x * move.x + move.z * move.z);
     if (len > 1e-3) {
@@ -290,14 +306,15 @@ export function stepPlayer(
       s.dashDz = Math.sin(input.aim);
     }
     s.dashTicks = DASH_TICKS;
-    s.dashCd = DASH_COOLDOWN_TICKS;
+    s.dashCd += dashCd;
   }
 
   let p: Vec2;
   if (s.dashTicks > 0) {
     s.dashTicks--;
     res.dashing = true;
-    p = movePlayer(arena, s, s.dashDx * DASH_SPEED * TICK_DT, s.dashDz * DASH_SPEED * TICK_DT);
+    const speed = dashSpeed(s.perk);
+    p = movePlayer(arena, s, s.dashDx * speed * TICK_DT, s.dashDz * speed * TICK_DT);
   } else {
     const speed = PLAYER_SPEED * (stunned ? STUN.speedScale : 1) * (heals ? ROYALE.healSpeedScale : 1);
     p = movePlayer(arena, s, move.x * speed * TICK_DT, move.z * speed * TICK_DT);
@@ -374,7 +391,7 @@ function fireRound(s: PlayerSim, w: WeaponDef, res: StepResult) {
   s.ammo--;
   res.fired = true;
   if (s.ammo === 0) {
-    s.reloadTicks = ticks(w.reloadTime); // auto-reload on empty
+    s.reloadTicks = reloadTicksOf(w, s.perk); // auto-reload on empty
     s.burstLeft = 0;
   }
 }

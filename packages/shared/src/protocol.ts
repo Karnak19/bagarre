@@ -104,6 +104,8 @@ export interface PickMessage {
   weapon?: number;
   /** A GRENADES index. */
   grenade?: number;
+  /** A PERKS index, or NO_PERK for none. Ignored by the battle royale, where perks are loot. */
+  perk?: number;
 }
 
 export interface TeamMessage {
@@ -130,7 +132,11 @@ export interface PlayerSim {
   dashTicks: number;
   dashDx: number;
   dashDz: number;
-  /** Cooldowns, in ticks until ready. */
+  /**
+   * Cooldowns, in ticks until ready. `dashCd` is the time until every dash
+   * charge is back (one charge without a perk: the plain cooldown; see
+   * perks.ts for the double dash).
+   */
   dashCd: number;
   fireCd: number;
   grenadeCd: number;
@@ -167,6 +173,13 @@ export interface PlayerSim {
    * (damage, the heal grenade, a respawn) is the server's alone.
    */
   hp: number;
+  /**
+   * The perk held (a PERKS index, NO_PERK: none). Set by the server only (a
+   * spawn with the loadout's pick, a royale pickup or swap); the step reads
+   * it for the dash, the magazine, the reload and the switch (perks.ts), so
+   * the client predicts with the same numbers.
+   */
+  perk: number;
   /**
    * The battle royale's gun slots and grenade stack (KitSim, royale.ts). In
    * the other modes it stays empty and nothing reads it. A nested object, as
@@ -256,6 +269,7 @@ export const PLAYER_SIM_KEYS = [
   "hp",
   "meleeCd",
   "meleeSeen",
+  "perk",
 ] as const satisfies readonly (keyof PlayerSim)[];
 
 /** What the client reads from a player in the synced room state. */
@@ -332,6 +346,8 @@ export interface PlayerView extends PlayerSim {
    * the zone, or left), 0 while still in. Their place follows from it.
    */
   outTick: number;
+  /** The perk picked for the next spawn (a PERKS index, NO_PERK: none). The one held is `perk` (PlayerSim). */
+  perkPick: number;
 }
 
 export const PLAYER_VIEW_KEYS = [
@@ -362,6 +378,7 @@ export const PLAYER_VIEW_KEYS = [
   "flashEnd",
   "flashTicks",
   "outTick",
+  "perkPick",
 ] as const satisfies readonly (keyof PlayerView)[];
 
 /**
@@ -411,9 +428,9 @@ export interface SmokeView {
 export interface FloorItemView {
   x: number;
   z: number;
-  /** An ITEM_KINDS index (ITEM_GUN, ITEM_GRENADE, ITEM_HEAL, ITEM_SHIELD). */
+  /** An ITEM_KINDS index (ITEM_GUN, ITEM_GRENADE, ITEM_HEAL, ITEM_SHIELD, ITEM_PERK). */
   kind: number;
-  /** Which one: a WEAPONS index for a gun, a GRENADES index for grenades, a HEAL_ITEMS index for healing (0 for shield charges). */
+  /** Which one: a WEAPONS index for a gun, a GRENADES index for grenades, a HEAL_ITEMS index for healing (0 for shield charges), a PERKS index for a perk. */
   item: number;
   /** How many: a gun's magazine, a stack's count. */
   amount: number;

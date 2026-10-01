@@ -3,11 +3,12 @@
 // both in reach (`fTarget`, the nearest wins), loot that can't be taken
 // until it has landed (`itemReady`), grenade stacks taken by walking over
 // them only when that swaps nothing (`walkTakesGrenades`, `grenadeSwapTarget`),
-// and where a chest's loot lands (`lootSpot`).
+// perks the same way (`walkTakesPerk`, `perkSwapTarget`: one slot, F swaps),
+// chests dropping perks (`rollLoot`), and where a chest's loot lands (`lootSpot`).
 // Run with `bun run test` (or `bun test src/chests.test.ts` in packages/shared).
 
 import { describe, expect, test } from "bun:test";
-import { GRENADE_FRAG, GRENADE_SMOKE, ITEM_GRENADE, ITEM_GUN, ITEM_HEAL, PISTOL, ROYALE, WEAPONS, ticks } from "./constants.ts";
+import { GRENADE_FRAG, GRENADE_SMOKE, ITEM_GRENADE, ITEM_GUN, ITEM_HEAL, ITEM_PERK, LOOT, NO_PERK, PERKS, PISTOL, ROYALE, WEAPONS, ticks } from "./constants.ts";
 import { MAPS, ROYALE_MAPS } from "./maps/index.ts";
 import type { MapDef } from "./maps/types.ts";
 import { circleOverlapsBox } from "./physics.ts";
@@ -19,9 +20,12 @@ import {
   grenadeSwapTarget,
   itemReady,
   lootSpot,
+  perkSwapTarget,
+  rollLoot,
   startKit,
   swapTarget,
   walkTakesGrenades,
+  walkTakesPerk,
   type GrenadeStack,
 } from "./royale.ts";
 
@@ -122,6 +126,44 @@ describe("grenade stacks: walking over takes them only when that swaps nothing",
   });
 });
 
+const DOUBLE = PERKS.findIndex((p) => p.key === "double-dash");
+const BIG_MAG = PERKS.findIndex((p) => p.key === "big-mag");
+
+describe("perks: one slot, walked over with none held, F swaps", () => {
+  test("none held: walking over one takes it", () => {
+    expect(walkTakesPerk(NO_PERK)).toBe(true);
+  });
+  test("one held: walking over another (or the same) leaves it on the floor", () => {
+    expect(walkTakesPerk(DOUBLE)).toBe(false);
+  });
+  test("perkSwapTarget: another perk in reach, holding one", () => {
+    expect(perkSwapTarget(DOUBLE, 0, 0, items(["p", item(ITEM_PERK, BIG_MAG, 0.5)]), "me", 0)?.id).toBe("p");
+  });
+  test("perkSwapTarget: nothing to swap with none held, or the same perk", () => {
+    expect(perkSwapTarget(NO_PERK, 0, 0, items(["p", item(ITEM_PERK, BIG_MAG, 0.5)]), "me", 0)).toBeNull();
+    expect(perkSwapTarget(BIG_MAG, 0, 0, items(["p", item(ITEM_PERK, BIG_MAG, 0.5)]), "me", 0)).toBeNull();
+  });
+  test("perkSwapTarget: out of reach, blocked for us (we just dropped it), or still falling", () => {
+    expect(perkSwapTarget(DOUBLE, 0, 0, items(["p", item(ITEM_PERK, BIG_MAG, ROYALE.pickupRadius + 0.1)]), "me", 0)).toBeNull();
+    expect(perkSwapTarget(DOUBLE, 0, 0, items(["p", item(ITEM_PERK, BIG_MAG, 0.5, 0, { blockedFor: "me" })]), "me", 0)).toBeNull();
+    expect(perkSwapTarget(DOUBLE, 0, 0, items(["p", item(ITEM_PERK, BIG_MAG, 0.5, 0, { readyTick: 10 })]), "me", 5)).toBeNull();
+  });
+  test("perkSwapTarget: only perks count", () => {
+    expect(perkSwapTarget(DOUBLE, 0, 0, items(["g", item(ITEM_GUN, SNIPER, 0.3)], ["h", item(ITEM_HEAL, 0, 0.2)]), "me", 0)).toBeNull();
+  });
+  test("every perk drops from chests, one at a time", () => {
+    const drops = new Set<number>();
+    for (let i = 0; i < 2000; i++) {
+      const d = rollLoot((i + 0.5) / 2000);
+      if (d.kind !== ITEM_PERK) continue;
+      expect(d.amount).toBe(1);
+      drops.add(d.item);
+    }
+    expect([...drops].sort()).toEqual(PERKS.map((_, i) => i));
+    expect(LOOT.filter((e) => e.kind === "perk").length).toBe(PERKS.length);
+  });
+});
+
 describe("fTarget: what F does", () => {
   const f = (kit: KitSim, held: GrenadeStack, its: Map<string, FloorItemView>, cs: Map<string, CrateView>, tick = 0) => {
     const t = fTarget(kit, held, 0, 0, its, cs, "me", tick);
@@ -177,6 +219,21 @@ describe("fTarget: what F does", () => {
     const falling = item(ITEM_GUN, SNIPER, 0.4, 0, { dropTick: 50, readyTick: 62 });
     expect(f(full, frags, items(["s", falling]), chests(["c", chest(1, 0, true)]), 55)).toBeNull();
     expect(f(full, frags, items(["s", falling]), chests(["c", chest(1, 0, true)]), 62)).toBe("gun:s");
+  });
+  test("holding a perk, another one in reach: swap it; with none held, nothing (walking takes it)", () => {
+    const its = items(["p", item(ITEM_PERK, BIG_MAG, 0.5)]);
+    expect(fTarget(roomy, noNades, 0, 0, its, chests(), "me", 0, DOUBLE)).toMatchObject({ kind: "perk", id: "p" });
+    expect(fTarget(roomy, noNades, 0, 0, its, chests(), "me", 0, NO_PERK)).toBeNull();
+    expect(fTarget(roomy, noNades, 0, 0, its, chests(), "me", 0)).toBeNull();
+  });
+  test("a perk and a chest, or a perk and a gun: the nearest wins, a tie goes to the other", () => {
+    const at = (perkX: number, other: [string, FloorItemView][], cs = chests()) =>
+      fTarget(full, frags, 0, 0, items(["p", item(ITEM_PERK, BIG_MAG, perkX)], ...other), cs, "me", 0, DOUBLE)?.kind;
+    expect(at(0.3, [], chests(["c", chest(1)]))).toBe("perk");
+    expect(at(1.2, [], chests(["c", chest(0.5)]))).toBe("chest");
+    expect(at(0.5, [], chests(["c", chest(-0.5)]))).toBe("chest");
+    expect(at(0.3, [["g", item(ITEM_GUN, SNIPER, 0.6)]])).toBe("perk");
+    expect(at(0.6, [["g", item(ITEM_GUN, SNIPER, -0.6)]])).toBe("gun");
   });
   test("its gun pick is swapTarget's", () => {
     const its = items(["a", item(ITEM_GUN, SNIPER, 0.5)], ["b", item(ITEM_GUN, DMR, 0.7)]);

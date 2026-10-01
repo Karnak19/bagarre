@@ -872,6 +872,26 @@ whips across the aim and leans in). Other clients see a strike as the
 player's `meleeCd` jumping up, and swing them when they are drawn. The tuning
 is `MELEE` in constants.ts.
 
+### Perks
+
+A perk is a passive bonus on something everyone has; you hold one at most.
+Double dash (two dash charges, refilled one at a time), Long dash (7.5 m
+instead of 5), Quick dash (1.8 s cooldown instead of 3), Bigger mag (+30%
+rounds) and Quick hands (35% faster reload, and a faster gun switch in the
+battle royale). In a duel, FFA or team match you pick one (or none) next to
+your weapon, on the waiting and result cards or in the warmup; in the
+battle royale they are chest loot: walking over one takes it with none
+held, and F swaps the one you hold for the one on the floor (the old one is
+left there). Everyone sees your perk as a glyph after your name.
+
+How it works: the table is `PERKS` in constants.ts (index = id on the
+wire, append-only, `NO_PERK` 255 for none). The perk held is
+`PlayerSim.perk` (synced as `Player.perk`, set by the server only), and the
+shared step reads it through perks.ts for the dash, the magazine, the reload
+and the switch, so the client predicts with the same numbers. The dash
+charges need no new state: `dashCd` counts the ticks until every charge is
+back, and a dash is allowed while one is.
+
 ### Grenade types
 
 You carry one grenade, on Q, and pick its type next to your weapon: on the

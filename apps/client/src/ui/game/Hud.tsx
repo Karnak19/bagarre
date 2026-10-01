@@ -1,5 +1,5 @@
-// The in-game HUD: both players' HP, the score, the status line, the map
-// card, the weapon and ammo, the ability cooldowns, the sound toggle, the
+// The in-game HUD: both players' HP (and perks), the score, the status line, the map
+// card, the weapon and ammo, the ability cooldowns, the perk held, the sound toggle, the
 // weapon picker line and the netcode debug line. In a free-for-all the score
 // and the opponent's bar give way to the rank panel, the kill feed and the
 // minimap (HudFfa.tsx); in a team deathmatch to the team score (HudTeam.tsx),
@@ -17,19 +17,25 @@
 import { HStack, VStack } from "@astryxdesign/core/Layout";
 import { Text } from "@astryxdesign/core/Text";
 import {
-  DASH_COOLDOWN_TICKS,
   GRENADES,
   KILLS_TO_WIN,
   MAX_HP,
   MELEE_COOLDOWN_TICKS,
+  NO_PERK,
   SHIELD_CHARGE_TICKS,
   SHIELD_COOLDOWN_TICKS,
   STUN_TICKS,
   TICK_RATE,
   WEAPONS,
+  dashCharges,
+  dashChargesReady,
+  dashCooldownTicks,
   grenadeCooldownTicks,
   grenadeDef,
-  ticks,
+  magazineOf,
+  nextDashCharge,
+  perkDef,
+  reloadTicksOf,
   weaponDef,
 } from "@bagarre/shared";
 import * as stylex from "@stylexjs/stylex";
@@ -42,8 +48,8 @@ import { shared, slotFill } from "../styles.ts";
 import { FfaPanel, KillFeed, MinimapBox } from "./HudFfa.tsx";
 import { GunSlots, HealItems, HealStatus, LootFeed, RoyalePanel, SwapPrompt, ZoneArrow } from "./HudRoyale.tsx";
 import { TeamPanel } from "./HudTeam.tsx";
-import { PICKABLE_WEAPONS, WEAPON_KEYS, grenadeView } from "../../items.ts";
-import { GrenadePicker, WeaponPicker } from "./WeaponPicker.tsx";
+import { PICKABLE_WEAPONS, WEAPON_KEYS, grenadeView, perkLabel, perkView } from "../../items.ts";
+import { GrenadePicker, PerkPicker, WeaponPicker } from "./WeaponPicker.tsx";
 
 const styles = stylex.create({
   root: { position: "fixed", inset: 0, pointerEvents: "none", zIndex: 10 },
@@ -58,6 +64,10 @@ const styles = stylex.create({
   right: { textAlign: "end" },
   absent: { opacity: 0.35 },
   name: { fontSize: "13px", fontWeight: 600, marginBlockEnd: "6px", opacity: 0.9 },
+  // The perk glyph after a name.
+  namePerk: { marginInlineStart: "6px" },
+  perk: { minWidth: "96px", textAlign: "center", paddingInline: "10px", boxShadow: "inset 0 0 0 1px rgba(224, 180, 255, 0.55)" },
+  perkName: { fontSize: "13px", fontWeight: 600, whiteSpace: "nowrap", color: "#e0b4ff" },
   hp: { height: "10px", borderRadius: "5px", overflow: "hidden", backgroundColor: "rgba(255, 255, 255, 0.12)" },
   hpRight: { transform: "scaleX(-1)" },
   // Scaled, not resized: the HP change animates on the compositor.
@@ -118,6 +128,7 @@ const styles = stylex.create({
   lockedPick: { opacity: 0.35 },
   lockedPicked: { opacity: 0.7 },
   hint: { opacity: 0.75, marginInlineStart: "4px" },
+  pickPerk: { whiteSpace: "nowrap" },
   warmup: {
     position: "absolute",
     bottom: "96px",
@@ -185,6 +196,7 @@ export function Hud() {
         <Ability kind="grenade" keyLabel="Q" label="Grenade" />
         <Ability kind="shield" keyLabel="E" label="Shield" />
         <Ability kind="melee" keyLabel="V" label="Melee" />
+        <Perk />
         <Sound />
       </HStack>
       <Stunned />
@@ -273,7 +285,7 @@ function PlayerBar({ mine }: { mine: boolean }) {
     hud,
     (m) => {
       const v = mine ? m?.me : m?.opponent;
-      return { name: v?.name ?? "", hp: v?.hp ?? 0, slot: v ? paintOf(v) : null, present: !!v, away: !!v && !v.connected };
+      return { name: v?.name ?? "", hp: v?.hp ?? 0, slot: v ? paintOf(v) : null, present: !!v, away: !!v && !v.connected, perk: v?.perk ?? NO_PERK };
     },
     shallowEqual,
   );
@@ -288,6 +300,11 @@ function PlayerBar({ mine }: { mine: boolean }) {
     >
       <Text xstyle={styles.name} color="inherit">
         {label}
+        {perkDef(p.perk) && (
+          <Text as="span" color="inherit" xstyle={styles.namePerk} aria-label={perkDef(p.perk)?.name} data-testid={mine ? "hud-me-perk" : "hud-opponent-perk"}>
+            {perkView(p.perk)?.icon}
+          </Text>
+        )}
       </Text>
       <VStack xstyle={[styles.hp, !mine && styles.hpRight]} role="meter" aria-label={`${name} health`} aria-valuemin={0} aria-valuemax={MAX_HP} aria-valuenow={p.hp}>
         <VStack xstyle={[styles.hpFill, slotFill(p.slot)]} style={{ transform: `scaleX(${p.hp / MAX_HP})` }} />
@@ -347,7 +364,8 @@ function Weapon() {
       const s = m?.sim;
       return {
         name: def.name,
-        ammo: s ? (s.reloadTicks > 0 ? "Reloading" : `${s.ammo} / ${def.magazine}`) : "",
+        // The magazine is the perk's (Bigger mag).
+        ammo: s ? (s.reloadTicks > 0 ? "Reloading" : `${s.ammo} / ${magazineOf(def, s.perk)}`) : "",
       };
     },
     shallowEqual,
@@ -356,7 +374,7 @@ function Weapon() {
   useStoreEffect(hud, (m) => {
     const s = m?.sim;
     const def = weaponDef(m?.me?.weapon ?? 0);
-    const frac = s && s.reloadTicks > 0 ? 1 - s.reloadTicks / ticks(def.reloadTime) : 0;
+    const frac = s && s.reloadTicks > 0 ? 1 - s.reloadTicks / reloadTicksOf(def, s.perk) : 0;
     const width = `${frac * 100}%`;
     if (fill.current && fill.current.style.width !== width) fill.current.style.width = width;
   });
@@ -374,7 +392,8 @@ function Weapon() {
 }
 
 const ABILITY: Record<"dash" | "grenade" | "shield" | "melee", { cd: (m: HudModel) => number; total: (m: HudModel) => number }> = {
-  dash: { cd: (m) => m.sim?.dashCd ?? 0, total: () => DASH_COOLDOWN_TICKS },
+  // The perk's dash: with charges, the sweep is the next charge's (perks.ts).
+  dash: { cd: (m) => nextDashCharge(m.sim?.dashCd ?? 0, m.sim?.perk ?? NO_PERK), total: (m) => dashCooldownTicks(m.sim?.perk ?? NO_PERK) },
   // Each grenade type has its own cooldown: the sweep is out of the one in hand's.
   grenade: { cd: (m) => m.sim?.grenadeCd ?? 0, total: (m) => grenadeCooldownTicks(m.me?.grenade ?? 0) },
   // Battle royale: charges, with a short wait between two (the bubble, then ROYALE.shieldGap).
@@ -390,19 +409,25 @@ function Ability({ kind, keyLabel, label }: { kind: keyof typeof ABILITY; keyLab
     hud,
     (m) => {
       // Battle royale: grenades and shield charges are counted; none left is never ready.
-      const count = !m?.royale ? -1 : kind === "grenade" ? m.royale.grenades : kind === "shield" ? m.royale.shields : -1;
+      // Dash charges (Double dash) are counted too, and one ready is enough.
+      const perk = m?.sim?.perk ?? NO_PERK;
+      const charges = kind === "dash" && dashCharges(perk) > 1 ? dashChargesReady(m?.sim?.dashCd ?? 0, perk) : -1;
+      const count = charges >= 0 ? charges : !m?.royale ? -1 : kind === "grenade" ? m.royale.grenades : kind === "shield" ? m.royale.shields : -1;
       return {
-        ready: (!m || a.cd(m) === 0) && count !== 0,
+        ready: charges >= 0 ? charges > 0 : (!m || a.cd(m) === 0) && count !== 0,
         active: kind === "shield" && (m?.me?.shieldHp ?? 0) > 0,
         // The grenade slot names the type in hand, with its icon.
         grenade: kind === "grenade" ? (m?.me?.grenade ?? 0) : -1,
         count,
+        charges: charges >= 0,
       };
     },
     shallowEqual,
   );
   const shown =
-    state.count === 0
+    state.charges
+      ? `${label} ×${state.count}`
+      : state.count === 0
       ? "None"
       : state.grenade >= 0
         ? `${grenadeView(state.grenade).icon} ${grenadeDef(state.grenade).name}${state.count > 0 ? ` ×${state.count}` : ""}`
@@ -434,6 +459,24 @@ function Ability({ kind, keyLabel, label }: { kind: keyof typeof ABILITY; keyLab
       <Text ref={t} xstyle={[styles.front, styles.t, shared.tabular]}>
         ready
       </Text>
+    </VStack>
+  );
+}
+
+/**
+ * The perk we hold, next to the abilities: its glyph and name (and what it
+ * does, for screen readers). Nothing with none. `data-perk` (its key) for the tests.
+ */
+function Perk() {
+  countRender("hud.perk");
+  const { hud } = useEngine();
+  const perk = useSelector(hud, (m) => m?.sim?.perk ?? m?.me?.perk ?? NO_PERK);
+  const def = perkDef(perk);
+  if (!def) return null;
+  return (
+    <VStack xstyle={[styles.panel, styles.perk]} data-testid="hud-perk" data-perk={def.key} aria-label={`Perk: ${def.name}. ${perkView(perk)?.blurb ?? ""}`}>
+      <Text xstyle={styles.key}>Perk</Text>
+      <Text xstyle={styles.perkName}>{perkLabel(perk)}</Text>
     </VStack>
   );
 }
@@ -473,7 +516,7 @@ function Warmup() {
       {royale ? (
         // Battle royale: nothing to pick.
         <Text xstyle={styles.warmupSub}>
-          One life. Everyone starts with the Pistol: open the glowing chests with F for guns, grenades, healing and shield
+          One life. Everyone starts with the Pistol: open the glowing chests with F for guns, grenades, healing, shield
           charges (1-3 or the wheel switch guns, F swaps with one on the floor, 4 bandage, 5 medkit, E uses a shield charge).
           Stay inside the zone. Last one standing wins.
         </Text>
@@ -482,6 +525,7 @@ function Warmup() {
           <Text xstyle={styles.warmupSub}>Pick your loadout: it's in your hand at once. No shooting until the match starts.</Text>
           <WeaponPicker live />
           <GrenadePicker heading="Your grenade" live />
+          <PerkPicker heading="Your perk" live />
         </>
       )}
     </VStack>
@@ -499,13 +543,15 @@ function Picker() {
       weapon: m?.me?.weapon ?? 0,
       grenadePick: m?.me?.grenadePick ?? 0,
       grenade: m?.me?.grenade ?? 0,
+      perkPick: m?.me?.perkPick ?? NO_PERK,
+      perk: m?.me?.perk ?? NO_PERK,
       canPick: !!m?.canPick,
     }),
     shallowEqual,
   );
   // The warmup panel has the full picker.
   if (warmup) return null;
-  const changed = p.pick !== p.weapon || p.grenadePick !== p.grenade;
+  const changed = p.pick !== p.weapon || p.grenadePick !== p.grenade || p.perkPick !== p.perk;
   const hint = p.canPick ? (changed ? "applies on respawn" : `${WEAPON_KEYS} weapon, G grenade`) : "pick while dead";
   return (
     <HStack gap={1.5} align="center" xstyle={styles.picker} data-testid="hud-picker">
@@ -525,6 +571,9 @@ function Picker() {
       ))}
       <Text xstyle={[styles.panel, styles.pick, styles.picked, !p.canPick && styles.lockedPicked]} data-testid="hud-picker-grenade">
         G {grenadeView(p.grenadePick).icon} {grenadeDef(p.grenadePick).name}
+      </Text>
+      <Text xstyle={[styles.panel, styles.pick, styles.pickPerk, styles.picked, !p.canPick && styles.lockedPicked]} data-testid="hud-picker-perk">
+        {perkLabel(p.perkPick) || "No perk"}
       </Text>
       <Text xstyle={styles.hint}>{hint}</Text>
     </HStack>

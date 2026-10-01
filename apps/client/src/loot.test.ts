@@ -1,15 +1,18 @@
 // Run with `bun run test` (or `bun test src/loot.test.ts` in apps/client).
 
 import { describe, expect, test } from "bun:test";
-import { GRENADE_FRAG, GRENADE_SMOKE, PISTOL, WEAPONS, startKit, type KitSim, type PlayerView } from "@bagarre/shared";
+import { GRENADE_FRAG, GRENADE_SMOKE, NO_PERK, PERKS, PISTOL, WEAPONS, startKit, type KitSim, type PlayerView } from "@bagarre/shared";
 import { lootGained } from "./loot.ts";
 
 const RIFLE = WEAPONS.findIndex((w) => w.key === "rifle");
 const SMG = WEAPONS.findIndex((w) => w.key === "smg");
 
-/** Just what lootGained reads: the kit and the grenade type held. */
-function view(kit: Partial<KitSim>, grenade = GRENADE_FRAG): PlayerView {
-  return { kit: { ...startKit(), ...kit }, grenade } as PlayerView;
+const DOUBLE = PERKS.findIndex((p) => p.key === "double-dash");
+const BIG_MAG = PERKS.findIndex((p) => p.key === "big-mag");
+
+/** Just what lootGained reads: the kit, the grenade type held and the perk. */
+function view(kit: Partial<KitSim>, grenade = GRENADE_FRAG, perk = NO_PERK): PlayerView {
+  return { kit: { ...startKit(), ...kit }, grenade, perk } as PlayerView;
 }
 
 describe("lootGained", () => {
@@ -35,6 +38,14 @@ describe("lootGained", () => {
       { kind: "heal", key: "medkit", to: "1 Medkit", from: "" },
       { kind: "shield", key: "shield", to: "1 Shield charge", from: "" },
     ]);
+  });
+
+  test("a perk: a first one walked over, and an F swap for another", () => {
+    expect(lootGained(view({}), view({}, GRENADE_FRAG, DOUBLE))).toEqual([{ kind: "perk", key: "double-dash", to: "⏩ Double dash", from: "" }]);
+    expect(lootGained(view({}, GRENADE_FRAG, DOUBLE), view({}, GRENADE_FRAG, BIG_MAG))).toEqual([
+      { kind: "perk", key: "big-mag", to: "🔋 Bigger mag", from: "⏩ Double dash" },
+    ]);
+    expect(lootGained(view({}, GRENADE_FRAG, DOUBLE), view({}, GRENADE_FRAG, DOUBLE))).toEqual([]);
   });
 
   test("nothing for what only goes down or moves: a shot, a throw, a heal used, a slot switch", () => {

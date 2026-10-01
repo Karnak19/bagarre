@@ -12,6 +12,7 @@ import { isPickableWeapon } from "./combat.ts";
 import { TEAM_BLUE, TEAM_RED } from "./constants.ts";
 import { isGrenadeType } from "./grenades.ts";
 import type { InputMessage, PickMessage, PingMessage, TeamMessage } from "./protocol.ts";
+import { isPerkPick } from "./perks.ts";
 import { isHealItem } from "./royale.ts";
 
 /** Largest press counter or input seq (they are synced as uint32). */
@@ -59,22 +60,26 @@ export function parseInput(raw: unknown): InputMessage | null {
 }
 
 /**
- * MSG_PICK: a weapon id that exists and can be picked, a grenade type that exists, or both.
- * A field that is there must be valid (a bad grenade drops the weapon pick
- * sent with it too); a message with neither is refused.
+ * MSG_PICK: a weapon id that exists and can be picked, a grenade type that
+ * exists, a perk (or NO_PERK for none), or any of them together. A field that
+ * is there must be valid (a bad grenade drops the weapon pick sent with it
+ * too); a message with none is refused.
  */
 export function parsePick(raw: unknown): PickMessage | null {
   const m = record(raw);
   if (!m) return null;
   const hasWeapon = m.weapon !== undefined;
   const hasGrenade = m.grenade !== undefined;
-  if (!hasWeapon && !hasGrenade) return null;
+  const hasPerk = m.perk !== undefined;
+  if (!hasWeapon && !hasGrenade && !hasPerk) return null;
   // Only a gun the picker offers: never a starting-only one (the royale's Pistol).
   if (hasWeapon && !isPickableWeapon(m.weapon)) return null;
   if (hasGrenade && !isGrenadeType(m.grenade)) return null;
+  if (hasPerk && !isPerkPick(m.perk)) return null;
   const out: PickMessage = {};
   if (hasWeapon) out.weapon = m.weapon as number;
   if (hasGrenade) out.grenade = m.grenade as number;
+  if (hasPerk) out.perk = m.perk as number;
   return out;
 }
 

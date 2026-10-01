@@ -4,7 +4,8 @@
 // an F press (`interact`: a chest opened, or a gun or grenade swap), when
 // someone is knocked out (`scatter`: their guns, grenades, healing items and
 // shield charges where they fell), and at the start and the end of a match
-// (`reset`, `clear`).
+// (`reset`, `clear`). Perks are floor items too: walked over with none held,
+// swapped with F otherwise (the old one drops under your feet, like a gun).
 //
 // A chest is opened by F only (in reach, still closed: `fTarget`), and its
 // loot pops out next to it (`lootSpot`). The loot is the server's from the
@@ -20,7 +21,7 @@
 // when it swaps nothing) are the shared ones (royale.ts); this file only
 // moves things between the floor and the players.
 //
-// An item a player just dropped (an F swap of a gun or a grenade stack) lies
+// An item a player just dropped (an F swap of a gun, a grenade stack or a perk) lies
 // under their feet: they can't pick it back up until they have stepped off
 // it, or the next F (or, with a free slot, walking) would take it straight back.
 // That player is the item's synced `blockedFor`, so the client's F prompt
@@ -31,7 +32,9 @@ import {
   ITEM_GRENADE,
   ITEM_GUN,
   ITEM_HEAL,
+  ITEM_PERK,
   ITEM_SHIELD,
+  NO_PERK,
   carriedStack,
   carriedStacks,
   setCarriedStack,
@@ -53,6 +56,7 @@ import {
   carriedGuns,
   gunInHand,
   walkTakesGrenades,
+  walkTakesPerk,
   writeSim,
   type ItemDrop,
   type MapDef,
@@ -121,14 +125,15 @@ export class Floor {
 
   /**
    * A player is knocked out at (x, z): their guns (not the Pistol: everyone
-   * has one), their grenades, healing items and shield charges drop round
-   * that spot, each on open floor.
+   * has one), their grenades, healing items, shield charges and perk drop
+   * round that spot, each on open floor.
    */
   scatter(p: Player, x: number, z: number) {
     const drops: ItemDrop[] = [];
     for (const g of carriedGuns(readSim(p))) if (g.weapon !== PISTOL) drops.push({ kind: ITEM_GUN, item: g.weapon, amount: g.mag });
     if (p.kit.grenades > 0) drops.push({ kind: ITEM_GRENADE, item: p.grenade, amount: p.kit.grenades });
     drops.push(...carriedStacks(p.kit));
+    if (p.perk !== NO_PERK) drops.push({ kind: ITEM_PERK, item: p.perk, amount: 1 });
     drops.forEach((d, i) => {
       const at = this.spotNear(x, z, (i / Math.max(1, drops.length)) * 2 * Math.PI);
       this.drop(d, at.x, at.z);
@@ -186,6 +191,13 @@ export class Floor {
       if (!walkTakesGrenades({ type: p.grenade, count: p.kit.grenades }, it.item)) return false;
       return this.takeGrenadeStack(pid, p, id, it);
     }
+    if (it.kind === ITEM_PERK) {
+      // One slot: only with none held. Holding one, another is F's (a swap).
+      if (!walkTakesPerk(p.perk)) return false;
+      p.perk = it.item;
+      this.remove(id);
+      return true;
+    }
     if (it.kind === ITEM_HEAL || it.kind === ITEM_SHIELD) {
       // Healing items and shield charges: each its own stack, up to its maximum.
       const r = takeStack(carriedStack(p.kit, it.kind, it.item), stackMax(it.kind, it.item), it.amount);
@@ -216,17 +228,25 @@ export class Floor {
 
   /**
    * F: does what `fTarget` picks for this player (the HUD's prompt names the
-   * same one): opens the chest in reach, or swaps the gun in hand or the
-   * grenade stack held for the one on the floor. A swapped gun drops under
-   * the player's feet (theirs to take back once they step off). Returns what
-   * it did (null: nothing).
+   * same one): opens the chest in reach, or swaps the gun in hand, the
+   * grenade stack held or the perk for the one on the floor. A swapped gun
+   * or perk drops under the player's feet (theirs to take back once they
+   * step off). Returns what it did (null: nothing).
    */
-  interact(pid: string, p: Player): "chest" | "gun" | "grenade" | null {
+  interact(pid: string, p: Player): "chest" | "gun" | "grenade" | "perk" | null {
     const tick = this.state.tick;
-    const pick = fTarget(p.kit, { type: p.grenade, count: p.kit.grenades }, p.x, p.z, this.state.items, this.state.crates, pid, tick);
+    const pick = fTarget(p.kit, { type: p.grenade, count: p.kit.grenades }, p.x, p.z, this.state.items, this.state.crates, pid, tick, p.perk);
     if (!pick) return null;
     if (pick.kind === "chest") return this.open(pick.id, p) ? "chest" : null;
     if (pick.kind === "grenade") return this.takeGrenadeStack(pid, p, pick.id, pick.item) ? "grenade" : null;
+    if (pick.kind === "perk") {
+      // The perk takes effect on the next step (the sim reads `perk`); the old one lies where it was swapped.
+      const old = p.perk;
+      p.perk = pick.item.item;
+      this.remove(pick.id);
+      this.drop({ kind: ITEM_PERK, item: old, amount: 1 }, p.x, p.z, pid);
+      return "perk";
+    }
     const r = swapGun(readSim(p), pick.item.item, pick.item.amount);
     if (!r) return null;
     writeSim(p, r.sim);
