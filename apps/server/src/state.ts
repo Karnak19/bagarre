@@ -113,6 +113,11 @@ export const Player = schema(
     kit: Kit,
     /** The tick this player was knocked out on (0: still in). Their place follows from it. */
     outTick: t.uint32().default(0),
+
+    // Melee strike (appended, like the grenades): PlayerSim.meleeCd / meleeSeen,
+    // read by the shared step. Other clients see a strike as `meleeCd` jumping up.
+    meleeCd: t.uint16().default(0),
+    meleeSeen: t.uint32().default(0),
   },
   "Player",
 );

@@ -51,6 +51,22 @@ const MOVING_SPEED = 0.8;
 /** Above this it's a dash (walking is PLAYER_SPEED). */
 const DASH_SPEED = PLAYER_SPEED * 1.8;
 const HIT_MS = 380;
+/**
+ * The melee swing: the pack's clips (anims.glb) have no strike, so it is
+ * drawn by hand on top of the aiming pose. The torso winds up a little,
+ * whips across through the aim, and comes back (SWING_KEYS: time share ->
+ * share of SWING_TWIST), leaning into it. Over in SWING_MS, well inside the
+ * cooldown.
+ */
+const SWING_MS = 280;
+const SWING_TWIST = 75 * DEG;
+const SWING_LEAN = 0.3;
+const SWING_KEYS: [number, number][] = [
+  [0, 0],
+  [0.2, 0.45],
+  [0.48, -1],
+  [1, 0],
+];
 /** Share of the torso twist taken by each spine bone, bottom to top. */
 const TWIST_SPLIT: [string, number][] = [
   ["Hips", 0.4],
@@ -192,6 +208,9 @@ export class Character {
   private flashAt = -1e9;
   /** Hit reaction scheduled for later (remote players are drawn 100 ms late). */
   private pendingHit = Infinity;
+  /** Melee swing: when the current one started, and one scheduled for later (like `pendingHit`). */
+  private swingAt = -1e9;
+  private pendingSwing = Infinity;
 
   /** `skin`: the loaded skin's scene (assets.ts' skinModel), cloned here, never changed. */
   constructor(
@@ -367,6 +386,11 @@ export class Character {
     this.pendingHit = Math.min(this.pendingHit, at);
   }
 
+  /** A melee strike: the swing, now or at `at` (a remote player's is drawn 100 ms late). */
+  melee(at: number) {
+    this.pendingSwing = Math.min(this.pendingSwing, at);
+  }
+
   /** World position of the barrel tip of the gun in hand. */
   muzzle(out: THREE.Vector3): THREE.Vector3 {
     const gun = this.guns[this.weapon];
@@ -449,6 +473,13 @@ export class Character {
       }
     }
 
+    if (now >= this.pendingSwing) {
+      this.pendingSwing = Infinity;
+      if (this.alive) this.swingAt = now;
+    }
+    const swingT = (now - this.swingAt) / SWING_MS;
+    const swinging = this.alive && swingT >= 0 && swingT < 1;
+
     const moving = this.alive && speed > MOVING_SPEED;
     const moveDir = Math.atan2(this.vz, this.vx);
 
@@ -511,7 +542,8 @@ export class Character {
     // --- Torso twist, written on top of the mixer's pose. ---
     if (this.alive) {
       const twist = clamp(wrap(s.aim - this.legs), -TWIST_HARD_LIMIT, TWIST_HARD_LIMIT);
-      this.twistSpine(-twist); // direction angles turn the other way from rotation.y
+      const swing = swinging ? SWING_TWIST * swingCurve(swingT) : 0;
+      this.twistSpine(-twist - swing); // direction angles turn the other way from rotation.y
     }
 
     // --- Dash lean: tip the whole body toward the motion. ---
@@ -520,6 +552,11 @@ export class Character {
       _axis.set(this.vz, 0, -this.vx).normalize(); // up x velocity
       this.lean.quaternion.setFromAxisAngle(_axis, 0.45 * this.leanAmount);
     } else this.lean.quaternion.identity();
+    // The swing leans into the aim, most as the torso whips through it.
+    if (swinging) {
+      _axis.set(Math.sin(s.aim), 0, -Math.cos(s.aim)); // up x aim
+      this.lean.quaternion.premultiply(_q.setFromAxisAngle(_axis, SWING_LEAN * Math.sin(Math.PI * swingT)));
+    }
 
     // --- Hit flash: white, then red, fading. ---
     const f = (now - this.flashAt) / 160;
@@ -551,6 +588,18 @@ export class Character {
       _q.multiply(bone.quaternion);
     }
   }
+}
+
+/** The swing's twist at `t` (0..1), from SWING_KEYS, eased between keys. */
+function swingCurve(t: number): number {
+  for (let i = 1; i < SWING_KEYS.length; i++) {
+    const [t1, v1] = SWING_KEYS[i];
+    if (t > t1) continue;
+    const [t0, v0] = SWING_KEYS[i - 1];
+    const u = (t - t0) / (t1 - t0);
+    return v0 + (v1 - v0) * u * u * (3 - 2 * u);
+  }
+  return 0;
 }
 
 const _v = new THREE.Vector3();

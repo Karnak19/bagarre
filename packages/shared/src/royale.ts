@@ -326,6 +326,8 @@ export const HEAL_STOP = {
   throw: 5,
   /** A gun switch, or an F swap. */
   switch: 6,
+  /** A melee strike (V). */
+  melee: 7,
 } as const;
 
 /** A HEAL_ITEMS index. */

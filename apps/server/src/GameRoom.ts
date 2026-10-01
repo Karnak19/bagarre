@@ -78,9 +78,11 @@ import {
   INPUT_BURST,
   KILL_FEED_SIZE,
   KILL_GRENADE,
+  KILL_MELEE,
   KILL_ZONE,
   MAX_HP,
   MAX_INPUT_QUEUE,
+  MELEE,
   MAX_MESSAGES_PER_SECOND,
   MSG_INPUT,
   MSG_PICK,
@@ -108,6 +110,7 @@ import {
   grenadeDamage,
   grenadeFlightTicks,
   mapById,
+  meleeReaches,
   isSkinId,
   randomSkin,
   acceptsStart,
@@ -367,6 +370,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
    * HIT_REWIND_TICKS old: the poses the shooter saw (see stepBullets).
    */
   private history: (HistoryFrame | undefined)[] = [];
+  /** Melee strikes made by this tick's inputs, judged once every input is in (see stepStrikes). */
+  private strikes: { id: string; x: number; z: number; aim: number; team: number }[] = [];
   private nextGrenadeId = 0;
   private nextKill = 0;
   private matchResetTicks = 0;
@@ -1174,6 +1179,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     // 2. Move bullets and grenades, resolve hits and blasts. The poses are
     //    recorded first: final for this tick, and untouched by combat yet.
     this.recordHistory();
+    this.stepStrikes();
     this.stepBullets();
     this.stepGrenades();
 
@@ -1309,6 +1315,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       player.kit.switchSeen = Math.max(player.kit.switchSeen, input.switch ?? 0);
       player.kit.swapSeen = Math.max(player.kit.swapSeen, input.swap ?? 0);
       player.kit.useSeen = Math.max(player.kit.useSeen, input.use ?? 0);
+      player.meleeSeen = Math.max(player.meleeSeen, input.melee ?? 0);
     }
     // Moving, and (not in warmup) shooting, throwing and the shield: the
     // same rule and the same function the client predicts with. It enforces
@@ -1331,6 +1338,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
 
     if (res.fired) this.spawnShot(id, player, input);
     if (res.grenade) this.spawnGrenade(id, player, res.grenade);
+    if (res.melee) this.strikes.push({ id, x: player.x, z: player.z, aim: input.aim, team: player.team });
     if (res.shield) {
       player.shieldTicks = SHIELD_TICKS;
       player.shieldHp = SHIELD.absorb;
@@ -1374,6 +1382,31 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       fuseLeft: GRENADE_FUSE_TICKS,
       team: player.team,
     });
+  }
+
+  /**
+   * The melee strikes of this tick's inputs. Like a bullet's, a strike is
+   * judged against the poses HIT_REWIND_TICKS old (what the attacker saw),
+   * from where the attacker stands now: every enemy in the cone
+   * (`meleeReaches`: range, angle, no cover in the way) who was alive in
+   * that pose takes MELEE.damage through `damage` (warmup, teams, the
+   * shield, the kill and the stats). Not a shot: `shots` and `hits` stay as
+   * they are. Run after every input of the tick, so a heal due this tick
+   * has completed first, as for any damage.
+   */
+  private stepStrikes() {
+    if (this.strikes.length === 0) return;
+    const past = this.historyAt(this.state.tick - HIT_REWIND_TICKS);
+    for (const strike of this.strikes) {
+      this.state.players.forEach((target, targetId) => {
+        if (targetId === strike.id || !target.alive || !canDamage(strike.team, target.team, false)) return;
+        // No past pose (just joined) or dead back then: nothing to hit.
+        const pose = past?.poses.get(targetId);
+        if (!pose || !pose.alive || !meleeReaches(this.map, strike, strike.aim, pose)) return;
+        this.damage(strike.id, targetId, target, MELEE.damage, KILL_MELEE);
+      });
+    }
+    this.strikes = [];
   }
 
   private stepBullets() {

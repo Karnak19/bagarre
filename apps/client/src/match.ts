@@ -23,6 +23,7 @@ import {
   HEAL_STOP,
   INTERP_DELAY_MS,
   KILL_GRENADE,
+  KILL_MELEE,
   KILL_ZONE,
   MAX_HP,
   NO_GUN,
@@ -492,6 +493,7 @@ export class Match {
       p.switch = Math.max(p.switch, me.kit.switchSeen);
       p.swap = Math.max(p.swap, me.kit.swapSeen);
       p.use = Math.max(p.use, me.kit.useSeen);
+      p.melee = Math.max(p.melee, me.meleeSeen);
       this.input.slot = me.kit.hand;
     }
   }
@@ -613,6 +615,12 @@ export class Match {
         this.remoteShots.push({ at: now + INTERP_DELAY_MS + i * gap * 1000, id });
       }
       if (p.dashCd > prev.dashCd) this.sfx("dash", at);
+      // A melee strike: their cooldown jumped up. The swing when they are
+      // drawn, and the whoosh on every strike (a hit adds the HP drop's sound).
+      if (p.meleeCd > prev.meleeCd) {
+        this.meshFor(id, paintOf(p), p.skin).melee(now + INTERP_DELAY_MS);
+        this.sfx("melee_swing", at);
+      }
       if (prev.reloadTicks === 0 && p.reloadTicks > 0) this.sfx("reload", { ...at, volume: 0.7 });
       if (p.shieldTicks > prev.shieldTicks) this.sfx("shield_up", at);
     });
@@ -741,6 +749,12 @@ export class Match {
           if (res.sim.dashCd > before.dashCd) this.sfx("dash");
           if (res.grenade) this.sfx("grenade_throw");
           if (res.shield) this.sfx("shield_up");
+          // Our strike swings and whooshes at once, hit or miss; the hit
+          // itself is the server's (heard on top, as their HP drop).
+          if (res.melee) {
+            this.meshFor(sessionId, paintOf(meServer), meServer.skin).melee(now);
+            this.sfx("melee_swing");
+          }
           if (before.reloadTicks === 0 && res.sim.reloadTicks > 0) this.sfx("reload");
           else if (msg.fire && !this.wasFiring && !res.fired && res.sim.reloadTicks > 0) this.sfx("empty_click");
         }
@@ -1095,6 +1109,7 @@ export class Match {
       [HEAL_STOP.fire]: ["fire", `${name} cancelled: you fired`],
       [HEAL_STOP.throw]: ["throw", `${name} cancelled: you threw a grenade`],
       [HEAL_STOP.switch]: ["switch", `${name} cancelled: you switched guns`],
+      [HEAL_STOP.melee]: ["melee", `${name} cancelled: you struck`],
     };
     const line = lines[stop];
     if (!line) return;
@@ -1135,7 +1150,7 @@ export class Match {
         killerSlot: paintFor(k.killerSlot, k.killerTeam),
         victim: k.victimName,
         victimSlot: paintFor(k.victimSlot, k.victimTeam),
-        weapon: k.weapon === KILL_GRENADE ? "Grenade" : k.weapon === KILL_ZONE ? "Zone" : (WEAPONS[k.weapon]?.name ?? ""),
+        weapon: k.weapon === KILL_GRENADE ? "Grenade" : k.weapon === KILL_ZONE ? "Zone" : k.weapon === KILL_MELEE ? "Melee" : (WEAPONS[k.weapon]?.name ?? ""),
         byYou: !!k.killer && k.killer === you,
         onYou: k.victim === you,
         opacity: Math.min(1, (KILL_FEED_MS - age) / KILL_FEED_FADE_MS),

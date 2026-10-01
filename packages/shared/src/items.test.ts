@@ -7,6 +7,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { DEFAULT_GRENADE, DEFAULT_WEAPON, GRENADES, GRENADE_FLASH, GRENADE_FRAG, GRENADE_SMOKE, GRENADE_STUN, WEAPONS } from "./constants.ts";
+import { KILL_GRENADE, KILL_MELEE, KILL_ZONE } from "./protocol.ts";
 
 /**
  * Every weapon and grenade key, at its id (its index). Append-only: a new
@@ -31,6 +32,11 @@ describe("item ids", () => {
     const named = [GRENADE_FRAG, GRENADE_SMOKE, GRENADE_STUN, GRENADE_FLASH];
     expect(named).toEqual([0, 1, 2, 3]);
     expect(named.map((i) => GRENADES[i].key)).toEqual(["frag", "smoke", "stun", "flash"]);
+  });
+  test("the kill feed's own ids are frozen (grenade 255, zone 254, melee 253), apart, and never a weapon id", () => {
+    expect([KILL_GRENADE, KILL_ZONE, KILL_MELEE]).toEqual([255, 254, 253]);
+    // Weapon ids grow up from 0: they must never reach the lowest of them.
+    expect(WEAPONS.length).toBeLessThan(KILL_MELEE);
   });
   test("the defaults are the rifle and the frag", () => {
     expect(DEFAULT_WEAPON).toBe(0);

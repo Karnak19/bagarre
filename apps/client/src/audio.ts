@@ -2,7 +2,7 @@
  * Sound effects and music.
  *
  * - Files live in `apps/client/public/sfx/` (mono .mp3, built by scripts/sfx/build.sh,
- *   sources in CREDITS.md). The dash and grenade-throw whooshes and the heal
+ *   sources in CREDITS.md). The dash, grenade-throw and melee whooshes and the heal
  *   chime have no file: they are rendered once at load time (filtered-noise
  *   sweeps, and a rising run of soft bell tones).
  * - Everything is fetched and decoded as soon as this module is imported, with
@@ -30,6 +30,7 @@ export type SfxName =
   | "empty_click"
   | "dash"
   | "grenade_throw"
+  | "melee_swing"
   | "grenade_bounce"
   | "explosion"
   | "smoke_pop"
@@ -91,6 +92,8 @@ const DEFS: Record<SfxName, SfxDef> = {
   empty_click: { files: ["empty_click"], gain: 0.7, voices: 2 },
   dash: { files: [], gain: 0.55, voices: 2 },
   grenade_throw: { files: [], gain: 0.4, voices: 2 },
+  // Every melee strike, hit or miss: a short, sharp swish (synthesized).
+  melee_swing: { files: [], gain: 0.45, voices: 3 },
   grenade_bounce: { files: variants("grenade_bounce", 2), gain: 0.8, voices: 3 },
   explosion: { files: variants("explosion", 2), gain: 1, voices: 3 },
   // The utility grenades reuse files too: a soft low pop for the smoke, an
@@ -272,6 +275,7 @@ async function loadAll() {
   );
   buffers.set("dash", [await renderWhoosh(0.3, 350, 2600, 600, 0.9), await renderWhoosh(0.28, 420, 3000, 700, 0.8)]);
   buffers.set("grenade_throw", [await renderWhoosh(0.2, 700, 3400, 1400, 1.2)]);
+  buffers.set("melee_swing", [await renderWhoosh(0.14, 900, 4200, 1800, 1.6), await renderWhoosh(0.13, 1000, 4600, 2000, 1.5)]);
   // C5, E5, G5, C6.
   buffers.set("heal_chime", [await renderChime([523.25, 659.25, 783.99, 1046.5], 0.07, 0.6)]);
 }

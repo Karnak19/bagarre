@@ -21,6 +21,7 @@ import {
   GRENADES,
   KILLS_TO_WIN,
   MAX_HP,
+  MELEE_COOLDOWN_TICKS,
   SHIELD_CHARGE_TICKS,
   SHIELD_COOLDOWN_TICKS,
   STUN_TICKS,
@@ -183,6 +184,7 @@ export function Hud() {
         <Ability kind="dash" keyLabel="Space" label="Dash" />
         <Ability kind="grenade" keyLabel="Q" label="Grenade" />
         <Ability kind="shield" keyLabel="E" label="Shield" />
+        <Ability kind="melee" keyLabel="V" label="Melee" />
         <Sound />
       </HStack>
       <Stunned />
@@ -371,12 +373,13 @@ function Weapon() {
   );
 }
 
-const ABILITY: Record<"dash" | "grenade" | "shield", { cd: (m: HudModel) => number; total: (m: HudModel) => number }> = {
+const ABILITY: Record<"dash" | "grenade" | "shield" | "melee", { cd: (m: HudModel) => number; total: (m: HudModel) => number }> = {
   dash: { cd: (m) => m.sim?.dashCd ?? 0, total: () => DASH_COOLDOWN_TICKS },
   // Each grenade type has its own cooldown: the sweep is out of the one in hand's.
   grenade: { cd: (m) => m.sim?.grenadeCd ?? 0, total: (m) => grenadeCooldownTicks(m.me?.grenade ?? 0) },
   // Battle royale: charges, with a short wait between two (the bubble, then ROYALE.shieldGap).
   shield: { cd: (m) => m.sim?.shieldCd ?? 0, total: (m) => (m.royale ? SHIELD_CHARGE_TICKS : SHIELD_COOLDOWN_TICKS) },
+  melee: { cd: (m) => m.sim?.meleeCd ?? 0, total: () => MELEE_COOLDOWN_TICKS },
 };
 
 function Ability({ kind, keyLabel, label }: { kind: keyof typeof ABILITY; keyLabel: string; label: string }) {

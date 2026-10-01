@@ -387,6 +387,12 @@ export class PlayerMesh {
     if (this.veil !== "hidden") this.scene?.muzzleFlash(this, this.aim, weapon);
   }
 
+  /** A melee strike: the swing, at `at` (a performance.now() time; a remote player's when drawn). */
+  melee(at: number) {
+    if (!this.alive) return;
+    this.character?.melee(at);
+  }
+
   /** Where the muzzle flash goes. */
   muzzle(out: THREE.Vector3): THREE.Vector3 {
     if (this.character) return this.character.muzzle(out);

@@ -141,6 +141,13 @@ export interface PlayerState {
     shieldHp: number;
     /** Final place once the match ended (0 before). */
     place: number;
+    /** Scoreboard: bullets fired, bullets that hit, damage dealt (this match). */
+    shots: number;
+    hits: number;
+    damage: number;
+    /** Melee: ticks of cooldown left, and the last V press counter the server consumed. */
+    meleeCd: number;
+    meleeSeen: number;
   }[];
 }
 
@@ -226,6 +233,11 @@ export class Player {
           healStop: Number((p.kit as Record<string, number>)?.healStop ?? 0),
           shieldHp: Number(p.shieldHp ?? 0),
           place: Number(p.place ?? 0),
+          shots: Number(p.shots ?? 0),
+          hits: Number(p.hits ?? 0),
+          damage: Number(p.damage ?? 0),
+          meleeCd: Number(p.meleeCd ?? 0),
+          meleeSeen: Number(p.meleeSeen ?? 0),
         }),
       );
       const crates: PlayerState["crates"] = [];

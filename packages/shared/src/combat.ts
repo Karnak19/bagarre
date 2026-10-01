@@ -15,7 +15,11 @@ import {
   DEFAULT_WEAPON,
   GRENADE,
   MAX_HP,
+  MELEE,
+  MELEE_COOLDOWN_TICKS,
+  MELEE_LOCKOUT_TICKS,
   NO_TEAM,
+  PLAYER_RADIUS,
   PLAYER_SPEED,
   ROYALE,
   SHIELD_CHARGE_TICKS,
@@ -28,7 +32,7 @@ import {
   type WeaponDef,
 } from "./constants.ts";
 import { grenadeCooldownTicks } from "./grenades.ts";
-import { clamp, clampMove, movePlayer, muzzle, type BulletSim, type Vec2 } from "./physics.ts";
+import { clamp, clampMove, lineOfSight, movePlayer, muzzle, type BulletSim, type Vec2 } from "./physics.ts";
 import { KIT_KEYS, PLAYER_SIM_KEYS, type InputMessage, type KitSim, type Phase, type PlayerSim } from "./protocol.ts";
 import { HEAL_STOP, NO_GUN, canStartHeal, cancelHeal, emptyKit, gunInHand, healing, startHeal, switchGun, tickHeal, useGrenade } from "./royale.ts";
 
@@ -85,8 +89,10 @@ export function spawnSim(x: number, z: number, weapon: number, seen?: PlayerSim,
     grenadeSeen: seen?.grenadeSeen ?? 0,
     shieldSeen: seen?.shieldSeen ?? 0,
     reloadSeen: seen?.reloadSeen ?? 0,
+    meleeSeen: seen?.meleeSeen ?? 0,
     burstLeft: 0,
     stunTicks: 0,
+    meleeCd: 0,
     // Health is the server's (a spawn sets it on its own): kept as it was.
     hp: seen?.hp ?? MAX_HP,
     kit: {
@@ -113,7 +119,7 @@ export function equipSim(sim: PlayerSim, weapon: number): PlayerSim {
 /**
  * What a player may do this step: `act` (move, dash, reload: false while
  * dead or after the match ended) and `armed` (fire, throw a grenade, raise
- * the shield: also false during warmup, so nobody shoots before the match
+ * the shield, strike: also false during warmup, so nobody shoots before the match
  * starts). The server and the client's prediction both take it from here.
  */
 export interface Can {
@@ -158,6 +164,8 @@ export interface StepResult {
   grenade: Vec2 | null;
   /** This input activated the shield. */
   shield: boolean;
+  /** This input made a melee strike. Who it hits is the server's (`meleeReaches`, against rewound poses). */
+  melee: boolean;
   /** Battle royale: this input pressed F (open a chest, or a swap with the floor). The server does it (floor.ts). */
   swap: boolean;
   /** This step moved at dash speed (for visuals). */
@@ -211,7 +219,7 @@ export function stepPlayer(
   const { act, armed } = typeof canAct === "boolean" ? { act: canAct, armed: canAct } : canAct;
   const slots = kit === "slots";
   const s: PlayerSim = { ...prev, kit: { ...prev.kit } };
-  const res: StepResult = { sim: s, fired: false, grenade: null, shield: false, dashing: false, swap: false, healStart: false, healed: 0 };
+  const res: StepResult = { sim: s, fired: false, grenade: null, shield: false, melee: false, dashing: false, swap: false, healStart: false, healed: 0 };
 
   const pressDash = input.dash > s.dashSeen;
   const pressGrenade = input.grenade > s.grenadeSeen;
@@ -220,6 +228,7 @@ export function stepPlayer(
   const pressSwitch = (input.switch ?? 0) > s.kit.switchSeen;
   const pressSwap = (input.swap ?? 0) > s.kit.swapSeen;
   const pressUse = (input.use ?? 0) > s.kit.useSeen;
+  const pressMelee = (input.melee ?? 0) > s.meleeSeen;
   s.dashSeen = Math.max(s.dashSeen, input.dash);
   s.grenadeSeen = Math.max(s.grenadeSeen, input.grenade);
   s.shieldSeen = Math.max(s.shieldSeen, input.shield);
@@ -227,11 +236,13 @@ export function stepPlayer(
   s.kit.switchSeen = Math.max(s.kit.switchSeen, input.switch ?? 0);
   s.kit.swapSeen = Math.max(s.kit.swapSeen, input.swap ?? 0);
   s.kit.useSeen = Math.max(s.kit.useSeen, input.use ?? 0);
+  s.meleeSeen = Math.max(s.meleeSeen, input.melee ?? 0);
 
   s.dashCd = dec(s.dashCd);
   s.fireCd = dec(s.fireCd);
   s.grenadeCd = dec(s.grenadeCd);
   s.shieldCd = dec(s.shieldCd);
+  s.meleeCd = dec(s.meleeCd);
   const stunned = s.stunTicks > 0;
   s.stunTicks = dec(s.stunTicks);
   // The switch comes first: everything below (reload, fire) is the new gun's.
@@ -295,9 +306,20 @@ export function stepPlayer(
   s.z = p.z;
 
   if (!armed) {
-    // Warmup: the trigger, the grenade and the shield do nothing.
+    // Warmup: the trigger, the grenade, the shield and the strike do nothing.
     s.burstLeft = 0;
     return res;
+  }
+
+  // The melee strike, before the trigger: it holds the gun for
+  // MELEE_LOCKOUT_TICKS (fireCd), this input's shot included, and ends a
+  // burst in progress, so a strike and a shot never land together. A reload
+  // in progress goes on. Stun doesn't stop it, like it doesn't stop a shot.
+  if (pressMelee && s.meleeCd === 0) {
+    s.meleeCd = MELEE_COOLDOWN_TICKS;
+    s.fireCd = Math.max(s.fireCd, MELEE_LOCKOUT_TICKS);
+    s.burstLeft = 0;
+    res.melee = true;
   }
 
   if (s.burstLeft > 0) {
@@ -335,11 +357,12 @@ export function stepPlayer(
     res.shield = true;
   }
 
-  // A shot, a throw or a switch on this input cancels the heal: nothing
-  // healed, the item kept. (An F swap and damage are the server's.)
+  // A shot, a throw, a strike or a switch on this input cancels the heal:
+  // nothing healed, the item kept. (An F swap and damage are the server's.)
   if (heals) {
     if (res.fired) cancelHeal(s.kit, HEAL_STOP.fire);
     else if (res.grenade) cancelHeal(s.kit, HEAL_STOP.throw);
+    else if (res.melee) cancelHeal(s.kit, HEAL_STOP.melee);
     else if (switched) cancelHeal(s.kit, HEAL_STOP.switch);
   }
 
@@ -395,6 +418,31 @@ export function shotPellets(weaponId: number, x: number, z: number, aim: number,
     out.push({ x: origin.x, z: origin.z, vx: Math.cos(a) * w.bulletSpeed, vz: Math.sin(a) * w.bulletSpeed });
   }
   return out;
+}
+
+// --- Melee -------------------------------------------------------------------
+
+/**
+ * Whether a melee strike from a player at `a` aiming at `aim` reaches a body
+ * at `t`: within MELEE.range of `a` (to the body's edge), within half of
+ * MELEE.angle of the aim (to its centre), and with no cover box between the
+ * two centres (`lineOfSight`: a strike never goes through a wall, however
+ * thin). Pure, so the server judges with it (against the rewound poses, like
+ * bullets).
+ * Teams are not looked at here: that is `canDamage`.
+ */
+export function meleeReaches(arena: Arena, a: Vec2, aim: number, t: Vec2): boolean {
+  const dx = t.x - a.x;
+  const dz = t.z - a.z;
+  const dist = Math.hypot(dx, dz);
+  if (dist > MELEE.range + PLAYER_RADIUS) return false;
+  // Bodies on top of each other: no direction to judge, it reaches.
+  if (dist > 1e-6) {
+    // The angle between the aim and the target, folded into 0..π.
+    const d = Math.atan2(dz, dx) - aim;
+    if (Math.abs(Math.atan2(Math.sin(d), Math.cos(d))) > MELEE.angle / 2) return false;
+  }
+  return lineOfSight(arena, a, t);
 }
 
 // --- Grenades ----------------------------------------------------------------

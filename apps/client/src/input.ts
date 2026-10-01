@@ -37,7 +37,7 @@ export class Input {
    * Running press totals, sent in every input (see InputMessage). Bumped on
    * key-down only, so auto-repeat while holding the key doesn't count.
    */
-  readonly presses = { dash: 0, grenade: 0, shield: 0, reload: 0, switch: 0, swap: 0, use: 0 };
+  readonly presses = { dash: 0, grenade: 0, shield: 0, reload: 0, switch: 0, swap: 0, use: 0, melee: 0 };
   /** The gun slot asked for by the latest switch (InputMessage.slot, 0-2). */
   slot = 0;
   /** The healing item asked for by the latest 4 or 5 (InputMessage.heal, a HEAL_ITEMS index). */
@@ -75,6 +75,7 @@ export class Input {
       else if (e.code === "KeyQ") this.presses.grenade++;
       else if (e.code === "KeyE") this.presses.shield++;
       else if (e.code === "KeyR") this.presses.reload++;
+      else if (e.code === "KeyV") this.presses.melee++;
       else if (e.code === "KeyM") this.onMute();
       else if (this.slotMode && /^Digit[1-3]$/.test(e.code)) this.selectSlot(Number(e.code.slice(5)) - 1);
       else if (this.slotMode && e.code === "KeyF") this.presses.swap++;
