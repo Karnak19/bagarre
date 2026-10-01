@@ -27,13 +27,12 @@ import {
   STUN_TICKS,
   TICK_RATE,
   WEAPONS,
-  dashCharges,
-  dashChargesReady,
-  dashCooldownTicks,
+  dashTimer,
+  dashWindowTicks,
+  dashesReady,
   grenadeCooldownTicks,
   grenadeDef,
   magazineOf,
-  nextDashCharge,
   perkDef,
   reloadTicksOf,
   weaponDef,
@@ -392,8 +391,8 @@ function Weapon() {
 }
 
 const ABILITY: Record<"dash" | "grenade" | "shield" | "melee", { cd: (m: HudModel) => number; total: (m: HudModel) => number }> = {
-  // The perk's dash: with charges, the sweep is the next charge's (perks.ts).
-  dash: { cd: (m) => nextDashCharge(m.sim?.dashCd ?? 0, m.sim?.perk ?? NO_PERK), total: (m) => dashCooldownTicks(m.sim?.perk ?? NO_PERK) },
+  // The perk's dash (perks.ts): with Double dash, the sweep is the second dash's window while it is open, then the cooldown.
+  dash: { cd: (m) => dashTimer(m.sim?.dashCd ?? 0, m.sim?.perk ?? NO_PERK).left, total: (m) => dashTimer(m.sim?.dashCd ?? 0, m.sim?.perk ?? NO_PERK).total },
   // Each grenade type has its own cooldown: the sweep is out of the one in hand's.
   grenade: { cd: (m) => m.sim?.grenadeCd ?? 0, total: (m) => grenadeCooldownTicks(m.me?.grenade ?? 0) },
   // Battle royale: charges, with a short wait between two (the bubble, then ROYALE.shieldGap).
@@ -409,13 +408,14 @@ function Ability({ kind, keyLabel, label }: { kind: keyof typeof ABILITY; keyLab
     hud,
     (m) => {
       // Battle royale: grenades and shield charges are counted; none left is never ready.
-      // Dash charges (Double dash) are counted too, and one ready is enough.
+      // Double dash counts its dashes too (2 ready, 1 while the window is open), and one is enough.
       const perk = m?.sim?.perk ?? NO_PERK;
-      const charges = kind === "dash" && dashCharges(perk) > 1 ? dashChargesReady(m?.sim?.dashCd ?? 0, perk) : -1;
+      const charges = kind === "dash" && dashWindowTicks(perk) > 0 ? dashesReady(m?.sim?.dashCd ?? 0, perk) : -1;
       const count = charges >= 0 ? charges : !m?.royale ? -1 : kind === "grenade" ? m.royale.grenades : kind === "shield" ? m.royale.shields : -1;
       return {
         ready: charges >= 0 ? charges > 0 : (!m || a.cd(m) === 0) && count !== 0,
-        active: kind === "shield" && (m?.me?.shieldHp ?? 0) > 0,
+        // Highlighted: the shield bubble up, or Double dash's window open for the second dash.
+        active: (kind === "shield" && (m?.me?.shieldHp ?? 0) > 0) || (kind === "dash" && dashTimer(m?.sim?.dashCd ?? 0, perk).window),
         // The grenade slot names the type in hand, with its icon.
         grenade: kind === "grenade" ? (m?.me?.grenade ?? 0) : -1,
         count,
@@ -441,7 +441,9 @@ function Ability({ kind, keyLabel, label }: { kind: keyof typeof ABILITY; keyLab
     const left = m ? a.cd(m) : 0;
     const height = `${m ? Math.min(1, left / a.total(m)) * 100 : 0}%`;
     const none = (kind === "grenade" && m?.royale?.grenades === 0) || (kind === "shield" && m?.royale?.shields === 0);
-    const text = none ? "find some" : left > 0 ? `${(left / TICK_RATE).toFixed(1)}s` : "ready";
+    // Double dash's window: the time left to dash again.
+    const chain = kind === "dash" && !!m && dashTimer(m.sim?.dashCd ?? 0, m.sim?.perk ?? NO_PERK).window;
+    const text = none ? "find some" : chain ? `again ${(left / TICK_RATE).toFixed(1)}s` : left > 0 ? `${(left / TICK_RATE).toFixed(1)}s` : "ready";
     if (cd.current && cd.current.style.height !== height) cd.current.style.height = height;
     if (t.current && t.current.textContent !== text) t.current.textContent = text;
   });
@@ -452,6 +454,7 @@ function Ability({ kind, keyLabel, label }: { kind: keyof typeof ABILITY; keyLab
       data-ready={state.ready ? "" : undefined}
       data-type={state.grenade >= 0 ? GRENADES[state.grenade]?.key : undefined}
       data-count={state.count >= 0 ? state.count : undefined}
+      data-window={state.active && kind === "dash" ? "" : undefined}
     >
       <VStack ref={cd} xstyle={styles.cd} />
       <Text xstyle={[styles.front, styles.key]}>{keyLabel}</Text>

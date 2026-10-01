@@ -31,7 +31,7 @@ import {
   type WeaponDef,
 } from "./constants.ts";
 import { grenadeCooldownTicks } from "./grenades.ts";
-import { dashCharges, dashCooldownTicks, dashSpeed, magazineOf, reloadTicksOf } from "./perks.ts";
+import { canDash, dashCdAfter, dashSpeed, magazineOf, maxDashCd, reloadTicksOf } from "./perks.ts";
 import { clamp, clampMove, lineOfSight, movePlayer, muzzle, type BulletSim, type Vec2 } from "./physics.ts";
 import { KIT_KEYS, PLAYER_SIM_KEYS, type InputMessage, type KitSim, type Phase, type PlayerSim } from "./protocol.ts";
 import { HEAL_STOP, NO_GUN, canStartHeal, cancelHeal, emptyKit, gunInHand, healing, startHeal, switchGun, tickHeal, useGrenade } from "./royale.ts";
@@ -211,7 +211,7 @@ const dec = (v: number) => (v > 0 ? v - 1 : 0);
  * the HP it gave, already in `sim.hp`) or a shot, throw or switch cancels
  * it. The shield needs a charge (`kit.shields`) instead of its cooldown.
  *
- * The perk (`sim.perk`, perks.ts) sets the dash's charges, distance and
+ * The perk (`sim.perk`, perks.ts) sets the dash's second dash, distance and
  * cooldown, the magazine and the reload (and, with slots, the switch delay):
  * the step reads it from the sim, so the prediction uses the same numbers.
  */
@@ -288,14 +288,12 @@ export function stepPlayer(
 
   const move = clampMove(input.mx, input.mz);
   if (stunned || heals) s.dashTicks = 0;
-  // Dash charges (perks.ts): `dashCd` is the time until all are back, one
-  // cooldown per charge spent, so a dash is allowed while one is back. One
-  // charge: a dash needs `dashCd` at 0, the plain cooldown. The cap keeps a
-  // perk swapped mid-life (royale) from leaving more than it allows.
-  const dashCd = dashCooldownTicks(s.perk);
-  const charges = dashCharges(s.perk);
-  s.dashCd = Math.min(s.dashCd, charges * dashCd);
-  if (pressDash && !stunned && !heals && s.dashCd <= (charges - 1) * dashCd && s.dashTicks === 0) {
+  // The dash cooldown, and Double dash's window for a second dash (perks.ts:
+  // all in `dashCd`). Without a window: a dash needs `dashCd` at 0, the plain
+  // cooldown. The cap keeps a perk swapped mid-life (royale) from leaving
+  // more than the new one allows.
+  s.dashCd = Math.min(s.dashCd, maxDashCd(s.perk));
+  if (pressDash && !stunned && !heals && canDash(s.dashCd, s.perk) && s.dashTicks === 0) {
     // Move direction if moving, otherwise where we're facing.
     const len = Math.sqrt(move.x * move.x + move.z * move.z);
     if (len > 1e-3) {
@@ -306,7 +304,7 @@ export function stepPlayer(
       s.dashDz = Math.sin(input.aim);
     }
     s.dashTicks = DASH_TICKS;
-    s.dashCd += dashCd;
+    s.dashCd = dashCdAfter(s.dashCd, s.perk);
   }
 
   let p: Vec2;

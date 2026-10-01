@@ -4,12 +4,13 @@
 // the client's prediction always agree, and the HUD shows the same numbers.
 // NO_PERK (or any unknown id) changes nothing.
 //
-// The dash charges live in `dashCd` alone: it counts the ticks until every
-// charge is back. Each dash adds one cooldown to it, and a dash is allowed
-// while at least one charge is back (`dashCd` at most charges - 1 cooldowns).
-// With one charge that is exactly the plain cooldown (a dash sets it, the
-// next waits for 0). With two, a second dash right after the first is
-// allowed, and the charges come back one cooldown apart.
+// The double dash lives in `dashCd` alone, the ticks until a dash is fully
+// ready again. Without a window (no perk, the other perks) a dash needs it at
+// 0 and sets it to the cooldown: the plain dash. With one (Double dash), the
+// first dash sets it to window + cooldown, and while it is still above the
+// cooldown the window is open: a second dash is allowed, and sets it to the
+// cooldown. Unused, it runs down past the cooldown, which closes the window
+// (that second dash is lost), and the cooldown counts down as usual.
 //
 // `perks.test.ts` tests them (`bun run test`).
 
@@ -28,14 +29,35 @@ export function perkDef(id: number): PerkDef | null {
   return PERKS[id] ?? null;
 }
 
-/** Dash charges held at most (1 without a perk that adds some). */
-export function dashCharges(perk: number): number {
-  return perkDef(perk)?.dashCharges ?? 1;
+/** Ticks of dash cooldown (after the second dash, or the unused window, with Double dash). */
+export function dashCooldownTicks(perk: number): number {
+  return ticks(perkDef(perk)?.dashCooldown ?? DASH.cooldown);
 }
 
-/** Ticks one dash charge takes to come back. */
-export function dashCooldownTicks(perk: number): number {
-  return ticks(DASH.cooldown * (perkDef(perk)?.dashCooldown ?? 1));
+/** Ticks from the start of a first dash during which a second one is allowed (0: no second dash). */
+export function dashWindowTicks(perk: number): number {
+  const w = perkDef(perk)?.dashWindow;
+  return w ? ticks(w) : 0;
+}
+
+/** The most `dashCd` can be with this perk: the window and the cooldown (the step caps it, for a perk swapped mid-life). */
+export function maxDashCd(perk: number): number {
+  return dashWindowTicks(perk) + dashCooldownTicks(perk);
+}
+
+/** The second dash's window is open (a first dash went, less than the window ago). */
+export function dashWindowOpen(dashCd: number, perk: number): boolean {
+  return dashWindowTicks(perk) > 0 && dashCd > dashCooldownTicks(perk);
+}
+
+/** A dash is allowed by the cooldown now (ready, or the second dash's window is open). */
+export function canDash(dashCd: number, perk: number): boolean {
+  return dashCd === 0 || dashWindowOpen(dashCd, perk);
+}
+
+/** `dashCd` right after a dash: a first one opens the window (with Double dash), anything else starts the cooldown. */
+export function dashCdAfter(dashCd: number, perk: number): number {
+  return dashCd === 0 ? maxDashCd(perk) : dashCooldownTicks(perk);
 }
 
 /** Dash speed, m/s: the dash always lasts DASH_TICKS, a longer one goes faster. */
@@ -44,17 +66,22 @@ export function dashSpeed(perk: number): number {
 }
 
 /**
- * Dash charges ready now, for a `dashCd` (see the top of this file): every
- * charge whose cooldown has fully run. 0 to dashCharges(perk).
+ * Dashes left now, for the HUD: with Double dash 2 when ready, 1 while the
+ * window is open, 0 during the cooldown; without, 1 or 0.
  */
-export function dashChargesReady(dashCd: number, perk: number): number {
-  return Math.max(0, dashCharges(perk) - Math.ceil(dashCd / dashCooldownTicks(perk)));
+export function dashesReady(dashCd: number, perk: number): number {
+  if (dashCd === 0) return dashWindowTicks(perk) > 0 ? 2 : 1;
+  return dashWindowOpen(dashCd, perk) ? 1 : 0;
 }
 
-/** Ticks until the next dash charge comes back (0: every charge is back). */
-export function nextDashCharge(dashCd: number, perk: number): number {
+/**
+ * What the HUD's dash timer shows: the window running out (`window`, with
+ * Double dash, while it is open), else the cooldown. Ticks left of it, and its full length.
+ */
+export function dashTimer(dashCd: number, perk: number): { left: number; total: number; window: boolean } {
   const cd = dashCooldownTicks(perk);
-  return dashCd <= 0 ? 0 : dashCd - (Math.ceil(dashCd / cd) - 1) * cd;
+  if (dashWindowOpen(dashCd, perk)) return { left: dashCd - cd, total: dashWindowTicks(perk), window: true };
+  return { left: dashCd, total: cd, window: false };
 }
 
 /** A gun's magazine with this perk (whole rounds, never fewer than the gun's own). */

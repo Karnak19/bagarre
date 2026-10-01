@@ -1,11 +1,11 @@
 // Perks: one passive bonus per player. In a duel it is picked on the
 // waiting card and held from the match start: our HUD shows it, the
 // opponent sees it next to our name (their HUD bar and our name plate), and
-// Double dash really dashes twice (read off the server's dash counter and
-// cooldown). In a battle royale perks are chest loot: walked over with none
+// Double dash really dashes twice inside its 1 s window, then cools down
+// (read off the server's dash counter and cooldown). In a battle royale perks are chest loot: walked over with none
 // held, swapped with F otherwise, the old one left on the floor.
 
-import { ITEM_PERK, PERKS, dashCooldownTicks } from "@bagarre/shared";
+import { ITEM_PERK, PERKS, dashCooldownTicks, dashWindowTicks } from "@bagarre/shared";
 import { expect, openChest, setLoot, test, type Player } from "./fixtures.ts";
 
 const DOUBLE = PERKS.findIndex((p) => p.key === "double-dash");
@@ -21,17 +21,35 @@ async function badgeOf(p: Player, id: string): Promise<string | undefined> {
   return p.page.evaluate((id) => (window as any).__bagarre.plates.find((x: { id: string }) => x.id === id)?.badge, id);
 }
 
-/** `p` presses Space once and waits until the server took the press and the dash is over. */
-async function dash(p: Player) {
+/**
+ * `p` dashes `n` times in a row, as fast as the game allows: each press in
+ * the page once the predicted dash before it is over (the second within
+ * Double dash's 1 s window however slow the test's polls are). Waits until
+ * the server took every press and the last dash is over. Resolves with the
+ * predicted `dashCd` the moment the last dash ended (in the page, so a slow
+ * poll doesn't read it late).
+ */
+async function dash(p: Player, n = 1): Promise<number> {
   const seen = p.me(await p.state())!.dashSeen;
-  await p.focusGame();
-  await p.page.keyboard.press("Space");
+  const dashCd = await p.page.evaluate(async (n) => {
+    // oxlint-disable-next-line typescript/no-explicit-any
+    const b = (window as any).__bagarre;
+    const frame = () => new Promise((r) => requestAnimationFrame(r));
+    for (let i = 0; i < n; i++) {
+      b.input.presses.dash++;
+      // The dash starts on the next predicted step, then runs DASH_TICKS.
+      while (!(b.match.predictor.sim?.dashTicks > 0)) await frame();
+      while (b.match.predictor.sim.dashTicks > 0) await frame();
+    }
+    return b.match.predictor.sim.dashCd as number;
+  }, n);
   await expect
     .poll(async () => {
       const me = p.me(await p.state())!;
-      return me.dashSeen === seen + 1 && me.dashTicks === 0;
+      return me.dashSeen === seen + n && me.dashTicks === 0;
     }, { message: `${p.name}: the server took the dash` })
     .toBe(true);
+  return dashCd;
 }
 
 test("a duel: the perk picked on the waiting card is held from the start, shown to both, and Double dash dashes twice", async ({ players }) => {
@@ -58,23 +76,35 @@ test("a duel: the perk picked on the waiting card is held from the start, shown 
   await expect(b.testId("hud-me-perk")).toHaveCount(0);
   await expect.poll(() => badgeOf(b, ida)).toBe("⏩");
 
-  // Two dash charges on A's dash box, none counted on B's (one charge, the plain cooldown).
+  // Two dashes on A's dash box, none counted on B's (the plain dash).
   await expect(a.testId("hud-dash")).toHaveAttribute("data-count", "2");
   await expect(b.testId("hud-dash")).not.toHaveAttribute("data-count");
+  const cd = dashCooldownTicks(DOUBLE);
+  const x0 = a.me(await a.state())!.x;
+  const z0 = a.me(await a.state())!.z;
 
-  // Two dashes in a row: the second goes while the first's cooldown still
-  // runs (one cooldown per charge spent is on the clock), and none is left.
-  await dash(a);
-  const afterOne = a.me(await a.state())!.dashCd;
-  expect(afterOne).toBeGreaterThan(0);
-  expect(afterOne).toBeLessThanOrEqual(dashCooldownTicks(DOUBLE));
-  await dash(a);
-  expect(a.me(await a.state())!.dashCd).toBeGreaterThan(dashCooldownTicks(DOUBLE));
+  // Two dashes in a row, the second inside the window: the 4 s cooldown
+  // starts from it (dashCd at most the cooldown), and nothing is left.
+  await dash(a, 2);
+  const me = a.me(await a.state())!;
+  expect(me.dashCd).toBeGreaterThan(0);
+  expect(me.dashCd).toBeLessThanOrEqual(cd);
+  // Both moved A (from wherever it stood: a wall may cut one short, never both to nothing).
+  expect(Math.hypot(me.x - x0, me.z - z0)).toBeGreaterThan(1);
   await expect(a.testId("hud-dash")).toHaveAttribute("data-count", "0");
   await expect(a.testId("hud-dash")).not.toHaveAttribute("data-ready");
-  // The charges come back one at a time.
-  await expect(a.testId("hud-dash")).toHaveAttribute("data-count", "1", { timeout: 10_000 });
+  // Ready again, both dashes, once the cooldown has run.
+  await expect(a.testId("hud-dash")).toHaveAttribute("data-count", "2", { timeout: 10_000 });
   await expect(a.testId("hud-dash")).toHaveAttribute("data-ready");
+
+  // One dash only: the window opens (one dash left, shown), runs out unused,
+  // and the cooldown follows it.
+  const first = await dash(a);
+  expect(first).toBeGreaterThan(cd);
+  expect(first).toBeLessThanOrEqual(cd + dashWindowTicks(DOUBLE));
+  await expect(a.testId("hud-dash")).toHaveAttribute("data-count", "0");
+  expect(a.me(await a.state())!.dashCd).toBeLessThanOrEqual(cd);
+  await expect(a.testId("hud-dash")).toHaveAttribute("data-count", "2", { timeout: 10_000 });
 });
 
 test("battle royale: a chest's perk is taken by walking over it, a second one only with F, which leaves the first behind", async ({ players }) => {

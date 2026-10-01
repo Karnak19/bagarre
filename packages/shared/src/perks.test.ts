@@ -1,7 +1,7 @@
 // Tests of the perks (PERKS in constants.ts, perks.ts) through the step
 // (combat.ts), the way the server and the prediction run them: the double
-// dash's two charges and their one-at-a-time refill, the long dash's
-// distance, the quick dash's cooldown, the bigger magazine (a spawn, a
+// dash's second dash within its window, then its cooldown (and the second
+// dash lost once the window runs out), the long dash's distance, the quick dash's cooldown, the bigger magazine (a spawn, a
 // reload, a warmup pick), the quick reload and the royale's quicker switch.
 // And that no perk changes nothing, and what a loadout pick may carry.
 // Run with `bun run test` (or `bun test src/perks.test.ts` in packages/shared).
@@ -11,7 +11,7 @@ import type { Arena } from "./arena.ts";
 import { equipSim, playerCan, spawnSim, stepPlayer } from "./combat.ts";
 import { DASH, DASH_COOLDOWN_TICKS, NO_PERK, PERKS, PISTOL, ROYALE, WEAPONS, ticks, type PerkKey } from "./constants.ts";
 import { parsePick } from "./messages.ts";
-import { dashCharges, dashChargesReady, dashCooldownTicks, isPerkPick, magazineOf, nextDashCharge, reloadTicksOf, switchTicks } from "./perks.ts";
+import { dashCooldownTicks, dashTimer, dashWindowTicks, dashesReady, isPerkPick, magazineOf, reloadTicksOf, switchTicks } from "./perks.ts";
 import type { InputMessage, PlayerSim } from "./protocol.ts";
 import { startKit } from "./royale.ts";
 
@@ -64,8 +64,8 @@ describe("the table", () => {
 });
 
 describe("no perk", () => {
-  test("one charge, the plain dash, the gun's own magazine and reload", () => {
-    expect(dashCharges(NO_PERK)).toBe(1);
+  test("no second dash, the plain dash, the gun's own magazine and reload", () => {
+    expect(dashWindowTicks(NO_PERK)).toBe(0);
     expect(dashCooldownTicks(NO_PERK)).toBe(DASH_COOLDOWN_TICKS);
     expect(magazineOf(WEAPONS[RIFLE], NO_PERK)).toBe(WEAPONS[RIFLE].magazine);
     expect(reloadTicksOf(WEAPONS[RIFLE], NO_PERK)).toBe(ticks(WEAPONS[RIFLE].reloadTime));
@@ -79,32 +79,53 @@ describe("no perk", () => {
 });
 
 describe("Double dash", () => {
-  test("two dashes back to back, a third waits", () => {
-    const one = dash(fresh(DOUBLE), 1);
-    const two = dash(one, 2);
-    expect(two.x).toBeCloseTo(2 * DASH.distance, 9);
-    expect(dashChargesReady(two.dashCd, DOUBLE)).toBe(0);
-    expect(step(two, { dash: 3, mx: 1 }).dashing).toBe(false);
+  const W = dashWindowTicks(DOUBLE);
+  const CD = dashCooldownTicks(DOUBLE);
+  test("the tuning: a 1 s window from the first dash, then 4 s of cooldown", () => {
+    expect([PERKS[DOUBLE].dashWindow, PERKS[DOUBLE].dashCooldown]).toEqual([1, 4]);
+    expect([W, CD]).toEqual([ticks(1), ticks(4)]);
+    expect(dashesReady(0, DOUBLE)).toBe(2);
   });
-  test("the cooldown brings one charge back at a time, one cooldown apart", () => {
-    const cd = dashCooldownTicks(DOUBLE);
-    let s = dash(dash(fresh(DOUBLE), 1), 2);
-    const firstBack = stepUntil(s, {}, (r) => dashChargesReady(r.sim.dashCd, DOUBLE) === 1);
-    s = firstBack.r.sim;
-    expect(dashChargesReady(s.dashCd, DOUBLE)).toBe(1);
-    expect(nextDashCharge(s.dashCd, DOUBLE)).toBe(cd);
-    const secondBack = stepUntil(s, {}, (r) => dashChargesReady(r.sim.dashCd, DOUBLE) === 2);
-    expect(secondBack.n).toBe(cd);
-    expect(secondBack.r.sim.dashCd).toBe(0);
-  });
-  test("with one charge back, a dash goes and the other keeps refilling", () => {
-    const cd = dashCooldownTicks(DOUBLE);
+  test("a second dash inside the window goes, a third is blocked, then 4 s of cooldown from the second", () => {
     const one = dash(fresh(DOUBLE), 1);
-    const left = one.dashCd;
-    const again = step(one, { dash: 2, mx: 1 });
-    expect(again.dashing).toBe(true);
-    // One cooldown more on the clock: the first charge's wait went on.
-    expect(again.sim.dashCd).toBe(left - 1 + cd);
+    expect(dashesReady(one.dashCd, DOUBLE)).toBe(1);
+    expect(dashTimer(one.dashCd, DOUBLE).window).toBe(true);
+    const second = step(one, { dash: 2, mx: 1 });
+    expect(second.dashing).toBe(true);
+    expect(second.sim.dashCd).toBe(CD);
+    let s = second.sim;
+    while (s.dashTicks > 0) s = step(s, { dash: 2 }).sim;
+    expect(s.x).toBeCloseTo(2 * DASH.distance, 9);
+    expect(dashesReady(s.dashCd, DOUBLE)).toBe(0);
+    expect(step(s, { dash: 3, mx: 1 }).dashing).toBe(false);
+    // Ready again exactly CD steps after the second dash.
+    const back = stepUntil(second.sim, {}, (r) => r.sim.dashCd === 0);
+    expect(back.n).toBe(CD);
+    expect(step(back.r.sim, { dash: 4, mx: 1 }).dashing).toBe(true);
+  });
+  test("after the window, the second dash is lost: blocked, and the cooldown runs 4 s from the window's end", () => {
+    // The first dash's press, then idle until the window closes.
+    const first = step(fresh(DOUBLE), { dash: 1, mx: 1 });
+    expect(first.sim.dashCd).toBe(W + CD);
+    const closed = stepUntil(first.sim, { dash: 1 }, (r) => !dashTimer(r.sim.dashCd, DOUBLE).window);
+    expect(closed.n).toBe(W);
+    expect(closed.r.sim.dashCd).toBe(CD);
+    expect(step(closed.r.sim, { dash: 2, mx: 1 }).dashing).toBe(false);
+    const back = stepUntil(closed.r.sim, {}, (r) => r.sim.dashCd === 0);
+    expect(back.n).toBe(CD);
+  });
+  test("the last step of the window still allows the second dash", () => {
+    const first = step(fresh(DOUBLE), { dash: 1, mx: 1 });
+    // W - 1 more steps: the next one is the window's last.
+    let s = first.sim;
+    for (let i = 0; i < W - 2; i++) s = step(s, { dash: 1 }).sim;
+    expect(step(s, { dash: 2, mx: 1 }).dashing).toBe(true);
+  });
+  test("a perk swapped mid-window (royale) leaves no more than the new perk's cooldown", () => {
+    const one = dash(fresh(DOUBLE), 1);
+    const swapped = step({ ...one, perk: QUICK_DASH }, {});
+    expect(swapped.sim.dashCd).toBeLessThanOrEqual(dashCooldownTicks(QUICK_DASH));
+    expect(step({ ...one, perk: NO_PERK }, { dash: 2, mx: 1 }).dashing).toBe(false);
   });
 });
 
@@ -131,8 +152,8 @@ describe("Long dash", () => {
 
 describe("Quick dash", () => {
   const cd = dashCooldownTicks(QUICK_DASH);
-  test(`the cooldown is ${DASH.cooldown * (PERKS[QUICK_DASH].dashCooldown ?? 1)} s instead of ${DASH.cooldown} s`, () => {
-    expect(cd).toBe(ticks(DASH.cooldown * (PERKS[QUICK_DASH].dashCooldown ?? 1)));
+  test(`the cooldown is ${PERKS[QUICK_DASH].dashCooldown} s instead of ${DASH.cooldown} s`, () => {
+    expect(cd).toBe(ticks(PERKS[QUICK_DASH].dashCooldown ?? 0));
     expect(cd).toBeLessThan(DASH_COOLDOWN_TICKS);
   });
   test("the next dash goes once that cooldown has run", () => {

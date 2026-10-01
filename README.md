@@ -875,7 +875,8 @@ is `MELEE` in constants.ts.
 ### Perks
 
 A perk is a passive bonus on something everyone has; you hold one at most.
-Double dash (two dash charges, refilled one at a time), Long dash (7.5 m
+Double dash (a second dash within 1 s of the first, then a 4 s cooldown,
+from the second dash or the end of an unused window), Long dash (7.5 m
 instead of 5), Quick dash (1.8 s cooldown instead of 3), Bigger mag (+30%
 rounds) and Quick hands (35% faster reload, and a faster gun switch in the
 battle royale). In a duel, FFA or team match you pick one (or none) next to
@@ -888,9 +889,10 @@ How it works: the table is `PERKS` in constants.ts (index = id on the
 wire, append-only, `NO_PERK` 255 for none). The perk held is
 `PlayerSim.perk` (synced as `Player.perk`, set by the server only), and the
 shared step reads it through perks.ts for the dash, the magazine, the reload
-and the switch, so the client predicts with the same numbers. The dash
-charges need no new state: `dashCd` counts the ticks until every charge is
-back, and a dash is allowed while one is.
+and the switch, so the client predicts with the same numbers. Double dash
+needs no new state: its first dash sets `dashCd` to the window plus the
+cooldown, a second dash is allowed while `dashCd` is above the cooldown (the
+window is open) and sets it to the cooldown.
 
 ### Grenade types
 

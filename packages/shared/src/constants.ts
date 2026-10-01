@@ -328,11 +328,15 @@ export interface PerkDef<K extends string = PerkKey> {
   /** Stable key (test ids, the HUD, the client's PERK_VIEW). Never renamed. */
   key: K;
   name: string;
-  /** Dash charges held at most (default 1). The cooldown brings them back one at a time. */
-  dashCharges?: number;
+  /**
+   * A second dash: seconds from the start of the first during which one more
+   * is allowed (absent: no second dash). The cooldown starts after the second
+   * one, or once the window runs out unused (the second dash is then lost).
+   */
+  dashWindow?: number;
   /** Multiplier on DASH.distance (the dash lasts as long, and goes faster). */
   dashDistance?: number;
-  /** Multiplier on DASH.cooldown. */
+  /** Seconds of dash cooldown, instead of DASH.cooldown. */
   dashCooldown?: number;
   /** Multiplier on every gun's magazine, rounded to whole rounds. */
   magazine?: number;
@@ -358,11 +362,12 @@ export interface PerkDef<K extends string = PerkKey> {
  * revolver 6 -> 8, burst pistol 15 -> 20, DMR 8 -> 10, pistol 10 -> 13.
  */
 const PERK_LIST = [
-  { key: "double-dash", name: "Double dash", dashCharges: 2 },
+  // A second dash within 1 s of the first, then 4 s of cooldown (instead of 3).
+  { key: "double-dash", name: "Double dash", dashWindow: 1, dashCooldown: 4 },
   // 7.5 m instead of 5.
   { key: "long-dash", name: "Long dash", dashDistance: 1.5 },
   // 1.8 s instead of 3.
-  { key: "quick-dash", name: "Quick dash", dashCooldown: 0.6 },
+  { key: "quick-dash", name: "Quick dash", dashCooldown: 1.8 },
   { key: "big-mag", name: "Bigger mag", magazine: 1.3 },
   // Rifle 1.5 s -> 1 s, sniper 2.5 s -> 1.63 s; the royale's switch 0.3 s -> 0.2 s.
   { key: "quick-hands", name: "Quick hands", handling: 0.65 },

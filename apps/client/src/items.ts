@@ -257,7 +257,7 @@ const percent = (k: number | undefined) => Math.round(Math.abs(1 - (k ?? 1)) * 1
 export const PERK_VIEW: Record<PerkKey, PerkViewDef> = {
   "double-dash": {
     icon: "⏩",
-    blurb: `${perkKey("double-dash").dashCharges} dash charges: dash twice in a row. The cooldown brings them back one at a time.`,
+    blurb: `After a dash, dash once more within ${perkKey("double-dash").dashWindow} s. Then a ${perkKey("double-dash").dashCooldown} s cooldown (instead of ${DASH.cooldown} s), from the second dash or once the ${perkKey("double-dash").dashWindow} s run out.`,
   },
   "long-dash": {
     icon: "🏃",
@@ -265,7 +265,7 @@ export const PERK_VIEW: Record<PerkKey, PerkViewDef> = {
   },
   "quick-dash": {
     icon: "⏱️",
-    blurb: `Dash cooldown ${+(DASH.cooldown * (perkKey("quick-dash").dashCooldown ?? 1)).toFixed(1)} s instead of ${DASH.cooldown} s.`,
+    blurb: `Dash cooldown ${perkKey("quick-dash").dashCooldown} s instead of ${DASH.cooldown} s.`,
   },
   "big-mag": {
     icon: "🔋",
