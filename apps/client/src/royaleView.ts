@@ -44,7 +44,7 @@ const GLOW_COLOR = 0xffb648;
 const GLOW_PULSE_MS = 1400;
 /** A perk on the floor: the HUD's perk colour (its badge and disc), and the badge's size and height, metres. */
 const PERK_COLOR = 0xe0b4ff;
-const PERK_BADGE = 0.55;
+const PERK_BADGE = 0.7;
 const PERK_BADGE_Y = 0.42;
 /** The lid opened: its angle (radians, back about its hinge) and how long it takes, ms. */
 const LID_OPEN = -1.95;

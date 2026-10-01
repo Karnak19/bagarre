@@ -503,10 +503,25 @@ export async function openChest(p: Player, roomId: string, id: string, chest: { 
   await place(roomId, id, chest.x + 1, chest.z);
   await p.focusGame();
   await p.page.keyboard.press("KeyF");
+  // Watched in the page, every few ms: the loot falls for ROYALE.lootDrop
+  // (0.6 s) and, if `p` can take it, is gone once landed, which a slow poll
+  // from here can miss whole.
+  const seen = await p.page.waitForFunction(
+    (chest) => {
+      // oxlint-disable-next-line typescript/no-explicit-any
+      const items = (window as any).__bagarre.match?.latest?.items;
+      const all: PlayerState["items"] = [];
+      items?.forEach((it: Omit<PlayerState["items"][number], "id">, id: string) => all.push({ id, ...it }));
+      return all.find((it) => it.readyTick > 0 && Math.hypot(it.fromX - chest.x, it.fromZ - chest.z) < 0.01) ?? null;
+    },
+    chest,
+    { polling: 10, timeout: 20_000 },
+  ).catch(async (e) => {
+    const open = (await p.state()).crates.find((c) => c.id === chest.id)?.open;
+    throw new Error(`${p.name}: ${open ? "the chest opened, its loot never seen" : "the chest never opened (F not taken)"}`, { cause: e });
+  });
+  const loot = (await seen.jsonValue())!;
   await expect.poll(async () => (await p.state()).crates.find((c) => c.id === chest.id)?.open, { message: `${p.name} opened the chest` }).toBe(true);
-  const fromChest = async () => (await p.state()).items.find((it) => it.readyTick > 0 && Math.hypot(it.fromX - chest.x, it.fromZ - chest.z) < 0.01);
-  await expect.poll(fromChest, { message: "the chest's loot" }).toBeTruthy();
-  const loot = (await fromChest())!;
   await place(roomId, id, loot.x, loot.z);
   return loot;
 }

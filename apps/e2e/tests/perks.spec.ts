@@ -11,6 +11,12 @@ import { expect, openChest, setLoot, test, type Player } from "./fixtures.ts";
 const DOUBLE = PERKS.findIndex((p) => p.key === "double-dash");
 const BIG_MAG = PERKS.findIndex((p) => p.key === "big-mag");
 const NO_PERK = 255;
+/**
+ * Waiting out a cooldown (up to 5 s of game time): the game counts it in
+ * inputs, and a starved page sends fewer than 30 a second (it drops the
+ * steps it is late on), so it lasts longer than its seconds there.
+ */
+const COOLDOWN_WAIT = 30_000;
 
 /** The loot feed's line for what we got (its stable key). */
 const lootRow = (p: Player, key: string) => p.page.locator(`[data-testid="hud-loot-row"][data-key="${key}"]`);
@@ -21,35 +27,89 @@ async function badgeOf(p: Player, id: string): Promise<string | undefined> {
   return p.page.evaluate((id) => (window as any).__bagarre.plates.find((x: { id: string }) => x.id === id)?.badge, id);
 }
 
+/** What `dash()` saw: the predicted dashes, and the server once it took them. */
+interface Dashes {
+  /** Each dash: the input (seq) it started on, and the predicted `dashCd` right after. */
+  starts: { seq: number; dashCd: number }[];
+  /** The predicted `dashCd` the step the last dash ended. */
+  end: number;
+  /** The server's view of us, from the first snapshot that has the last dash over. */
+  server: { lastSeq: number; dashCd: number; dashTicks: number; dashSeen: number };
+}
+
 /**
- * `p` dashes `n` times in a row, as fast as the game allows: each press in
- * the page once the predicted dash before it is over (the second within
- * Double dash's 1 s window however slow the test's polls are). Waits until
- * the server took every press and the last dash is over. Resolves with the
- * predicted `dashCd` the moment the last dash ended (in the page, so a slow
- * poll doesn't read it late).
+ * `p` dashes `n` times in a row, as fast as the game allows, counted in
+ * game steps, not frames or polls: it hooks the prediction's step
+ * (`predictor.apply`, one per input sent) and makes the next press on the
+ * step the dash before it ends, so the next input carries it. A starved page
+ * runs several steps per frame (a whole 5-tick dash can start and end
+ * between two frames), and this doesn't care. Then it reads the server's
+ * state, in the page, from the first snapshot that has the last dash over
+ * (`lastSeq` past it), before any slow poll could miss the cooldown.
+ * Fails at once if a press is taken without a dash.
  */
-async function dash(p: Player, n = 1): Promise<number> {
-  const seen = p.me(await p.state())!.dashSeen;
-  const dashCd = await p.page.evaluate(async (n) => {
-    // oxlint-disable-next-line typescript/no-explicit-any
-    const b = (window as any).__bagarre;
-    const frame = () => new Promise((r) => requestAnimationFrame(r));
-    for (let i = 0; i < n; i++) {
-      b.input.presses.dash++;
-      // The dash starts on the next predicted step, then runs DASH_TICKS.
-      while (!(b.match.predictor.sim?.dashTicks > 0)) await frame();
-      while (b.match.predictor.sim.dashTicks > 0) await frame();
-    }
-    return b.match.predictor.sim.dashCd as number;
-  }, n);
-  await expect
-    .poll(async () => {
-      const me = p.me(await p.state())!;
-      return me.dashSeen === seen + n && me.dashTicks === 0;
-    }, { message: `${p.name}: the server took the dash` })
-    .toBe(true);
-  return dashCd;
+async function dash(p: Player, n = 1): Promise<Dashes> {
+  return p.page.evaluate(
+    ({ n, timeout }) =>
+      new Promise<Dashes>((resolve, reject) => {
+        // oxlint-disable-next-line typescript/no-explicit-any
+        const b = (window as any).__bagarre;
+        const pred = b.match.predictor;
+        const apply = pred.apply;
+        const starts: Dashes["starts"] = [];
+        let pressed = 0;
+        let dashing = false;
+        let end: { seq: number; dashCd: number } | null = null;
+        let timer = 0;
+        const done = (fn: () => void) => {
+          pred.apply = apply;
+          clearInterval(timer);
+          clearTimeout(deadline);
+          fn();
+        };
+        const deadline = setTimeout(
+          () => done(() => reject(new Error(`dash: ${starts.length}/${n} dashes, last ended ${JSON.stringify(end)}, server ${JSON.stringify(server())}`))),
+          timeout,
+        );
+        const server = () => {
+          const me = b.match.latest?.players.get(b.match.net.sessionId);
+          return me && { lastSeq: Number(me.lastSeq), dashCd: Number(me.dashCd), dashTicks: Number(me.dashTicks), dashSeen: Number(me.dashSeen) };
+        };
+        const press = () => {
+          b.input.presses.dash++;
+          pressed++;
+        };
+        // oxlint-disable-next-line typescript/no-explicit-any
+        pred.apply = (msg: any, can: unknown) => {
+          const before = pred.sim;
+          const res = apply.call(pred, msg, can);
+          if (!res || !before || end) return res;
+          const s = res.sim;
+          if (!dashing && msg.dash >= b.input.presses.dash && s.dashSeen > before.dashSeen) {
+            // Our press, taken on this step: the dash starts (moving this very step), or it was refused.
+            if (!res.dashing || before.dashTicks > 0) {
+              done(() => reject(new Error(`dash ${starts.length + 1}/${n} refused at seq ${msg.seq}: dashCd ${before.dashCd}, dashTicks ${before.dashTicks}`)));
+              return res;
+            }
+            starts.push({ seq: msg.seq, dashCd: s.dashCd });
+            dashing = true;
+          }
+          if (dashing && s.dashTicks === 0) {
+            dashing = false;
+            if (pressed < n) press();
+            else end = { seq: msg.seq, dashCd: s.dashCd };
+          }
+          return res;
+        };
+        // The server's state, as soon as a snapshot has the last dash over (timers run between frames too).
+        timer = setInterval(() => {
+          const me = end && server();
+          if (me && me.lastSeq >= end!.seq) done(() => resolve({ starts, end: end!.dashCd, server: me }));
+        }, 10) as unknown as number;
+        press();
+      }),
+    { n, timeout: 20_000 },
+  );
 }
 
 test("a duel: the perk picked on the waiting card is held from the start, shown to both, and Double dash dashes twice", async ({ players }) => {
@@ -80,31 +140,46 @@ test("a duel: the perk picked on the waiting card is held from the start, shown 
   await expect(a.testId("hud-dash")).toHaveAttribute("data-count", "2");
   await expect(b.testId("hud-dash")).not.toHaveAttribute("data-count");
   const cd = dashCooldownTicks(DOUBLE);
+  const win = dashWindowTicks(DOUBLE);
+  const seen = a.me(await a.state())!.dashSeen;
   const x0 = a.me(await a.state())!.x;
   const z0 = a.me(await a.state())!.z;
 
-  // Two dashes in a row, the second inside the window: the 4 s cooldown
-  // starts from it (dashCd at most the cooldown), and nothing is left.
-  await dash(a, 2);
-  const me = a.me(await a.state())!;
-  expect(me.dashCd).toBeGreaterThan(0);
-  expect(me.dashCd).toBeLessThanOrEqual(cd);
+  // Two dashes in a row, the second inside the window: the first opens it
+  // (window + cooldown), the second starts the 4 s cooldown.
+  const two = await dash(a, 2);
+  const [s1, s2] = two.starts.map((d) => d.seq);
+  expect(two.starts.map((d) => d.dashCd)).toEqual([cd + win, cd]);
+  // The server took both presses, and both dashes: its cooldown is the one
+  // the second started (`dashCd` plus the inputs since s2, at least `cd`),
+  // never what the first alone would leave (window + cooldown since s1).
+  expect(two.server.dashSeen).toBe(seen + 2);
+  expect(two.server.dashTicks).toBe(0);
+  expect(two.server.dashCd).toBeGreaterThan(0);
+  expect(two.server.dashCd).toBeLessThanOrEqual(cd);
+  const since = two.server.dashCd + (two.server.lastSeq - s2);
+  expect(since).toBeGreaterThanOrEqual(cd);
+  expect(since).toBeLessThan(cd + win - (s2 - s1));
   // Both moved A (from wherever it stood: a wall may cut one short, never both to nothing).
+  const me = a.me(await a.state())!;
   expect(Math.hypot(me.x - x0, me.z - z0)).toBeGreaterThan(1);
+  // Nothing left until the cooldown has run (4 s), then both dashes again.
   await expect(a.testId("hud-dash")).toHaveAttribute("data-count", "0");
   await expect(a.testId("hud-dash")).not.toHaveAttribute("data-ready");
-  // Ready again, both dashes, once the cooldown has run.
-  await expect(a.testId("hud-dash")).toHaveAttribute("data-count", "2", { timeout: 10_000 });
+  await expect(a.testId("hud-dash")).toHaveAttribute("data-count", "2", { timeout: COOLDOWN_WAIT });
   await expect(a.testId("hud-dash")).toHaveAttribute("data-ready");
 
-  // One dash only: the window opens (one dash left, shown), runs out unused,
-  // and the cooldown follows it.
-  const first = await dash(a);
-  expect(first).toBeGreaterThan(cd);
-  expect(first).toBeLessThanOrEqual(cd + dashWindowTicks(DOUBLE));
+  // One dash only: the window opens, runs out unused, and the cooldown follows it.
+  const one = await dash(a);
+  expect(one.starts.map((d) => d.dashCd)).toEqual([cd + win]);
+  expect(one.end).toBeGreaterThan(cd);
+  expect(one.end).toBeLessThanOrEqual(cd + win);
+  expect(one.server.dashSeen).toBe(seen + 3);
+  expect(one.server.dashCd + (one.server.lastSeq - one.starts[0].seq)).toBeGreaterThanOrEqual(cd + win);
   await expect(a.testId("hud-dash")).toHaveAttribute("data-count", "0");
-  expect(a.me(await a.state())!.dashCd).toBeLessThanOrEqual(cd);
-  await expect(a.testId("hud-dash")).toHaveAttribute("data-count", "2", { timeout: 10_000 });
+  await expect.poll(async () => a.me(await a.state())!.dashCd, { message: "the window closed into the cooldown" }).toBeLessThanOrEqual(cd);
+  expect(a.me(await a.state())!.dashSeen).toBe(seen + 3);
+  await expect(a.testId("hud-dash")).toHaveAttribute("data-count", "2", { timeout: COOLDOWN_WAIT });
 });
 
 test("battle royale: a chest's perk is taken by walking over it, a second one only with F, which leaves the first behind", async ({ players }) => {
