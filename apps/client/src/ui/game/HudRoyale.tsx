@@ -1,13 +1,14 @@
 // The battle royale's own HUD pieces, mounted by Hud.tsx when the HUD model
-// has `royale`: the panel at the top right (players still in, the zone's
+// has `royale`: the panel under the minimap (players still in, the zone's
 // timer), the arrow back to the zone while we stand outside it, the three
 // gun slots in place of the single weapon box, the healing items (keys 4
-// and 5) next to them, and the heal's progress, or how it ended, over the
-// ability bar (above all when the zone's damage cancelled it), and the F
-// prompt ("F  Open chest", "F  Swap Pistol → Rifle", "F  Swap Frag → Smoke",
-// "F  Swap ⏩ Double dash → 🔋 Bigger mag") while F would do something, and
-// the loot feed at the bottom left (what we just picked up: "+ Rifle",
-// "+ 2 💥 Frag", "Pistol → Rifle", "+ ⏩ Double dash").
+// and 5) under them, and in the alert slot under the character (Hud.tsx'
+// Alert) the heal's progress, or how it ended (above all when the zone's
+// damage cancelled it), or the F prompt ("F  Open chest", "F  Swap Pistol →
+// Rifle", "F  Swap Frag → Smoke", "F  Swap ⏩ Double dash → 🔋 Bigger mag")
+// while F would do something, and the loot feed over our bar at the bottom
+// left (what we just picked up: "+ Rifle", "+ 2 💥 Frag", "Pistol → Rifle",
+// "+ ⏩ Double dash").
 //
 // Like the rest of the HUD, nothing renders per frame: the panel re-renders
 // when the count or the timer's seconds change, the slots on a switch, a shot
@@ -26,23 +27,13 @@ import { jsonEqual, useEngine, useSelector, useStoreEffect } from "../hooks.ts";
 import { shared } from "../styles.ts";
 
 const styles = stylex.create({
-  panel: {
-    backgroundColor: "var(--bagarre-hud-panel)",
-    borderRadius: "var(--radius-element)",
-    paddingBlock: "8px",
-    paddingInline: "10px",
-  },
-  royalePanel: { width: "min(230px, 40vw)", gap: "4px" },
+  royalePanel: { gap: "4px" },
   alive: { fontSize: "13px", fontWeight: 700 },
   aliveCount: { fontSize: "20px", marginInlineEnd: "6px" },
   zone: { fontSize: "13px", fontWeight: 600, color: "var(--color-text-secondary)" },
   zoneTime: { color: "var(--color-text-primary)", fontWeight: 700 },
   zoneClosing: { color: "#9fd8ff" },
   arrow: {
-    position: "absolute",
-    top: "118px",
-    left: "50%",
-    transform: "translateX(-50%)",
     paddingBlock: "6px",
     paddingInline: "12px",
     borderRadius: "6px",
@@ -65,10 +56,6 @@ const styles = stylex.create({
   healOn: { boxShadow: "inset 0 0 0 2px #6dff9a" },
   healFill: { height: "100%", width: 0, backgroundColor: "#6dff9a" },
   healStatus: {
-    position: "absolute",
-    bottom: "118px",
-    left: "50%",
-    transform: "translateX(-50%)",
     minWidth: "200px",
     textAlign: "center",
     fontSize: "13px",
@@ -78,13 +65,7 @@ const styles = stylex.create({
   healDone: { color: "#6dff9a" },
   healCancel: { color: "#ffb4a6", boxShadow: "inset 0 0 0 1px var(--color-border-red)" },
   healZone: { color: "#ffffff", backgroundColor: "rgba(120, 24, 16, 0.8)", boxShadow: "inset 0 0 0 1px var(--color-border-red)" },
-  // Just above the slots and the ability bar (about 92 px tall from 16 px up), where the heal
-  // status goes; over it while that shows (swapHigh).
   swap: {
-    position: "absolute",
-    bottom: "116px",
-    left: "50%",
-    transform: "translateX(-50%)",
     paddingBlock: "3px",
     paddingInline: "8px",
     whiteSpace: "nowrap",
@@ -96,12 +77,10 @@ const styles = stylex.create({
     transitionTimingFunction: "ease-out",
   },
   swapOn: { opacity: 1 },
-  swapHigh: { bottom: "166px" },
   swapFrom: { color: "var(--color-text-secondary)" },
   swapTo: { color: "var(--bagarre-gold)" },
-  // Bottom left, above the debug and watchers lines and clear of the bottom bar's height
-  // (so a narrow window doesn't put it over the slots); newest at the bottom.
-  loot: { position: "absolute", left: "16px", bottom: "128px", gap: "4px", alignItems: "flex-start", maxWidth: "min(260px, 40vw)" },
+  // Over our bar, newest at the bottom.
+  loot: { gap: "4px", alignItems: "flex-start", maxWidth: "min(260px, 100%)" },
   // The kill feed's line (HudFfa.tsx), a little smaller.
   lootLine: {
     gap: "6px",
@@ -119,7 +98,7 @@ const styles = stylex.create({
   lootPerk: { color: "#e0b4ff" },
 });
 
-/** Players still in and the zone's timer, at the top right. */
+/** Players still in and the zone's timer, under the minimap. */
 export function RoyalePanel() {
   countRender("hud.royale");
   const { hud } = useEngine();
@@ -135,7 +114,7 @@ export function RoyalePanel() {
   const zoneLine =
     r.zone === "waiting" ? "Zone shrinks in" : r.zone === "shrinking" ? "Zone closes in" : r.zone === "closed" ? "Zone closed" : "";
   return (
-    <VStack xstyle={[styles.panel, styles.royalePanel]} data-testid="hud-royale" data-alive={r.alive} data-zone={r.zone}>
+    <VStack xstyle={[shared.hudBox, styles.royalePanel]} data-testid="hud-royale" data-alive={r.alive} data-zone={r.zone}>
       <Text xstyle={[styles.alive, shared.tabular]} data-testid="hud-royale-alive" aria-label={`${r.alive} of ${r.players} still in`}>
         <Text as="span" xstyle={[shared.display, styles.aliveCount]} color="inherit">
           {r.alive}
@@ -198,7 +177,7 @@ export function GunSlots() {
       {slots.map((s, i) => (
         <VStack
           key={i}
-          xstyle={[styles.panel, styles.slot, s.hand && styles.slotHand, s.weapon < 0 && styles.slotEmpty]}
+          xstyle={[shared.hudBox, styles.slot, s.hand && styles.slotHand, s.weapon < 0 && styles.slotEmpty]}
           data-testid={`hud-slot-${i + 1}`}
           data-weapon={s.weapon >= 0 ? weaponDef(s.weapon).key : undefined}
           data-active={s.hand ? "" : undefined}
@@ -231,7 +210,7 @@ export function HealItems() {
       {r.heals.map((h, i) => (
         <VStack
           key={h.key}
-          xstyle={[styles.panel, styles.heal, h.count === 0 && styles.healNone, r.healing === i && styles.healOn]}
+          xstyle={[shared.hudBox, styles.heal, h.count === 0 && styles.healNone, r.healing === i && styles.healOn]}
           data-testid={`hud-heal-${h.key}`}
           data-count={h.count}
           data-active={r.healing === i ? "" : undefined}
@@ -252,7 +231,7 @@ export function HealItems() {
 }
 
 /**
- * Over the ability bar: the heal in progress (the item, "slowed", a bar that
+ * In the alert slot: the heal in progress (the item, "slowed", a bar that
  * fills, written per frame), or for a few seconds after, how it ended. A heal
  * cancelled by the zone gets the zone's red, so it is clear why it stopped.
  */
@@ -270,7 +249,7 @@ export function HealStatus() {
   if (r.healing >= 0) {
     const def = HEAL_ITEMS[r.healing];
     return (
-      <VStack xstyle={[styles.panel, styles.healStatus, styles.healing]} role="status" data-testid="hud-heal-status" data-state="healing">
+      <VStack xstyle={[shared.hudBox, styles.healStatus, styles.healing]} role="status" data-testid="hud-heal-status" data-state="healing">
         <Text color="inherit">✚ {def?.name ?? "Healing"} · slowed, don't shoot</Text>
         <VStack xstyle={styles.reload}>
           <VStack ref={bar} xstyle={styles.healFill} />
@@ -281,7 +260,7 @@ export function HealStatus() {
   if (!r.note) return null;
   const look = r.kind === "done" ? styles.healDone : r.kind === "zone" ? styles.healZone : styles.healCancel;
   return (
-    <VStack xstyle={[styles.panel, styles.healStatus, look]} role="status" data-testid="hud-heal-status" data-state={r.kind}>
+    <VStack xstyle={[shared.hudBox, styles.healStatus, look]} role="status" data-testid="hud-heal-status" data-state={r.kind}>
       <Text color="inherit">{r.note}</Text>
     </VStack>
   );
@@ -299,8 +278,6 @@ export function SwapPrompt() {
   countRender("hud.swap");
   const { hud } = useEngine();
   const prompt = useSelector(hud, (m) => m?.royale?.prompt ?? null, jsonEqual);
-  // The heal status (HealStatus) shows: sit over it.
-  const high = useSelector(hud, (m) => !!m?.royale && (m.royale.healing >= 0 || m.royale.healNote !== ""));
   const last = useRef<RoyaleHud["prompt"]>(null);
   if (prompt) last.current = prompt;
   const shown = prompt ?? last.current;
@@ -308,7 +285,7 @@ export function SwapPrompt() {
     <HStack
       gap={1.5}
       align="center"
-      xstyle={[styles.panel, styles.swap, !!prompt && styles.swapOn, high && styles.swapHigh]}
+      xstyle={[shared.hudBox, styles.swap, !!prompt && styles.swapOn]}
       data-testid="hud-swap"
       data-state={prompt ? "on" : "off"}
       data-kind={prompt?.kind}

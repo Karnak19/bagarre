@@ -29,6 +29,13 @@ export const shared = stylex.create({
     backgroundColor: "var(--bagarre-hud-panel)",
     borderRadius: "var(--radius-element)",
   },
+  /** The in-game HUD's box (Hud.tsx and its mode pieces): the panel, padded. */
+  hudBox: {
+    backgroundColor: "var(--bagarre-hud-panel)",
+    borderRadius: "var(--radius-element)",
+    paddingBlock: "8px",
+    paddingInline: "10px",
+  },
   /** Player colour dot. */
   dot: {
     flexShrink: 0,
