@@ -1,11 +1,20 @@
 // The in-game HUD: both players' HP (and perks), the score, the status line, the map
-// card, the weapon and ammo, the ability cooldowns, the perk held, the sound toggle, the
+// card, the weapon and ammo, the ability cooldowns, the sound toggle, the
 // weapon picker line and the netcode debug line. In a free-for-all the score
 // and the opponent's bar give way to the rank panel, the kill feed and the
 // minimap (HudFfa.tsx); in a team deathmatch to the team score (HudTeam.tsx),
 // the same kill feed and minimap, in team colours; in a battle royale to
 // the players still in and the zone's timer, and the weapon box to the three
 // gun slots, plus the loot feed (HudRoyale.tsx).
+//
+// The layout is one grid over the screen, so nothing sits on hand-tuned
+// offsets and the boxes stack on their own: world info at the top (the
+// minimap and the mode's panel at the left, the score, status and map card in
+// the middle, the kill feed or the opponent at the right), your own state at
+// the bottom (you and your abilities at the left, your guns and heals at the
+// right), and the warmup panel or the picker centred just above it. The one
+// thing placed by hand is the alert slot (Alert) under the character, which the
+// camera keeps at the centre of the screen (scene.follow).
 //
 // match.ts writes a HudModel every frame (hud.ts). Nothing here re-renders
 // per frame: each widget selects the few fields it shows and re-renders only
@@ -22,6 +31,7 @@ import {
   MAX_HP,
   MELEE_COOLDOWN_TICKS,
   NO_PERK,
+  SHIELD,
   SHIELD_CHARGE_TICKS,
   SHIELD_COOLDOWN_TICKS,
   STUN_TICKS,
@@ -51,50 +61,81 @@ import { PICKABLE_WEAPONS, WEAPON_KEYS, grenadeView, perkLabel, perkView } from 
 import { GrenadePicker, PerkPicker, WeaponPicker } from "./WeaponPicker.tsx";
 
 const styles = stylex.create({
-  root: { position: "fixed", inset: 0, pointerEvents: "none", zIndex: 10 },
-  top: { position: "absolute", top: "16px", left: "16px", right: "16px" },
-  panel: {
-    backgroundColor: "var(--bagarre-hud-panel)",
-    borderRadius: "var(--radius-element)",
-    paddingBlock: "8px",
-    paddingInline: "10px",
+  // Four rows: the top edge, the open middle (the game), the centred panel
+  // (warmup or picker) and the bottom edge.
+  root: {
+    position: "fixed",
+    inset: 0,
+    display: "grid",
+    gridTemplateRows: "auto minmax(0, 1fr) auto auto",
+    rowGap: "12px",
+    padding: "16px",
+    pointerEvents: "none",
+    zIndex: 10,
   },
-  player: { width: "min(320px, 38vw)" },
-  right: { textAlign: "end" },
-  absent: { opacity: 0.35 },
-  name: { fontSize: "13px", fontWeight: 600, marginBlockEnd: "6px", opacity: 0.9 },
-  // The perk glyph after a name.
-  namePerk: { marginInlineStart: "6px" },
-  perk: { minWidth: "96px", textAlign: "center", paddingInline: "10px", boxShadow: "inset 0 0 0 1px rgba(224, 180, 255, 0.55)" },
-  perkName: { fontSize: "13px", fontWeight: 600, whiteSpace: "nowrap", color: "#e0b4ff" },
-  hp: { height: "10px", borderRadius: "5px", overflow: "hidden", backgroundColor: "rgba(255, 255, 255, 0.12)" },
-  hpRight: { transform: "scaleX(-1)" },
-  // Scaled, not resized: the HP change animates on the compositor.
-  hpFill: { height: "100%", width: "100%", transformOrigin: "left center", transition: "transform 120ms linear" },
-  score: { paddingInline: "16px", fontSize: "22px", fontWeight: 700, whiteSpace: "nowrap" },
-  status: {
+  // The top edge: left and right corners as wide as each other, so the middle stays centred.
+  top: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto minmax(0, 1fr)", columnGap: "12px", alignItems: "start" },
+  // The minimap and the mode's panel under it, one width (smaller on a short screen).
+  topLeft: { width: "clamp(190px, 26vh, 230px)", maxWidth: "100%", justifySelf: "start" },
+  topCentre: { minWidth: 0, maxWidth: "min(520px, 44vw)" },
+  topRight: { minWidth: 0, justifySelf: "end" },
+  dock: { gridRow: "3", justifySelf: "center", minWidth: 0, maxWidth: "100%" },
+  // The bottom edge: you at the left (taking what's left), your gear at the right.
+  bottom: { gridRow: "4", display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: "12px" },
+  bottomLeft: { flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0 },
+  // Your bar and the abilities side by side; on a narrow screen the abilities go up a line, over the bar.
+  you: { display: "flex", flexWrap: "wrap-reverse", alignItems: "flex-start", gap: "8px" },
+  bottomRight: { flexShrink: 0 },
+  // Just under the character (the camera keeps it at the centre of the screen).
+  alert: {
     position: "absolute",
-    top: "80px",
+    top: "calc(50% + max(40px, 6vh))",
     left: "50%",
     transform: "translateX(-50%)",
-    paddingBlock: "6px",
-    paddingInline: "14px",
-    fontSize: "14px",
-    borderRadius: "6px",
-    backgroundColor: "var(--bagarre-hud-panel)",
+    display: "grid",
+    justifyItems: "center",
   },
+  // Every alert in the same cell: one shows, the fading swap prompt over what follows it.
+  alertItem: { gridArea: "1 / 1" },
+  alertHidden: { display: "none" },
+  player: { width: "min(320px, 38vw)" },
+  me: { width: "min(340px, calc(100vw - 32px))" },
+  right: { textAlign: "end" },
+  absent: { opacity: 0.35 },
+  nameLine: { gap: "8px", marginBlockEnd: "6px" },
+  name: { fontSize: "13px", fontWeight: 600, opacity: 0.9, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  // The perk glyph after the opponent's name.
+  namePerk: { marginInlineStart: "6px" },
+  // Your perk: a small badge after your name, its name and what it does on hover.
+  perkBadge: {
+    flexShrink: 0,
+    paddingInline: "6px",
+    borderRadius: "4px",
+    fontSize: "13px",
+    lineHeight: "18px",
+    boxShadow: "inset 0 0 0 1px rgba(224, 180, 255, 0.55)",
+    backgroundColor: "rgba(224, 180, 255, 0.12)",
+    pointerEvents: "auto",
+    cursor: "help",
+  },
+  hp: { height: "10px", borderRadius: "5px", overflow: "hidden", backgroundColor: "rgba(255, 255, 255, 0.12)" },
+  hpMine: { height: "14px", borderRadius: "7px", flexGrow: 1 },
+  hpRight: { transform: "scaleX(-1)" },
+  hpValue: { minWidth: "3ch", fontSize: "18px", fontWeight: 800, lineHeight: 1, textAlign: "end" },
+  // Scaled, not resized: the HP change animates on the compositor.
+  hpFill: { height: "100%", width: "100%", transformOrigin: "left center", transition: "transform 120ms linear" },
+  // The shield bubble's strength left, a thin bar under the HP; empty (and dim) with no bubble up.
+  shieldBar: { height: "4px", marginBlockStart: "4px", borderRadius: "2px", overflow: "hidden", backgroundColor: "rgba(159, 230, 255, 0.12)" },
+  shieldFill: { height: "100%", width: "100%", transformOrigin: "left center", backgroundColor: "#9fe6ff", transition: "transform 120ms linear" },
+  score: { paddingInline: "16px", fontSize: "22px", fontWeight: 700, whiteSpace: "nowrap" },
+  status: { paddingBlock: "6px", paddingInline: "14px", fontSize: "14px", textAlign: "center" },
   mapCard: {
-    position: "absolute",
-    top: "22%",
-    left: "50%",
-    transform: "translate(-50%, -50%)",
-    maxWidth: "min(520px, calc(100vw - 32px))",
+    maxWidth: "100%",
     textAlign: "center",
     padding: "12px 24px",
     borderRadius: "10px",
-    backgroundColor: "var(--bagarre-hud-panel)",
     animationName: {
-      default: stylex.keyframes({ from: { opacity: 0, transform: "translate(-50%, -50%) translateY(-6px)" } }),
+      default: stylex.keyframes({ from: { opacity: 0, transform: "translateY(-6px)" } }),
       "@media (prefers-reduced-motion: reduce)": "none",
     },
     animationDuration: "0.3s",
@@ -103,16 +144,15 @@ const styles = stylex.create({
   },
   mapTitle: { fontSize: "26px", fontWeight: 800, letterSpacing: "0.02em" },
   mapSub: { marginBlockStart: "4px", fontSize: "14px", opacity: 0.8 },
-  debug: { position: "absolute", bottom: "10px", left: "12px", fontSize: "12px", opacity: 0.6 },
-  watchers: { position: "absolute", bottom: "32px", left: "12px", fontSize: "12px", opacity: 0.7 },
-  bottom: { position: "absolute", bottom: "16px", left: "50%", transform: "translateX(-50%)" },
+  debug: { fontSize: "12px", opacity: 0.6, whiteSpace: "nowrap" },
+  watchers: { fontSize: "12px", opacity: 0.7 },
   weapon: { minWidth: "130px", paddingInline: "12px" },
   wname: { fontSize: "13px", fontWeight: 600, opacity: 0.85 },
   ammo: { fontSize: "22px", fontWeight: 700 },
   reload: { height: "4px", marginBlockStart: "4px", borderRadius: "2px", overflow: "hidden", backgroundColor: "rgba(255, 255, 255, 0.12)" },
   reloadFill: { height: "100%", width: 0, backgroundColor: "var(--bagarre-gold)" },
   ability: { position: "relative", width: "76px", textAlign: "center", overflow: "hidden", paddingInline: "12px" },
-  sound: { width: "56px" },
+  sound: { paddingBlock: "4px", fontSize: "12px", whiteSpace: "nowrap" },
   muted: { opacity: 0.55 },
   ready: { boxShadow: "inset 0 0 0 1px rgba(255, 255, 255, 0.45)" },
   active: { boxShadow: "inset 0 0 0 2px #9fe6ff" },
@@ -121,18 +161,12 @@ const styles = stylex.create({
   key: { fontSize: "11px", opacity: 0.7 },
   label: { fontSize: "13px", fontWeight: 600 },
   t: { fontSize: "12px", minHeight: "15px" },
-  picker: { position: "absolute", bottom: "96px", left: "50%", transform: "translateX(-50%)", fontSize: "12px" },
+  picker: { flexWrap: "wrap", justifyContent: "center", fontSize: "12px" },
   pick: { paddingBlock: "4px", paddingInline: "8px", borderRadius: "5px", opacity: 0.55 },
   picked: { opacity: 1, boxShadow: "inset 0 0 0 1px #fff" },
-  lockedPick: { opacity: 0.35 },
-  lockedPicked: { opacity: 0.7 },
   hint: { opacity: 0.75, marginInlineStart: "4px" },
   pickPerk: { whiteSpace: "nowrap" },
   warmup: {
-    position: "absolute",
-    bottom: "96px",
-    left: "50%",
-    transform: "translateX(-50%)",
     width: "min(560px, calc(100vw - 32px))",
     paddingBlock: "12px",
     paddingInline: "14px",
@@ -142,10 +176,6 @@ const styles = stylex.create({
   warmupNumber: { color: "var(--bagarre-gold)" },
   warmupSub: { fontSize: "13px", opacity: 0.8 },
   stunned: {
-    position: "absolute",
-    bottom: "172px",
-    left: "50%",
-    transform: "translateX(-50%)",
     minWidth: "170px",
     color: "#9fe6ff",
     boxShadow: "inset 0 0 0 1px rgba(159, 230, 255, 0.6)",
@@ -166,51 +196,87 @@ export function Hud() {
   const big = layout !== "duel";
   const royale = layout === "royale";
   return (
-    <VStack xstyle={styles.root} data-testid="hud" aria-hidden="false">
-      {big ? (
-        <HStack justify="between" align="start" gap={4} xstyle={styles.top}>
-          <PlayerBar mine />
-          <VStack gap={2} align="end">
-            {layout === "team" ? <TeamPanel /> : royale ? <RoyalePanel /> : <FfaPanel />}
-            <KillFeed />
-          </VStack>
-        </HStack>
-      ) : (
-        <HStack justify="between" align="center" gap={4} xstyle={styles.top}>
-          <PlayerBar mine />
-          <Score />
-          <PlayerBar mine={false} />
-        </HStack>
-      )}
-      {big && <MinimapBox />}
-      <Status />
-      {royale && <ZoneArrow />}
-      <MapCard />
-      <Warmup />
-      {!royale && <Picker />}
-      <HStack gap={2} align="stretch" xstyle={styles.bottom}>
-        {royale ? <GunSlots /> : <Weapon />}
-        {royale && <HealItems />}
-        <Ability kind="dash" keyLabel="Space" label="Dash" />
-        <Ability kind="grenade" keyLabel="Q" label="Grenade" />
-        <Ability kind="shield" keyLabel="E" label="Shield" />
-        <Ability kind="melee" keyLabel="V" label="Melee" />
-        <Perk />
-        <Sound />
-      </HStack>
-      <Stunned />
-      {royale && <SwapPrompt />}
-      {royale && <HealStatus />}
-      {royale && <LootFeed />}
-      <Watchers />
-      <Debug />
+    <div {...stylex.props(styles.root)} data-testid="hud" aria-hidden="false">
+      <div {...stylex.props(styles.top)}>
+        <VStack gap={2} align="stretch" xstyle={styles.topLeft} data-testid="hud-top-left">
+          {big && <MinimapBox />}
+          {layout === "team" ? <TeamPanel /> : royale ? <RoyalePanel /> : layout === "ffa" ? <FfaPanel /> : null}
+        </VStack>
+        <VStack gap={2} align="center" xstyle={styles.topCentre} data-testid="hud-top-centre">
+          {!big && <Score />}
+          <Status />
+          {royale && <ZoneArrow />}
+          <MapCard />
+        </VStack>
+        <VStack gap={2} align="end" xstyle={styles.topRight} data-testid="hud-top-right">
+          {big ? <KillFeed /> : <PlayerBar mine={false} />}
+        </VStack>
+      </div>
+      <VStack gap={2} align="center" xstyle={styles.dock}>
+        <Warmup />
+        {!royale && <Picker />}
+      </VStack>
+      <div {...stylex.props(styles.bottom)}>
+        <VStack gap={2} align="start" xstyle={styles.bottomLeft} data-testid="hud-bottom-left">
+          {royale && <LootFeed />}
+          <Watchers />
+          <div {...stylex.props(styles.you)}>
+            <PlayerBar mine />
+            <HStack gap={2} align="stretch" data-testid="hud-abilities">
+              <Ability kind="dash" keyLabel="Space" label="Dash" />
+              <Ability kind="grenade" keyLabel="Q" label="Grenade" />
+              <Ability kind="shield" keyLabel="E" label="Shield" />
+              <Ability kind="melee" keyLabel="V" label="Melee" />
+            </HStack>
+          </div>
+          {/* The netcode line, for us: dev builds only. */}
+          {import.meta.env.DEV && <Debug />}
+        </VStack>
+        <VStack gap={2} align="end" xstyle={styles.bottomRight} data-testid="hud-bottom-right">
+          {royale ? <GunSlots /> : <Weapon />}
+          <HStack gap={2} align="end">
+            {royale && <HealItems />}
+            <Sound />
+          </HStack>
+        </VStack>
+      </div>
+      <Alert royale={royale} />
       <FlashScreen />
-    </VStack>
+    </div>
   );
 }
 
 /**
- * Stunned by a stun grenade: a small badge over the ability bar with the
+ * The alert slot under the character: one thing at a time, by priority,
+ * stunned (it blocks the dash) over the F prompt over the heal's progress.
+ * They all stay mounted (the prompt fades in and out, and the tests read
+ * their data attributes); the ones behind the top one are hidden.
+ */
+function Alert({ royale }: { royale: boolean }) {
+  countRender("hud.alert");
+  const { hud } = useEngine();
+  const top = useSelector(hud, (m) =>
+    (m?.sim?.stunTicks ?? 0) > 0 ? "stun" : m?.royale?.prompt ? "swap" : m?.royale && (m.royale.healing >= 0 || m.royale.healNote !== "") ? "heal" : null,
+  );
+  return (
+    <div {...stylex.props(styles.alert)} data-testid="hud-alert" data-top={top ?? undefined}>
+      <Stunned />
+      {royale && (
+        <VStack xstyle={[styles.alertItem, top === "stun" && styles.alertHidden]}>
+          <SwapPrompt />
+        </VStack>
+      )}
+      {royale && (
+        <VStack xstyle={[styles.alertItem, top !== "heal" && styles.alertHidden]}>
+          <HealStatus />
+        </VStack>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Stunned by a stun grenade: a small badge under the character with the
  * time left, while the predicted stun runs (the slow and the dash block are
  * the shared step's). The time and bar are written per frame, off React.
  */
@@ -229,7 +295,7 @@ function Stunned() {
   });
   if (!on) return null;
   return (
-    <VStack xstyle={[styles.panel, styles.stunned]} data-testid="hud-stunned" role="status" aria-label="Stunned: slowed, no dash">
+    <VStack xstyle={[shared.hudBox, styles.stunned, styles.alertItem]} data-testid="hud-stunned" role="status" aria-label="Stunned: slowed, no dash">
       <HStack gap={1.5} align="center" justify="center">
         <Text xstyle={styles.label}>⚡ Stunned · no dash</Text>
         <Text ref={t} xstyle={[styles.t, shared.tabular]}>
@@ -264,7 +330,7 @@ function FlashScreen() {
   return <VStack ref={el} xstyle={styles.flash} data-testid="hud-flash" aria-hidden />;
 }
 
-/** How many are watching, small in the corner: players see they have an audience. Nothing when nobody is. */
+/** How many are watching, small by your bar: players see they have an audience. Nothing when nobody is. */
 function Watchers() {
   countRender("hud.watchers");
   const { hud } = useEngine();
@@ -277,6 +343,13 @@ function Watchers() {
   );
 }
 
+/**
+ * A player's bar: the name, the HP and the shield bubble's strength left.
+ * Ours (bottom left) is the big one, with the HP as a number and our perk as
+ * a badge after the name (`hud-perk`, `data-perk` its key; the name and what
+ * it does on hover). The duel opponent's (top right) fills from the right,
+ * its perk a glyph after the name.
+ */
 function PlayerBar({ mine }: { mine: boolean }) {
   countRender(mine ? "hud.me" : "hud.opponent");
   const { hud } = useEngine();
@@ -284,29 +357,74 @@ function PlayerBar({ mine }: { mine: boolean }) {
     hud,
     (m) => {
       const v = mine ? m?.me : m?.opponent;
-      return { name: v?.name ?? "", hp: v?.hp ?? 0, slot: v ? paintOf(v) : null, present: !!v, away: !!v && !v.connected, perk: v?.perk ?? NO_PERK };
+      return {
+        name: v?.name ?? "",
+        hp: v?.hp ?? 0,
+        shield: v && v.shieldTicks > 0 ? v.shieldHp / SHIELD.absorb : 0,
+        slot: v ? paintOf(v) : null,
+        present: !!v,
+        away: !!v && !v.connected,
+        // Ours: the predicted perk first (a royale pickup shows at once).
+        perk: (mine ? m?.sim?.perk : undefined) ?? v?.perk ?? NO_PERK,
+      };
     },
     shallowEqual,
   );
   const name = p.name ? (mine ? `${p.name} (you)` : p.name) : mine ? "You" : "Opponent";
   // The opponent's connection dropped: the server keeps their seat for a while.
   const label = p.away ? `${name} · reconnecting…` : name;
+  const perk = perkDef(p.perk);
+  const hp = (
+    <VStack
+      xstyle={[styles.hp, mine && styles.hpMine, !mine && styles.hpRight]}
+      role="meter"
+      aria-label={`${name} health`}
+      aria-valuemin={0}
+      aria-valuemax={MAX_HP}
+      aria-valuenow={p.hp}
+    >
+      <VStack xstyle={[styles.hpFill, slotFill(p.slot)]} style={{ transform: `scaleX(${p.hp / MAX_HP})` }} />
+    </VStack>
+  );
   return (
     <VStack
-      xstyle={[styles.panel, styles.player, !mine && styles.right, (!p.present || p.away) && styles.absent]}
+      xstyle={[shared.hudBox, mine ? styles.me : styles.player, !mine && styles.right, (!p.present || p.away) && styles.absent]}
       data-away={p.away || undefined}
       data-testid={mine ? "hud-me" : "hud-opponent"}
     >
-      <Text xstyle={styles.name} color="inherit">
-        {label}
-        {perkDef(p.perk) && (
-          <Text as="span" color="inherit" xstyle={styles.namePerk} aria-label={perkDef(p.perk)?.name} data-testid={mine ? "hud-me-perk" : "hud-opponent-perk"}>
+      <HStack align="center" justify={mine ? "start" : "end"} xstyle={styles.nameLine}>
+        <Text xstyle={styles.name} color="inherit">
+          {label}
+          {!mine && perk && (
+            <Text as="span" color="inherit" xstyle={styles.namePerk} aria-label={perk.name} data-testid="hud-opponent-perk">
+              {perkView(p.perk)?.icon}
+            </Text>
+          )}
+        </Text>
+        {mine && perk && (
+          <span
+            {...stylex.props(styles.perkBadge)}
+            title={`${perk.name}: ${perkView(p.perk)?.blurb ?? ""}`}
+            aria-label={`Perk: ${perk.name}. ${perkView(p.perk)?.blurb ?? ""}`}
+            data-testid="hud-perk"
+            data-perk={perk.key}
+          >
             {perkView(p.perk)?.icon}
-          </Text>
+          </span>
         )}
-      </Text>
-      <VStack xstyle={[styles.hp, !mine && styles.hpRight]} role="meter" aria-label={`${name} health`} aria-valuemin={0} aria-valuemax={MAX_HP} aria-valuenow={p.hp}>
-        <VStack xstyle={[styles.hpFill, slotFill(p.slot)]} style={{ transform: `scaleX(${p.hp / MAX_HP})` }} />
+      </HStack>
+      {mine ? (
+        <HStack gap={2} align="center">
+          {hp}
+          <Text xstyle={[styles.hpValue, shared.tabular]} aria-hidden>
+            {p.hp}
+          </Text>
+        </HStack>
+      ) : (
+        hp
+      )}
+      <VStack xstyle={[styles.shieldBar, !mine && styles.hpRight]} data-testid={mine ? "hud-me-shield" : undefined} data-shield={p.shield > 0 ? "" : undefined}>
+        <VStack xstyle={styles.shieldFill} style={{ transform: `scaleX(${p.shield})` }} />
       </VStack>
     </VStack>
   );
@@ -317,7 +435,7 @@ function Score() {
   const { hud } = useEngine();
   const score = useSelector(hud, (m) => `${m?.me?.kills ?? 0} - ${m?.opponent?.kills ?? 0}`);
   return (
-    <Text xstyle={[styles.panel, styles.score, shared.tabular]} aria-label={`Score, first to ${KILLS_TO_WIN}: ${score}`} data-testid="hud-score">
+    <Text xstyle={[shared.hudBox, styles.score, shared.tabular]} aria-label={`Score, first to ${KILLS_TO_WIN}: ${score}`} data-testid="hud-score">
       {score}
     </Text>
   );
@@ -329,7 +447,7 @@ function Status() {
   const status = useSelector(hud, (m) => m?.status ?? "");
   if (!status) return null;
   return (
-    <Text xstyle={styles.status} data-testid="hud-status">
+    <Text xstyle={[shared.hudBox, styles.status]} data-testid="hud-status">
       {status}
     </Text>
   );
@@ -346,7 +464,7 @@ function MapCard() {
   });
   if (!card) return null;
   return (
-    <VStack ref={el} xstyle={styles.mapCard} data-testid="hud-map">
+    <VStack ref={el} xstyle={[shared.hudBox, styles.mapCard]} data-testid="hud-map">
       <Text xstyle={styles.mapTitle}>{card.title}</Text>
       <Text xstyle={styles.mapSub}>{card.sub}</Text>
     </VStack>
@@ -378,7 +496,7 @@ function Weapon() {
     if (fill.current && fill.current.style.width !== width) fill.current.style.width = width;
   });
   return (
-    <VStack xstyle={[styles.panel, styles.weapon]} data-testid="hud-weapon">
+    <VStack xstyle={[shared.hudBox, styles.weapon]} data-testid="hud-weapon">
       <Text xstyle={styles.wname}>{w.name}</Text>
       <Text xstyle={[styles.ammo, shared.tabular]} data-testid="hud-ammo">
         {w.ammo}
@@ -449,7 +567,7 @@ function Ability({ kind, keyLabel, label }: { kind: keyof typeof ABILITY; keyLab
   });
   return (
     <VStack
-      xstyle={[styles.panel, styles.ability, state.ready && styles.ready, state.active && styles.active]}
+      xstyle={[shared.hudBox, styles.ability, state.ready && styles.ready, state.active && styles.active]}
       data-testid={`hud-${kind}`}
       data-ready={state.ready ? "" : undefined}
       data-type={state.grenade >= 0 ? GRENADES[state.grenade]?.key : undefined}
@@ -466,34 +584,19 @@ function Ability({ kind, keyLabel, label }: { kind: keyof typeof ABILITY; keyLab
   );
 }
 
-/**
- * The perk we hold, next to the abilities: its glyph and name (and what it
- * does, for screen readers). Nothing with none. `data-perk` (its key) for the tests.
- */
-function Perk() {
-  countRender("hud.perk");
-  const { hud } = useEngine();
-  const perk = useSelector(hud, (m) => m?.sim?.perk ?? m?.me?.perk ?? NO_PERK);
-  const def = perkDef(perk);
-  if (!def) return null;
-  return (
-    <VStack xstyle={[styles.panel, styles.perk]} data-testid="hud-perk" data-perk={def.key} aria-label={`Perk: ${def.name}. ${perkView(perk)?.blurb ?? ""}`}>
-      <Text xstyle={styles.key}>Perk</Text>
-      <Text xstyle={styles.perkName}>{perkLabel(perk)}</Text>
-    </VStack>
-  );
-}
-
 function Sound() {
   countRender("hud.sound");
   const { hud } = useEngine();
   const muted = useSelector(hud, (m) => !!m?.muted);
   return (
-    <VStack xstyle={[styles.panel, styles.ability, styles.sound, muted && styles.muted]} data-testid="hud-sound">
-      <Text xstyle={styles.key}>M</Text>
-      <Text xstyle={styles.label}>Sound</Text>
-      <Text xstyle={styles.t}>{muted ? "off" : "on"}</Text>
-    </VStack>
+    <HStack gap={1.5} align="center" xstyle={[shared.hudBox, styles.sound, muted && styles.muted]} data-testid="hud-sound" data-muted={muted ? "" : undefined}>
+      <Text as="span" color="inherit" xstyle={styles.key}>
+        M
+      </Text>
+      <Text as="span" color="inherit">
+        Sound {muted ? "off" : "on"}
+      </Text>
+    </HStack>
   );
 }
 
@@ -509,7 +612,7 @@ function Warmup() {
   const royale = useSelector(hud, (m) => !!m?.royale);
   if (seconds === null) return null;
   return (
-    <VStack gap={1} xstyle={[styles.panel, styles.warmup]} data-testid="warmup">
+    <VStack gap={1} xstyle={[shared.hudBox, styles.warmup]} data-testid="warmup">
       <Text xstyle={[shared.display, styles.warmupTitle, shared.tabular]} aria-live="polite" data-testid="warmup-timer" data-seconds={seconds}>
         Match starts in{" "}
         <Text as="span" color="inherit" xstyle={styles.warmupNumber}>
@@ -552,30 +655,24 @@ function Picker() {
     }),
     shallowEqual,
   );
-  // The warmup panel has the full picker.
-  if (warmup) return null;
+  // The warmup panel has the full picker; playing and alive, there is nothing to pick.
+  if (warmup || !p.canPick) return null;
   const changed = p.pick !== p.weapon || p.grenadePick !== p.grenade || p.perkPick !== p.perk;
-  const hint = p.canPick ? (changed ? "applies on respawn" : `${WEAPON_KEYS} weapon, G grenade`) : "pick while dead";
+  const hint = changed ? "applies on respawn" : `${WEAPON_KEYS} weapon, G grenade`;
   return (
     <HStack gap={1.5} align="center" xstyle={styles.picker} data-testid="hud-picker">
       {PICKABLE_WEAPONS.map((i) => WEAPONS[i]).map((w, i) => (
         <Text
           key={w.name}
-          xstyle={[
-            styles.panel,
-            styles.pick,
-            !p.canPick && styles.lockedPick,
-            i === p.pick && styles.picked,
-            i === p.pick && !p.canPick && styles.lockedPicked,
-          ]}
+          xstyle={[shared.hudBox, styles.pick, i === p.pick && styles.picked]}
         >
           {i + 1} {w.name}
         </Text>
       ))}
-      <Text xstyle={[styles.panel, styles.pick, styles.picked, !p.canPick && styles.lockedPicked]} data-testid="hud-picker-grenade">
+      <Text xstyle={[shared.hudBox, styles.pick, styles.picked]} data-testid="hud-picker-grenade">
         G {grenadeView(p.grenadePick).icon} {grenadeDef(p.grenadePick).name}
       </Text>
-      <Text xstyle={[styles.panel, styles.pick, styles.pickPerk, styles.picked, !p.canPick && styles.lockedPicked]} data-testid="hud-picker-perk">
+      <Text xstyle={[shared.hudBox, styles.pick, styles.pickPerk, styles.picked]} data-testid="hud-picker-perk">
         {perkLabel(p.perkPick) || "No perk"}
       </Text>
       <Text xstyle={styles.hint}>{hint}</Text>

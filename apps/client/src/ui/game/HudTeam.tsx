@@ -1,5 +1,5 @@
-// The team deathmatch's own HUD piece, mounted by Hud.tsx when the HUD model
-// has `team`: the team score ("RED 12 – 9 BLUE"), the time left, and our own
+// The team deathmatch's own HUD piece, mounted by Hud.tsx under the minimap
+// when the HUD model has `team`: the team score ("RED 12 – 9 BLUE"), the time left, and our own
 // team marked. The kill feed and the minimap are the FFA ones (HudFfa.tsx),
 // in team colours. Like the rest of the HUD it re-renders on a kill or when
 // the clock's seconds change, never per frame.
@@ -15,13 +15,9 @@ import { shared, slotText } from "../styles.ts";
 
 const styles = stylex.create({
   panel: {
-    backgroundColor: "var(--bagarre-hud-panel)",
-    borderRadius: "var(--radius-element)",
-    paddingBlock: "8px",
     paddingInline: "12px",
     gap: "4px",
     alignItems: "center",
-    minWidth: "min(230px, 40vw)",
   },
   score: { gap: "10px", alignItems: "baseline", whiteSpace: "nowrap" },
   team: { fontSize: "13px", letterSpacing: "0.08em" },
@@ -47,7 +43,7 @@ export function TeamPanel() {
   const yours = t.you === TEAM_RED || t.you === TEAM_BLUE ? TEAM_NAMES[t.you] : "";
   return (
     <VStack
-      xstyle={styles.panel}
+      xstyle={[shared.hudBox, styles.panel]}
       data-testid="hud-team"
       data-red={t.red}
       data-blue={t.blue}

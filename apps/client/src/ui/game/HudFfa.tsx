@@ -1,6 +1,6 @@
 // The free-for-all's own HUD pieces, mounted by Hud.tsx when the HUD model
-// has `ffa`: the rank panel (your place, the top three, the clock) and the
-// kill feed at the top right, and the minimap at the bottom right.
+// has `ffa`: the minimap and the rank panel (your place, the top three, the
+// clock) under it at the top left, and the kill feed at the top right.
 //
 // Like the rest of the HUD, nothing here renders per frame: the panel
 // re-renders on a kill or when the clock's seconds change, the feed when a
@@ -17,13 +17,7 @@ import { jsonEqual, useEngine, useSelector, useStoreEffect } from "../hooks.ts";
 import { shared, slotDot, slotText } from "../styles.ts";
 
 const styles = stylex.create({
-  panel: {
-    backgroundColor: "var(--bagarre-hud-panel)",
-    borderRadius: "var(--radius-element)",
-    paddingBlock: "8px",
-    paddingInline: "10px",
-  },
-  rankPanel: { width: "min(230px, 40vw)", gap: "6px" },
+  rankPanel: { gap: "6px" },
   rank: { fontSize: "13px", fontWeight: 700 },
   rankPlace: { fontSize: "20px", marginInlineEnd: "6px" },
   time: { fontSize: "15px", fontWeight: 700, whiteSpace: "nowrap" },
@@ -41,7 +35,7 @@ const styles = stylex.create({
   topYou: { backgroundColor: "rgba(255, 255, 255, 0.1)", fontWeight: 700 },
   topName: { flexGrow: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   topKills: { fontWeight: 700 },
-  feed: { gap: "4px", alignItems: "flex-end", maxWidth: "min(360px, 60vw)" },
+  feed: { gap: "4px", alignItems: "flex-end", maxWidth: "min(360px, 100%)" },
   line: {
     gap: "8px",
     paddingBlock: "4px",
@@ -65,13 +59,10 @@ const styles = stylex.create({
     letterSpacing: "0.04em",
     textTransform: "uppercase",
   },
+  // As wide as the top left column (Hud.tsx), square: minimap.ts draws to its width.
   minimap: {
-    position: "absolute",
-    right: "16px",
-    // Above the ability bar where the screen is too narrow for both side by side.
-    bottom: { default: "16px", "@media (max-width: 1000px)": "110px" },
-    width: "150px",
-    height: "150px",
+    width: "100%",
+    aspectRatio: "1",
     borderRadius: "var(--radius-container)",
     borderWidth: "1px",
     borderStyle: "solid",
@@ -105,7 +96,7 @@ export function FfaPanel() {
   if (!f) return null;
   const clock = f.suddenDeath ? "Sudden death" : f.timeLeft;
   return (
-    <VStack xstyle={[styles.panel, styles.rankPanel]} data-testid="hud-ffa">
+    <VStack xstyle={[shared.hudBox, styles.rankPanel]} data-testid="hud-ffa">
       <HStack justify="between" align="center" gap={2}>
         <Text xstyle={[styles.rank, shared.tabular]} data-testid="hud-ffa-rank" aria-label={`You are ${f.rankLabel} of ${f.players}, ${f.kills} kills`}>
           <Text as="span" xstyle={[shared.display, styles.rankPlace]} color="inherit">

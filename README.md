@@ -357,6 +357,16 @@ TypeScript: React never runs per frame and there is no React Three Fiber.
   to the DOM from a store subscription (`useStoreEffect`), outside React. An
   idle HUD does not re-render at all; in dev, `window.__bagarre.renders`
   counts renders per widget.
+- The HUD (`src/ui/game/Hud.tsx`) is one grid over the screen, laid out like
+  most shooters: world info along the top (minimap and the mode's panel top
+  left, score, status and map card in the middle, kill feed or the duel
+  opponent top right), your own state along the bottom (your bar, perk and
+  abilities bottom left, the loot feed over them; guns, ammo, heals and the
+  sound toggle bottom right), and the warmup panel or the picker line (while
+  dead) centred just above. One alert sits right under your character
+  (stunned, else the F prompt, else the heal), which the camera keeps at
+  the centre. No box has a hand-tuned offset: they stack in their corner.
+  The netcode debug line shows in dev builds only.
 - `src/keys.ts` holds the app keys (Esc, Tab, M and the weapon number keys on cards) and the
   input isolation rules; `src/uiState.ts` says which panel is open, so the
   loop keeps the game's input off meanwhile.
@@ -411,7 +421,10 @@ TypeScript: React never runs per frame and there is no React Three Fiber.
   `spectate-watching`, `spectate-mode` (and `spectate-mode-{follow,overview,free}`),
   `spectate-hints`, `spectate-count`, `spectate-join`, `spectate-leave`,
   `spectate-players`, `spectate-player`, `spectate-status` and the players'
-  `hud-spectators`. The Maps page adds `open-maps`, `maps`, `maps-back`,
+  `hud-spectators`. The HUD's layout adds `hud-top-left`, `hud-top-centre`,
+  `hud-top-right`, `hud-bottom-left`, `hud-bottom-right`, `hud-abilities`,
+  `hud-alert` (with `data-top`: `stun`, `swap` or `heal`, the one shown),
+  `hud-perk` (with `data-perk`) and `hud-me-shield`. The Maps page adds `open-maps`, `maps`, `maps-back`,
   `map-card-<id>`, `map-size-<id>`, `map-plan-<id>`, `map-teams-<id>`,
   `walk-<id>`, and the walk's `walk` (with `data-mode`), `walk-map`,
   `walk-mode` (and `walk-mode-{overview,free}`) and `walk-back`. Open games
@@ -489,8 +502,8 @@ Duel maps stay duel-only, and FFA maps never show up in a duel.
   kept on the match's `bagarre_matches` row, with the mode.
 
 In a game: the HUD adds your rank ("2nd of 5 · 7 kills"), the top three, the
-time left, a kill feed (killer, weapon, victim) and a minimap in the bottom
-right corner (zones, cover, landmarks, you; enemies only show up when they
+time left, a kill feed (killer, weapon, victim) and a minimap in the top
+left corner, over the rank panel (zones, cover, landmarks, you; enemies only show up when they
 fire, as a dot fading over 1.5 s). Tab lists every player by place. The
 waiting card lists who's in and says the match starts when 3 are in, then
 counts down.
@@ -688,7 +701,7 @@ the royale map's layout, see [docs/royale-maps.md](docs/royale-maps.md)).
   Everyone still in the room is back in the lobby, on their feet with the
   Pistol, and the host starts the next match with Start, like the first.
 
-In a game the HUD shows who is still in and the zone's timer (top right),
+In a game the HUD shows who is still in and the zone's timer (top left, under the minimap),
 the three slots with their magazines in place of the weapon box, the
 bandages and medkits, the grenade and shield charge counts, the heal in
 progress (or how it ended), an arrow back to the zone when you are outside,
@@ -883,7 +896,9 @@ battle royale). In a duel, FFA or team match you pick one (or none) next to
 your weapon, on the waiting and result cards or in the warmup; in the
 battle royale they are chest loot: walking over one takes it with none
 held, and F swaps the one you hold for the one on the floor (the old one is
-left there). Everyone sees your perk as a glyph after your name.
+left there). Everyone sees your perk as a glyph over your head (and a duel
+opponent after your name on their bar); your own is a badge after your name,
+bottom left, its name and what it does on hover.
 
 How it works: the table is `PERKS` in constants.ts (index = id on the
 wire, append-only, `NO_PERK` 255 for none). The perk held is

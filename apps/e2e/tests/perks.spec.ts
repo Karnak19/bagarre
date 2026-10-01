@@ -127,13 +127,12 @@ test("a duel: the perk picked on the waiting card is held from the start, shown 
   await expect.poll(async () => a.me(await a.state())?.perk).toBe(DOUBLE);
   expect(b.me(await b.state())?.perk).toBe(NO_PERK);
 
-  // A's HUD: the perk box and the glyph by A's name. B's: by A's bar, and over A's head.
+  // A's HUD: the perk badge by A's name (its name on hover). B's: by A's bar, and over A's head.
   await expect(a.testId("hud-perk")).toHaveAttribute("data-perk", "double-dash");
-  await expect(a.testId("hud-perk")).toContainText("Double dash");
-  await expect(a.testId("hud-me-perk")).toHaveText("⏩");
+  await expect(a.testId("hud-perk")).toHaveText("⏩");
+  await expect(a.testId("hud-perk")).toHaveAttribute("title", /Double dash/);
   await expect(b.testId("hud-opponent-perk")).toHaveText("⏩");
   await expect(b.testId("hud-perk")).toHaveCount(0);
-  await expect(b.testId("hud-me-perk")).toHaveCount(0);
   await expect.poll(() => badgeOf(b, ida)).toBe("⏩");
 
   // Two dashes on A's dash box, none counted on B's (the plain dash).

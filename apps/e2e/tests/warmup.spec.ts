@@ -109,10 +109,10 @@ test("a duel starts with a warmup: pick a loadout in hand at once, no bullet, th
   await expect.poll(() => a.sfxSince(sounds)).toContain("sniper");
   await a.bot({ on: false, fire: false });
 
-  // Playing and alive: a pick no longer goes through.
+  // Playing and alive: a pick no longer goes through, and the picker line is gone (it shows while dead).
   await a.focusGame();
   await a.page.keyboard.press("Digit1");
-  await expect(a.testId("hud-picker")).toBeVisible();
+  await expect(a.testId("hud-picker")).toHaveCount(0);
   const after = a.me(await a.state())!;
   expect([after.pick, after.weapon]).toEqual([SNIPER, SNIPER]);
 });
