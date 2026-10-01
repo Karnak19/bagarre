@@ -297,6 +297,25 @@ export const SHIELD = {
   cooldown: 10,
 } as const;
 
+/**
+ * Melee strike (V): everyone has it, next to the gun, in every mode. Instant:
+ * on the tick it is pressed, every enemy in a short cone in the aim
+ * direction takes the hit (the server's, against the same rewound poses as
+ * bullets; see `meleeReaches` in combat.ts). Two strikes kill a full-health
+ * player; the shield soaks it first, like any damage.
+ */
+export const MELEE = {
+  /** Reach, metres from the attacker's centre to the edge of the target's body (about one body length between the two). */
+  range: 1.6,
+  /** Full cone angle round the aim, radians (90°), to the target's centre. */
+  angle: Math.PI / 2,
+  damage: 50,
+  /** Seconds from a strike until the next one is allowed. It doesn't stop a reload in progress. */
+  cooldown: 0.8,
+  /** Seconds after a strike before the gun may fire again, so a strike and a shot are never one instant burst. */
+  fireLockout: 0.25,
+} as const;
+
 // Derived tick counts (do not tune these, tune the tables above).
 export const DASH_TICKS = ticks(DASH.duration);
 export const DASH_SPEED = DASH.distance / (DASH_TICKS * TICK_DT);
@@ -306,6 +325,8 @@ export const SMOKE_TICKS = ticks(SMOKE.duration);
 export const STUN_TICKS = ticks(STUN.duration);
 export const SHIELD_TICKS = ticks(SHIELD.duration);
 export const SHIELD_COOLDOWN_TICKS = ticks(SHIELD.cooldown);
+export const MELEE_COOLDOWN_TICKS = ticks(MELEE.cooldown);
+export const MELEE_LOCKOUT_TICKS = ticks(MELEE.fireLockout);
 
 // --- Match flow ---
 export const KILLS_TO_WIN = 5;

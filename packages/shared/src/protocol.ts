@@ -88,6 +88,11 @@ export interface InputMessage {
    */
   heal?: number;
   use?: number;
+  /**
+   * The melee strike's press counter (V), like `dash` above. Optional on the
+   * wire: an input from an older client has none, and parseInput reads it as 0.
+   */
+  melee?: number;
 }
 
 /**
@@ -147,6 +152,14 @@ export interface PlayerSim {
    * client predicts the slow exactly like the server (no rubber-banding).
    */
   stunTicks: number;
+  /**
+   * Melee strike: ticks until the next one is allowed, and the highest
+   * `melee` press counter already consumed. A strike also holds `fireCd` up
+   * for MELEE_LOCKOUT_TICKS. Both in the step, so the client predicts them.
+   * Synced like the rest: another client sees a strike as `meleeCd` jumping up.
+   */
+  meleeCd: number;
+  meleeSeen: number;
   /**
    * Health (0..MAX_HP). Part of the sim for the battle royale's healing
    * items: the step refuses a heal at full health and adds the heal when it
@@ -241,6 +254,8 @@ export const PLAYER_SIM_KEYS = [
   "burstLeft",
   "stunTicks",
   "hp",
+  "meleeCd",
+  "meleeSeen",
 ] as const satisfies readonly (keyof PlayerSim)[];
 
 /** What the client reads from a player in the synced room state. */
@@ -473,7 +488,7 @@ export interface KillView {
   /** Their teams at the time (NO_TEAM outside a team mode), for the colours. */
   killerTeam: number;
   victimTeam: number;
-  /** A weapon id (WEAPONS), or KILL_GRENADE. */
+  /** A weapon id (WEAPONS), or KILL_GRENADE, KILL_ZONE or KILL_MELEE. */
   weapon: number;
 }
 
@@ -481,6 +496,8 @@ export interface KillView {
 export const KILL_GRENADE = 255;
 /** `KillView.weapon` of a death in the battle royale's zone (the killer is "", like a self-kill). */
 export const KILL_ZONE = 254;
+/** `KillView.weapon` of a melee strike (V). Weapon ids grow up from 0, so this never meets one. */
+export const KILL_MELEE = 253;
 /** Kill feed lines kept in the synced state. */
 export const KILL_FEED_SIZE = 5;
 

@@ -23,6 +23,7 @@ import {
   HEAL_STOP,
   INTERP_DELAY_MS,
   KILL_GRENADE,
+  KILL_MELEE,
   KILL_ZONE,
   MAX_HP,
   NO_GUN,
@@ -42,6 +43,7 @@ import {
   healsOf,
   isGrenadeType,
   magAt,
+  meleeReaches,
   ordinal,
   outsideZone,
   playerCan,
@@ -492,6 +494,7 @@ export class Match {
       p.switch = Math.max(p.switch, me.kit.switchSeen);
       p.swap = Math.max(p.swap, me.kit.swapSeen);
       p.use = Math.max(p.use, me.kit.useSeen);
+      p.melee = Math.max(p.melee, me.meleeSeen);
       this.input.slot = me.kit.hand;
     }
   }
@@ -613,6 +616,16 @@ export class Match {
         this.remoteShots.push({ at: now + INTERP_DELAY_MS + i * gap * 1000, id });
       }
       if (p.dashCd > prev.dashCd) this.sfx("dash", at);
+      // A melee strike: their cooldown jumped up. The swing when they are
+      // drawn, and the whoosh if it found nobody (a hit is heard as the HP drop).
+      if (p.meleeCd > prev.meleeCd) {
+        this.meshFor(id, paintOf(p), p.skin).melee(now + INTERP_DELAY_MS);
+        const enemies: Vec2[] = [];
+        s.players.forEach((q, qid) => {
+          if (qid !== id && q.alive && canDamage(p.team, q.team, false)) enemies.push(q);
+        });
+        if (!this.strikeLands(p, p.aim, enemies)) this.sfx("melee_swing", at);
+      }
       if (prev.reloadTicks === 0 && p.reloadTicks > 0) this.sfx("reload", { ...at, volume: 0.7 });
       if (p.shieldTicks > prev.shieldTicks) this.sfx("shield_up", at);
     });
@@ -741,6 +754,12 @@ export class Match {
           if (res.sim.dashCd > before.dashCd) this.sfx("dash");
           if (res.grenade) this.sfx("grenade_throw");
           if (res.shield) this.sfx("shield_up");
+          // Our strike swings at once; the hit itself is the server's (heard
+          // as their HP drop). The whoosh when nobody we draw is in reach.
+          if (res.melee) {
+            this.meshFor(sessionId, paintOf(meServer), meServer.skin).melee(now);
+            if (!this.strikeLands(res.sim, msg.aim, this.opponentsDrawn)) this.sfx("melee_swing");
+          }
           if (before.reloadTicks === 0 && res.sim.reloadTicks > 0) this.sfx("reload");
           else if (msg.fire && !this.wasFiring && !res.fired && res.sim.reloadTicks > 0) this.sfx("empty_click");
         }
@@ -1078,6 +1097,15 @@ export class Match {
   }
 
   /**
+   * Whether a melee strike from `from` at `aim` reaches any of `enemies` (as
+   * drawn or last synced): only a guess, for the whoosh of a whiff. Who is
+   * hit is the server's, against its rewound poses.
+   */
+  private strikeLands(from: Vec2, aim: number, enemies: readonly Vec2[]): boolean {
+    return enemies.some((e) => meleeReaches(this.predictor.map, from, aim, e));
+  }
+
+  /**
    * Battle royale: a heal just ended (the predicted one, or a snapshot that
    * says the server cancelled it): the HUD says how for a few seconds, and a
    * cancel clicks. Above all for the zone, whose damage cancels a heal
@@ -1095,6 +1123,7 @@ export class Match {
       [HEAL_STOP.fire]: ["fire", `${name} cancelled: you fired`],
       [HEAL_STOP.throw]: ["throw", `${name} cancelled: you threw a grenade`],
       [HEAL_STOP.switch]: ["switch", `${name} cancelled: you switched guns`],
+      [HEAL_STOP.melee]: ["melee", `${name} cancelled: you struck`],
     };
     const line = lines[stop];
     if (!line) return;
@@ -1135,7 +1164,7 @@ export class Match {
         killerSlot: paintFor(k.killerSlot, k.killerTeam),
         victim: k.victimName,
         victimSlot: paintFor(k.victimSlot, k.victimTeam),
-        weapon: k.weapon === KILL_GRENADE ? "Grenade" : k.weapon === KILL_ZONE ? "Zone" : (WEAPONS[k.weapon]?.name ?? ""),
+        weapon: k.weapon === KILL_GRENADE ? "Grenade" : k.weapon === KILL_ZONE ? "Zone" : k.weapon === KILL_MELEE ? "Melee" : (WEAPONS[k.weapon]?.name ?? ""),
         byYou: !!k.killer && k.killer === you,
         onYou: k.victim === you,
         opacity: Math.min(1, (KILL_FEED_MS - age) / KILL_FEED_FADE_MS),

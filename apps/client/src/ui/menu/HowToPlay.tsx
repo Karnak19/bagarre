@@ -18,6 +18,7 @@ import {
   ROYALE,
   ROYALE_MAX_PLAYERS,
   ROYALE_MIN_PLAYERS,
+  MELEE,
   SHIELD,
   TEAM_KILLS_TO_WIN,
   TEAM_SIZE,
@@ -43,6 +44,7 @@ const CONTROLS: [ReactNode, string][] = [
   [k("Space"), "Dash"],
   [k("Q"), "Grenade, thrown at the cursor"],
   [k("E"), "Shield"],
+  [k("V"), "Melee strike, at whoever is right in front"],
   [<>{k("1")}–{k("4")}</>, "Pick a weapon, while dead or between matches"],
   [k("Tab"), "Scoreboard (hold)"],
   [k("M"), "Mute or unmute"],
@@ -152,6 +154,11 @@ export function HowToPlay() {
           startContent={k("E")}
           label="Shield"
           description={`Soaks ${SHIELD.absorb} damage for ${SHIELD.duration} s. ${SHIELD.cooldown} s cooldown.`}
+        />
+        <ListItem
+          startContent={k("V")}
+          label="Melee"
+          description={`A quick strike, always there next to your gun: ${MELEE.damage} damage to every enemy within ${MELEE.range} m in front of you, never through cover. It doesn't stop a reload, but you can't fire for ${MELEE.fireLockout} s after it. ${MELEE.cooldown} s cooldown.`}
         />
       </List>
     </VStack>

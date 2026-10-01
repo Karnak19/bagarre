@@ -830,6 +830,7 @@ match menu ("Stop watching"), M mutes. The overlay is
 | **Space**          | Dash: a short burst in the move direction (facing if still)   |
 | **Q**              | Grenade: lobbed at the cursor, max 10 m, flies over cover     |
 | **E**              | Shield: a bubble that soaks damage before your HP             |
+| **V**              | Melee strike: hits every enemy right in front of you (see below) |
 | **1**-**7**        | Pick a weapon, while dead or between matches (see below). Battle royale: **1**-**3** and the wheel switch gun slots |
 | **F**              | Battle royale: swap the gun in hand for the one on the floor  |
 | **4** / **5**      | Battle royale: use a bandage / a medkit                       |
@@ -846,6 +847,30 @@ A grenade lands, then goes off 0.6 s later: the circle on the ground shows
 where (red for a frag, grey smoke, blue stun, white flash, green heal), so get out of it.
 A frag hurts its thrower too, at half rate. The dash has no invulnerability,
 you dodge by getting out of the bullet's path.
+
+### Melee strike
+
+Everyone has a melee strike on **V**, next to the gun, in every mode. One
+press is one strike, decided on the tick you press it: every enemy within
+1.6 m in front of you (to the edge of their body, in a 90° cone round your
+aim) takes 50 damage, the shield first, so two strikes kill. It never goes
+through cover, however thin, and never hurts a teammate. Its cooldown is
+0.8 s (the HUD's V slot sweeps), it doesn't stop a reload, and the gun can't
+fire for 0.25 s after it. A miss swishes; a hit sounds like any hit, and
+reads "Melee" in the kill feed. It doesn't count as a shot on the
+scoreboard (accuracy is untouched), but its damage and kills do.
+
+How it works: `melee` is one more press counter in the input (missing from an
+older client: 0). The cooldown and the fire lockout are in `stepPlayer`
+(`meleeCd`, `meleeSeen`, synced), so the client predicts them; the hit is
+the server's alone (`stepStrikes` in GameRoom.ts), judged once every input of
+the tick is in, against the same rewound poses as bullets
+(`HIT_REWIND_TICKS`), with `meleeReaches` (combat.ts: range, angle, line of
+sight) and through the room's `damage` with `KILL_MELEE` (253). The pack's
+clips have no strike, so the swing is drawn by hand (character.ts: the torso
+whips across the aim and leans in). Other clients see a strike as the
+player's `meleeCd` jumping up, and swing them when they are drawn. The tuning
+is `MELEE` in constants.ts.
 
 ### Grenade types
 

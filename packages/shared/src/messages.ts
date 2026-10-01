@@ -36,7 +36,8 @@ const counter = (v: unknown): v is number => typeof v === "number" && Number.isI
 /**
  * MSG_INPUT. Every field is required but the battle royale's `slot`,
  * `switch`, `swap`, `heal` and `use`, which read as 0 when missing (a client of the other
- * modes may leave them out); present, they must be valid. Extra fields are
+ * modes may leave them out), and `melee`, which reads as 0 too (an older
+ * client has no melee); present, they must be valid. Extra fields are
  * ignored (not copied).
  */
 export function parseInput(raw: unknown): InputMessage | null {
@@ -51,7 +52,10 @@ export function parseInput(raw: unknown): InputMessage | null {
   const { slot = 0, switch: sw = 0, swap = 0, heal = 0, use = 0 } = m;
   if (!(slot === 0 || slot === 1 || slot === 2) || !counter(sw) || !counter(swap)) return null;
   if (!isHealItem(heal) || !counter(use)) return null;
-  return { seq, mx, mz, aim, fire, gx, gz, dash, grenade, shield, reload, slot, switch: sw, swap, heal, use };
+  // The melee counter is newer than the others: an older client sends none.
+  const { melee = 0 } = m;
+  if (!counter(melee)) return null;
+  return { seq, mx, mz, aim, fire, gx, gz, dash, grenade, shield, reload, slot, switch: sw, swap, heal, use, melee };
 }
 
 /**
