@@ -44,6 +44,7 @@ export type SfxName =
   | "death"
   | "respawn"
   | "weapon_pick"
+  | "chest_open"
   | "match_win"
   | "match_lose";
 
@@ -107,6 +108,8 @@ const DEFS: Record<SfxName, SfxDef> = {
   death: { files: ["death"], gain: 0.9, voices: 2 },
   respawn: { files: ["respawn"], gain: 0.7, voices: 2 },
   weapon_pick: { files: ["weapon_pick"], gain: 0.7, voices: 2 },
+  // A battle royale chest's lid: the pump being racked, slower and deeper, a wooden clunk.
+  chest_open: { files: ["reload"], gain: 0.85, voices: 3, rate: 0.6 },
   match_win: { files: ["match_win"], gain: 0.8, voices: 1 },
   match_lose: { files: ["match_lose"], gain: 0.8, voices: 1 },
 };

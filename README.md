@@ -403,7 +403,9 @@ TypeScript: React never runs per frame and there is no React Three Fiber.
   `data-zone`), `hud-royale-alive`, `hud-zone-time`, `hud-zone-arrow`,
   `hud-slots`, `hud-slot-{1,2,3}` (with `data-weapon`, `data-active`,
   `data-ammo`), the grenade and shield slots' `data-count`, `hud-heals`,
-  `hud-heal-{bandage,medkit}` (with `data-count`, `data-active`),
+  `hud-heal-{bandage,medkit}` (with `data-count`, `data-active`), `hud-loot`,
+  `hud-loot-row` (with `data-kind`: `gun`, `grenade`, `heal`, `shield`,
+  `data-key` and, on a swap, `data-from`),
   `hud-heal-status` (with `data-state`: `healing`, or how it ended: `done`,
   `hurt`, `zone`, `fire`, `throw`, `switch`) and `result-stats`. Spectating adds `spectate-bar`,
   `spectate-watching`, `spectate-mode` (and `spectate-mode-{follow,overview,free}`),
@@ -689,7 +691,14 @@ the royale map's layout, see [docs/royale-maps.md](docs/royale-maps.md)).
 In a game the HUD shows who is still in and the zone's timer (top right),
 the three slots with their magazines in place of the weapon box, the
 bandages and medkits, the grenade and shield charge counts, the heal in
-progress (or how it ended), and an arrow back to the zone when you are outside; the ground shows
+progress (or how it ended), an arrow back to the zone when you are outside,
+and a loot feed at the bottom left: a line for each of your own pickups and F
+swaps ("+ Rifle", "+ 2 💥 Frag", "Pistol → Rifle"), up to 4, each gone after
+3 s (`LOOT_FEED_MS`). It is read off your kit in two snapshots in a row
+(`apps/client/src/loot.ts`), alive in both and in the same phase, so a match
+start, a knock-out or a reconnect adds nothing, nor does a shot, a throw or a
+heal used. Each pickup plays the pickup sound once, and a chest opening is
+heard where it stands, by everyone near; the ground shows
 the zone's edge with a tint outside, the chests (glowing until opened) and the items. On the menu,
 **Battle royale** quick-matches one and **Private royale** makes a private
 one; in dev, `?play=royale`. The e2e specs are `apps/e2e/tests/royale.spec.ts`

@@ -5,7 +5,8 @@
 // and 5) next to them, and the heal's progress, or how it ended, over the
 // ability bar (above all when the zone's damage cancelled it), and the F
 // prompt ("F  Open chest", "F  Swap Pistol → Rifle", "F  Swap Frag → Smoke")
-// while F would do something.
+// while F would do something, and the loot feed at the bottom left (what we
+// just picked up: "+ Rifle", "+ 2 💥 Frag", "Pistol → Rifle").
 //
 // Like the rest of the HUD, nothing renders per frame: the panel re-renders
 // when the count or the timer's seconds change, the slots on a switch, a shot
@@ -97,6 +98,23 @@ const styles = stylex.create({
   swapHigh: { bottom: "166px" },
   swapFrom: { color: "var(--color-text-secondary)" },
   swapTo: { color: "var(--bagarre-gold)" },
+  // Bottom left, above the debug and watchers lines and clear of the bottom bar's height
+  // (so a narrow window doesn't put it over the slots); newest at the bottom.
+  loot: { position: "absolute", left: "16px", bottom: "128px", gap: "4px", alignItems: "flex-start", maxWidth: "min(260px, 40vw)" },
+  // The kill feed's line (HudFfa.tsx), a little smaller.
+  lootLine: {
+    gap: "6px",
+    paddingBlock: "3px",
+    paddingInline: "8px",
+    borderRadius: "var(--radius-element)",
+    backgroundColor: "var(--bagarre-hud-panel)",
+    fontSize: "13px",
+    fontWeight: 700,
+    whiteSpace: "nowrap",
+  },
+  lootGun: { color: "var(--bagarre-gold)" },
+  lootHeal: { color: "#6dff9a" },
+  lootShield: { color: "#9fe6ff" },
 });
 
 /** Players still in and the zone's timer, at the top right. */
@@ -314,5 +332,66 @@ export function SwapPrompt() {
         </Text>
       )}
     </HStack>
+  );
+}
+
+const LOOT_COLOR = { gun: styles.lootGun, grenade: styles.lootGun, heal: styles.lootHeal, shield: styles.lootShield };
+
+/**
+ * The loot feed: our last few pickups and F swaps, a line each ("+ Rifle",
+ * "+ 2 💥 Frag", "Pistol → Rifle"), each gone after a few seconds (match.ts'
+ * lootLines). Like the kill feed, it re-renders only when a line comes or
+ * goes; the fade is written per frame, off React. `data-kind`, `data-key`
+ * and `data-from` for the tests.
+ */
+export function LootFeed() {
+  countRender("hud.loot");
+  const { hud } = useEngine();
+  const lines = useSelector(hud, (m) => (m?.royale?.loot ?? []).map((l) => ({ n: l.n, kind: l.kind, key: l.key, to: l.to, from: l.from })), jsonEqual);
+  const box = useRef<HTMLElement>(null);
+  useStoreEffect(hud, (m) => {
+    const el = box.current;
+    if (!el || !m?.royale) return;
+    for (const child of el.children) {
+      if (!(child instanceof HTMLElement)) continue;
+      const line = m.royale.loot.find((l) => String(l.n) === child.dataset.n);
+      const opacity = String(line ? line.opacity : 0);
+      if (child.style.opacity !== opacity) child.style.opacity = opacity;
+    }
+  });
+  if (lines.length === 0) return null;
+  return (
+    <VStack ref={box} xstyle={styles.loot} aria-live="polite" data-testid="hud-loot">
+      {lines.map((l) => (
+        <HStack
+          key={l.n}
+          align="center"
+          xstyle={styles.lootLine}
+          data-n={l.n}
+          data-kind={l.kind}
+          data-key={l.key}
+          data-from={l.from || undefined}
+          data-testid="hud-loot-row"
+        >
+          {l.from ? (
+            <>
+              <Text as="span" color="inherit" xstyle={styles.swapFrom}>
+                {l.from}
+              </Text>
+              <Text as="span" color="inherit">
+                →
+              </Text>
+            </>
+          ) : (
+            <Text as="span" color="inherit">
+              +
+            </Text>
+          )}
+          <Text as="span" color="inherit" xstyle={LOOT_COLOR[l.kind]}>
+            {l.to}
+          </Text>
+        </HStack>
+      ))}
+    </VStack>
   );
 }

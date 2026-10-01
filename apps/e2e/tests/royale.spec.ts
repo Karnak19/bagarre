@@ -286,6 +286,8 @@ test("battle royale: with all three slots full, standing by a gun shows the F sw
   await a.page.keyboard.press("KeyF");
   await expect.poll(() => gunsOf(a), { message: "A swapped the Pistol for the sniper" }).toEqual([SNIPER, RIFLE, SMG]);
   await expect(a.testId("hud-slot-1")).toHaveAttribute("data-weapon", "sniper");
+  // The loot feed names the swap.
+  await expect(a.page.locator('[data-testid="hud-loot-row"][data-key="sniper"]')).toHaveText("Pistol→Sniper");
   const pistol = await floorGun(PISTOL, c4.x, c4.z);
   expect(pistol?.blockedFor).toBe(ida);
   await expect(prompt).toHaveAttribute("data-state", "off");
