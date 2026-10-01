@@ -781,11 +781,13 @@ export class Match {
       const pos = predictor.render(this.accumulator / TICK_MS, dt);
       if (bot.on) this.aim = bot.aim;
       else if (input.hasPointer && input.enabled) {
+        // Grenades land on the ground; bullets fly at BULLET_HEIGHT, so aim on that plane.
         const hit = scene.cursorOnGround(input.ndc);
         this.cursor = hit ? { x: hit.x, z: hit.z } : null;
-        if (hit) {
-          const dx = hit.x - pos.x;
-          const dz = hit.z - pos.z;
+        const aimAt = scene.cursorOnBulletPlane(input.ndc);
+        if (aimAt) {
+          const dx = aimAt.x - pos.x;
+          const dz = aimAt.z - pos.z;
           if (dx * dx + dz * dz > 0.01) this.aim = Math.atan2(dz, dx);
         }
       }
