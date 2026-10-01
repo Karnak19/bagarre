@@ -74,8 +74,8 @@ export interface InputMessage {
    * when it goes up, the gun in `slot` (0-2, the slot the player asks for)
    * goes in hand, if they carry one there. The client works the slot out
    * (a number key, or the wheel from its predicted slots); the step checks it.
-   * `swap` is the F press counter: swap the gun in hand for the one on the
-   * floor (the server's, see floor.ts).
+   * `swap` is the F press counter: open a chest, or swap the gun in hand or
+   * the grenades held for one on the floor (the server's, see fTarget and floor.ts).
    */
   slot?: number;
   switch?: number;
@@ -390,8 +390,8 @@ export interface SmokeView {
 
 /**
  * Something on the floor in the battle royale (`RoomStateView.items`):
- * dropped by a crate or a dead player, picked up by walking over it. Owned by
- * the server, which alone decides who gets it.
+ * dropped by a chest or a dead player, picked up by walking over it or with
+ * F (see `fTarget`). Owned by the server, which alone decides who gets it.
  */
 export interface FloorItemView {
   x: number;
@@ -408,12 +408,27 @@ export interface FloorItemView {
    * until they do. "" for everyone else's items and once they step off.
    */
   blockedFor: string;
+  /**
+   * A chest's loot pops out of the chest at (`fromX`, `fromZ`) on `dropTick`
+   * and lands on (x, z) on `readyTick`: nobody can take it before that (the
+   * server's rule, `itemReady`), and the client draws the arc in between.
+   * Both 0 for everything else (a knock-out's drop, a swap's): there at once.
+   */
+  fromX: number;
+  fromZ: number;
+  dropTick: number;
+  readyTick: number;
 }
 
-/** A crate still standing (`RoomStateView.crates`); walking into it breaks it open. */
+/**
+ * A chest (`RoomStateView.crates`, named crates on the wire): F opens it
+ * (see `fTarget`), and its loot falls out next to it. An opened one stays,
+ * open, until the match ends.
+ */
 export interface CrateView {
   x: number;
   z: number;
+  open: boolean;
 }
 
 /**

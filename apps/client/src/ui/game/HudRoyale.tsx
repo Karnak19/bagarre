@@ -3,8 +3,10 @@
 // timer), the arrow back to the zone while we stand outside it, the three
 // gun slots in place of the single weapon box, the healing items (keys 4
 // and 5) next to them, and the heal's progress, or how it ended, over the
-// ability bar (above all when the zone's damage cancelled it), and the swap
-// prompt ("F  Swap Pistol → Rifle") while F would take a gun off the floor.
+// ability bar (above all when the zone's damage cancelled it), and the F
+// prompt ("F  Open chest", "F  Swap Pistol → Rifle", "F  Swap Frag → Smoke")
+// while F would do something, and the loot feed at the bottom left (what we
+// just picked up: "+ Rifle", "+ 2 💥 Frag", "Pistol → Rifle").
 //
 // Like the rest of the HUD, nothing renders per frame: the panel re-renders
 // when the count or the timer's seconds change, the slots on a switch, a shot
@@ -96,6 +98,23 @@ const styles = stylex.create({
   swapHigh: { bottom: "166px" },
   swapFrom: { color: "var(--color-text-secondary)" },
   swapTo: { color: "var(--bagarre-gold)" },
+  // Bottom left, above the debug and watchers lines and clear of the bottom bar's height
+  // (so a narrow window doesn't put it over the slots); newest at the bottom.
+  loot: { position: "absolute", left: "16px", bottom: "128px", gap: "4px", alignItems: "flex-start", maxWidth: "min(260px, 40vw)" },
+  // The kill feed's line (HudFfa.tsx), a little smaller.
+  lootLine: {
+    gap: "6px",
+    paddingBlock: "3px",
+    paddingInline: "8px",
+    borderRadius: "var(--radius-element)",
+    backgroundColor: "var(--bagarre-hud-panel)",
+    fontSize: "13px",
+    fontWeight: 700,
+    whiteSpace: "nowrap",
+  },
+  lootGun: { color: "var(--bagarre-gold)" },
+  lootHeal: { color: "#6dff9a" },
+  lootShield: { color: "#9fe6ff" },
 });
 
 /** Players still in and the zone's timer, at the top right. */
@@ -267,45 +286,112 @@ export function HealStatus() {
 }
 
 /**
- * While F would swap guns: the key, the gun in hand and the one on the floor
- * it takes ("F  Swap Pistol → Rifle"), from the HUD model's `swap` (the same
- * pick as the server's, swapTarget). Re-renders only when the guns change.
- * Always mounted, faded in and out (opacity only); it keeps the last names
- * while it fades out. `data-state` "on" / "off" for the tests.
+ * While F would do something: the key and what it does, from the HUD
+ * model's `prompt` (the same pick as the server's, fTarget): "F  Open chest",
+ * or the gun in hand / grenades held and what F takes instead ("F  Swap
+ * Pistol → Rifle"). Re-renders only when that changes. Always mounted, faded
+ * in and out (opacity only); it keeps the last text while it fades out.
+ * `data-state` "on" / "off" and `data-kind` for the tests.
  */
 export function SwapPrompt() {
   countRender("hud.swap");
   const { hud } = useEngine();
-  const swap = useSelector(hud, (m) => m?.royale?.swap ?? null, jsonEqual);
+  const prompt = useSelector(hud, (m) => m?.royale?.prompt ?? null, jsonEqual);
   // The heal status (HealStatus) shows: sit over it.
   const high = useSelector(hud, (m) => !!m?.royale && (m.royale.healing >= 0 || m.royale.healNote !== ""));
-  const last = useRef<RoyaleHud["swap"]>(null);
-  if (swap) last.current = swap;
-  const shown = swap ?? last.current;
-  const from = shown ? weaponDef(shown.from).name : "";
-  const to = shown ? weaponDef(shown.to).name : "";
+  const last = useRef<RoyaleHud["prompt"]>(null);
+  if (prompt) last.current = prompt;
+  const shown = prompt ?? last.current;
   return (
     <HStack
       gap={1.5}
       align="center"
-      xstyle={[styles.panel, styles.swap, !!swap && styles.swapOn, high && styles.swapHigh]}
+      xstyle={[styles.panel, styles.swap, !!prompt && styles.swapOn, high && styles.swapHigh]}
       data-testid="hud-swap"
-      data-state={swap ? "on" : "off"}
-      data-from={swap ? weaponDef(swap.from).key : undefined}
-      data-to={swap ? weaponDef(swap.to).key : undefined}
-      aria-hidden={!swap}
+      data-state={prompt ? "on" : "off"}
+      data-kind={prompt?.kind}
+      data-from={prompt && prompt.kind !== "chest" ? prompt.from : undefined}
+      data-to={prompt && prompt.kind !== "chest" ? prompt.to : undefined}
+      aria-hidden={!prompt}
     >
       <Kbd keys="F" />
-      <Text as="span" color="inherit">
-        Swap{" "}
-        <Text as="span" color="inherit" xstyle={styles.swapFrom}>
-          {from}
-        </Text>{" "}
-        →{" "}
+      {shown?.kind === "chest" ? (
         <Text as="span" color="inherit" xstyle={styles.swapTo}>
-          {to}
+          Open chest
         </Text>
-      </Text>
+      ) : (
+        <Text as="span" color="inherit">
+          Swap{" "}
+          <Text as="span" color="inherit" xstyle={styles.swapFrom}>
+            {shown?.fromName ?? ""}
+          </Text>{" "}
+          →{" "}
+          <Text as="span" color="inherit" xstyle={styles.swapTo}>
+            {shown?.toName ?? ""}
+          </Text>
+        </Text>
+      )}
     </HStack>
+  );
+}
+
+const LOOT_COLOR = { gun: styles.lootGun, grenade: styles.lootGun, heal: styles.lootHeal, shield: styles.lootShield };
+
+/**
+ * The loot feed: our last few pickups and F swaps, a line each ("+ Rifle",
+ * "+ 2 💥 Frag", "Pistol → Rifle"), each gone after a few seconds (match.ts'
+ * lootLines). Like the kill feed, it re-renders only when a line comes or
+ * goes; the fade is written per frame, off React. `data-kind`, `data-key`
+ * and `data-from` for the tests.
+ */
+export function LootFeed() {
+  countRender("hud.loot");
+  const { hud } = useEngine();
+  const lines = useSelector(hud, (m) => (m?.royale?.loot ?? []).map((l) => ({ n: l.n, kind: l.kind, key: l.key, to: l.to, from: l.from })), jsonEqual);
+  const box = useRef<HTMLElement>(null);
+  useStoreEffect(hud, (m) => {
+    const el = box.current;
+    if (!el || !m?.royale) return;
+    for (const child of el.children) {
+      if (!(child instanceof HTMLElement)) continue;
+      const line = m.royale.loot.find((l) => String(l.n) === child.dataset.n);
+      const opacity = String(line ? line.opacity : 0);
+      if (child.style.opacity !== opacity) child.style.opacity = opacity;
+    }
+  });
+  if (lines.length === 0) return null;
+  return (
+    <VStack ref={box} xstyle={styles.loot} aria-live="polite" data-testid="hud-loot">
+      {lines.map((l) => (
+        <HStack
+          key={l.n}
+          align="center"
+          xstyle={styles.lootLine}
+          data-n={l.n}
+          data-kind={l.kind}
+          data-key={l.key}
+          data-from={l.from || undefined}
+          data-testid="hud-loot-row"
+        >
+          {l.from ? (
+            <>
+              <Text as="span" color="inherit" xstyle={styles.swapFrom}>
+                {l.from}
+              </Text>
+              <Text as="span" color="inherit">
+                →
+              </Text>
+            </>
+          ) : (
+            <Text as="span" color="inherit">
+              +
+            </Text>
+          )}
+          <Text as="span" color="inherit" xstyle={LOOT_COLOR[l.kind]}>
+            {l.to}
+          </Text>
+        </HStack>
+      ))}
+    </VStack>
   );
 }

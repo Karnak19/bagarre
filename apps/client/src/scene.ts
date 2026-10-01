@@ -1,12 +1,12 @@
 import * as THREE from "three";
 import {
   BULLET_HEIGHT,
-  BULLET_RADIUS,
   GRENADE,
   PLAYER_RADIUS,
   PLAYER_SPEED,
   SMOKE,
   WALL_THICKNESS,
+  WEAPONS,
   grenadeDef,
   type GrenadeView,
   type MapDef,
@@ -15,10 +15,11 @@ import {
 import { buildArena, disposeArena, type ArenaDressing } from "./arenaView.ts";
 import { skinModel, skinModelNow, type Assets } from "./assets.ts";
 import { Character } from "./character.ts";
-import { grenadeView, gunView } from "./items.ts";
+import { GUN_VIEW, grenadeView, gunView } from "./items.ts";
 import { TEAM_PAINT } from "./paint.ts";
 import { Plates } from "./plates.ts";
 import { RoyaleView } from "./royaleView.ts";
+import { tracerGeometry, tracerMaterial } from "./tracers.ts";
 import { Vfx, shieldMaterial, type SmokeCloud } from "./vfx.ts";
 
 /**
@@ -419,23 +420,74 @@ export class PlayerMesh {
   }
 }
 
-interface DrawnBullet {
-  mesh: THREE.Mesh;
-  /** Last two drawn positions, for the impact point and direction. */
+/** A bullet as syncBullets draws it, from our prediction (bullets.ts) or the server's snapshots (interpolation.ts). */
+export interface BulletDraw {
   x: number;
   z: number;
-  px: number;
-  pz: number;
+  /** Its velocity, m/s: the tracer's heading (a shotgun's pellets each have their own). 0, 0 when unknown. */
+  vx: number;
+  vz: number;
+  slot: number;
+  owner?: string;
+  /** The gun that fired it (its tracer's look); the default weapon's when unknown. */
+  weapon?: number;
+  hidden?: boolean;
+}
+
+interface DrawnBullet {
+  mesh: THREE.Mesh;
+  /** Last drawn position, for the impact point. */
+  x: number;
+  z: number;
+  /** The direction it flies in (unit), for the tracer's heading and the impact's sparks. */
+  dx: number;
+  dz: number;
+  /** The tracer's full length (its gun's look). */
+  length: number;
+  /** Still growing out of the muzzle to its full length (only one first drawn at its shooter's muzzle). */
+  grow: boolean;
   /** Where it was first drawn, and how far off its path the shooter's muzzle was then (see syncBullets). */
   x0: number;
   z0: number;
   off: THREE.Vector3 | null;
+  /** Frames drawn so far. */
+  frames: number;
+  /** The gun that fired it (a WEAPONS index). */
+  weapon: number;
 }
 
-/** A bullet drawn from its shooter's muzzle eases onto its true path (at BULLET_HEIGHT, from the body's centre) over this many metres. */
+/**
+ * A bullet drawn from its shooter's muzzle eases onto its true path (at
+ * BULLET_HEIGHT, from the body's centre) over this many metres. The tracer
+ * slides sideways while it does, but stays level and pointed along its path.
+ * (The head is the bullet's position, whatever the tracer's length.)
+ */
 const TRACER_MERGE = 3;
 /** Farther than this from the muzzle when first seen, the bullet is drawn on its path straight away. */
 const TRACER_MAX_OFFSET = 2.5;
+/** A tracer leaving the muzzle starts at this fraction of its length (it grows out of the gun rather than poking back through the shooter). */
+const TRACER_MIN_SCALE = 0.12;
+/** Dev only: how many of a bullet's first frames the tracer log keeps (see `tracerLog`). */
+const TRACER_LOG_FRAMES = 4;
+
+/** Dev only: one frame of a tracer, in its first ones (the e2e tracer spec reads them). */
+export interface TracerFrame {
+  id: string;
+  /** 0 for the frame it first appeared in. */
+  frame: number;
+  weapon: number;
+  /** Where the mesh is drawn, and the way its head points (world, unit). */
+  x: number;
+  y: number;
+  z: number;
+  fx: number;
+  fy: number;
+  fz: number;
+  /** The bullet's velocity, as given. */
+  vx: number;
+  vz: number;
+  visible: boolean;
+}
 
 export class GameScene {
   readonly renderer: THREE.WebGLRenderer;
@@ -443,11 +495,11 @@ export class GameScene {
   readonly camera: THREE.OrthographicCamera;
   private cameraTarget = new THREE.Vector3();
   private bullets = new Map<string, DrawnBullet>();
-  // A thin tracer along +Z, turned to face the direction of travel.
-  private bulletGeo = new THREE.BoxGeometry(BULLET_RADIUS * 0.8, BULLET_RADIUS * 0.8, 0.7);
-  private bulletMats = PLAYER_COLORS.map(
-    (c) => new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: c, emissiveIntensity: 1.6 }),
-  );
+  // Tracers: one geometry per gun (by weapon id), built once; one material for all.
+  private tracerGeos = WEAPONS.map((w) => tracerGeometry(GUN_VIEW[w.key].tracer));
+  private tracerMat = tracerMaterial();
+  /** Dev only: each bullet's first few frames (TracerFrame), newest last, capped. */
+  readonly tracerLog: TracerFrame[] = [];
   private grenades = new Map<string, { ball: THREE.Object3D; ring: THREE.Mesh; ringMat: THREE.MeshBasicMaterial }>();
   private grenadeGeo = new THREE.SphereGeometry(0.2, 12, 10);
   private grenadeMat = new THREE.MeshStandardMaterial({ color: 0x30343c, emissive: 0xffaa33, emissiveIntensity: 0.5 });
@@ -459,7 +511,7 @@ export class GameScene {
   private vfx: Vfx;
   /** Name plates and health bars over the players' heads (filled by match.ts every frame). */
   readonly plates: Plates;
-  /** Battle royale: the zone, the crates and the items on the floor (filled by match.ts every frame). */
+  /** Battle royale: the zone, the chests and the items on the floor (filled by match.ts every frame). */
   readonly royale: RoyaleView;
   private lastRender = -1;
   private trauma = 0;
@@ -511,7 +563,8 @@ export class GameScene {
       this.grenadeModel.scale.setScalar(0.55);
     }
     this.vfx = new Vfx(this.scene, this.camera, loaded?.atlas ?? null);
-    this.royale = new RoyaleView(loaded?.props?.get("Crate") ?? null, loaded?.guns ?? [], loaded?.props?.get("Grenade") ?? null);
+    // The chest model; without it (a failed load), the old crate prop, or a plain box.
+    this.royale = new RoyaleView(loaded?.chest ?? null, loaded?.props?.get("Crate") ?? null, loaded?.guns ?? [], loaded?.props?.get("Grenade") ?? null);
     this.scene.add(this.royale.group);
     this.plates = new Plates(this.renderer, PLAYER_CSS_COLORS);
     this.scene.add(this.plates.mesh);
@@ -715,7 +768,7 @@ export class GameScene {
    * vanishes next to cover or a player hit it: sparks. One that vanishes in
    * the open ran out of range: nothing.
    */
-  syncBullets(bullets: Map<string, { x: number; z: number; slot: number; owner?: string; weapon?: number; hidden?: boolean }>) {
+  syncBullets(bullets: Map<string, BulletDraw>) {
     for (const [id, b] of this.bullets) {
       if (!bullets.has(id)) {
         // A bullet that ends unseen (in smoke) makes no sparks there either.
@@ -728,9 +781,23 @@ export class GameScene {
     for (const [id, b] of bullets) {
       let d = this.bullets.get(id);
       if (!d) {
-        const mesh = new THREE.Mesh(this.bulletGeo, this.bulletMats[b.slot] ?? this.bulletMats[0]);
-        mesh.castShadow = true;
-        d = { mesh, x: b.x, z: b.z, px: b.x, pz: b.z, x0: b.x, z0: b.z, off: null };
+        const weapon = b.weapon !== undefined && this.tracerGeos[b.weapon] ? b.weapon : 0;
+        const mesh = new THREE.Mesh(this.tracerGeos[weapon], this.tracerMat);
+        mesh.renderOrder = 1;
+        d = {
+          mesh,
+          x: b.x,
+          z: b.z,
+          dx: 0,
+          dz: 1,
+          length: GUN_VIEW[WEAPONS[weapon].key].tracer.length,
+          x0: b.x,
+          z0: b.z,
+          off: null,
+          grow: false,
+          frames: 0,
+          weapon,
+        };
         this.bullets.set(id, d);
         this.scene.add(mesh);
         if (id.endsWith(":0")) for (const p of this.players) if (p.isLocal && p.slot === b.slot) p.shot(now, b.weapon);
@@ -743,32 +810,68 @@ export class GameScene {
           const m = p.muzzle(this.tmp).sub(this.tmp2.set(b.x, BULLET_HEIGHT, b.z));
           if (m.length() < TRACER_MAX_OFFSET) d.off = m.clone();
         }
+        d.grow = !!d.off;
       }
       // Smoke (client-side only): a bullet in the cloud, or behind it, isn't
       // drawn; it shows once it comes out, on its own path.
       d.mesh.visible = !b.hidden;
-      if (b.x !== d.x || b.z !== d.z) {
-        d.px = d.x;
-        d.pz = d.z;
-        d.x = b.x;
-        d.z = b.z;
+      // The heading is the bullet's own velocity, from its very first frame
+      // (a pellet's, not the shooter's aim). With none given, the way it moved.
+      const v = Math.hypot(b.vx, b.vz);
+      if (v > 1e-6) {
+        d.dx = b.vx / v;
+        d.dz = b.vz / v;
+      } else if (b.x !== d.x || b.z !== d.z) {
+        const m = Math.hypot(b.x - d.x, b.z - d.z);
+        d.dx = (b.x - d.x) / m;
+        d.dz = (b.z - d.z) / m;
       }
-      d.mesh.position.set(b.x, BULLET_HEIGHT, b.z);
+      d.x = b.x;
+      d.z = b.z;
+      const pos = d.mesh.position.set(b.x, BULLET_HEIGHT, b.z);
+      const travelled = Math.hypot(b.x - d.x0, b.z - d.z0);
       if (d.off) {
-        const k = 1 - Math.hypot(b.x - d.x0, b.z - d.z0) / TRACER_MERGE;
-        if (k > 0) d.mesh.position.addScaledVector(d.off, k);
+        const k = 1 - travelled / TRACER_MERGE;
+        if (k > 0) pos.addScaledVector(d.off, k);
         else d.off = null;
       }
-      if (d.x !== d.px || d.z !== d.pz) d.mesh.lookAt(b.x + (d.x - d.px), BULLET_HEIGHT, b.z + (d.z - d.pz));
+      // Level, along its path, from where it is drawn: the muzzle offset slides it, never tilts it.
+      d.mesh.lookAt(pos.x + d.dx, pos.y, pos.z + d.dz);
+      // Out of the muzzle, the streak grows to its length instead of reaching back through the shooter.
+      if (d.grow) {
+        const k = Math.max(TRACER_MIN_SCALE, travelled / d.length);
+        d.grow = k < 1;
+        d.mesh.scale.z = Math.min(1, k);
+      }
+      if (import.meta.env.DEV && d.frames < TRACER_LOG_FRAMES) this.logTracer(id, d);
+      d.frames++;
     }
   }
 
+  /** Dev only: records one of a tracer's first frames (TracerFrame). */
+  private logTracer(id: string, d: DrawnBullet) {
+    const f = d.mesh.getWorldDirection(this.tmp);
+    const p = d.mesh.position;
+    this.tracerLog.push({
+      id,
+      frame: d.frames,
+      weapon: d.weapon,
+      x: p.x,
+      y: p.y,
+      z: p.z,
+      fx: f.x,
+      fy: f.y,
+      fz: f.z,
+      vx: d.dx,
+      vz: d.dz,
+      visible: d.mesh.visible,
+    });
+    if (this.tracerLog.length > 400) this.tracerLog.splice(0, this.tracerLog.length - 400);
+  }
+
   private impact(b: DrawnBullet) {
-    let dx = b.x - b.px;
-    let dz = b.z - b.pz;
-    const len = Math.hypot(dx, dz) || 1;
-    dx /= len;
-    dz /= len;
+    const dx = b.dx;
+    const dz = b.dz;
     // A player it was about to reach?
     for (const p of this.players) {
       const q = p.group.position;

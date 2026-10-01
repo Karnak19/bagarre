@@ -11,7 +11,7 @@
 // same tick are all out before anyone is ranked: rankRoyale). Everyone
 // carries gun slots, counted grenades, healing items and shield charges (the
 // kit, KitMode "slots" in the shared step, which also runs the heals), found
-// in crates and on the floor (floor.ts), and the zone
+// in chests (opened with F) and on the floor (floor.ts), and the zone
 // (`state.zone`, royale.ts' zoneAt) closes in and hurts whoever is outside.
 // No loadout picks, no joining once the match started (`closedToJoins`),
 // and a player who leaves mid-match is knocked out then: their seat stays in
@@ -396,7 +396,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   private joinOrder: string[] = [];
   /** Last metadata written, to skip no-op writes. */
   private metaKey = "";
-  /** Battle royale: the crates and the items on the floor. */
+  /** Battle royale: the chests and the items on the floor. */
   private floor = new Floor(this.state, () => this.map);
   /** Battle royale: players in the match when it started (below ROYALE_MIN_RECORDED it isn't recorded). */
   private royaleStarters = 0;
@@ -1026,7 +1026,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
         p.aim = this.hubAim(spawn);
       });
     }
-    // Battle royale: a crate on every crate spot, no zone until play starts.
+    // Battle royale: a closed chest on every crate spot, no zone until play starts.
     if (this.rules.royale) {
       this.floor.reset(this.map.royale?.crates ?? []);
       this.state.zone.end = 0;
@@ -1162,8 +1162,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       }
     });
 
-    // Battle royale: crates broken open and items picked up, where the
-    // players now stand. Only the living and connected take anything.
+    // Battle royale: items picked up, where the players now stand. Only the living and connected take anything.
     if (this.rules.royale && this.state.phase === "playing") {
       const takers: { id: string; p: Player }[] = [];
       this.state.players.forEach((p, id) => {
@@ -1325,9 +1324,10 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     }
     if (!can.act) return;
     player.aim = input.aim;
-    // F: swap the gun in hand for one on the floor (royale, while playing).
-    // A new gun in hand cancels a heal, like a switch does in the step.
-    if (res.swap && this.rules.royale && this.state.phase === "playing" && this.floor.swap(id, player)) cancelHeal(player.kit, HEAL_STOP.switch);
+    // F (royale, while playing): open a chest, or swap a gun or a grenade
+    // stack for one on the floor. A new gun in hand cancels a heal, like a
+    // switch does in the step.
+    if (res.swap && this.rules.royale && this.state.phase === "playing" && this.floor.interact(id, player) === "gun") cancelHeal(player.kit, HEAL_STOP.switch);
 
     if (res.fired) this.spawnShot(id, player, input);
     if (res.grenade) this.spawnGrenade(id, player, res.grenade);
@@ -1961,7 +1961,7 @@ export class TeamRoom extends GameRoom {
   static override rules = TEAM_RULES;
 }
 
-/** Battle royale: 2-10 players, one life, crates and a closing zone; the last one standing wins. Room "royale". */
+/** Battle royale: 2-10 players, one life, chests and a closing zone; the last one standing wins. Room "royale". */
 export class RoyaleRoom extends GameRoom {
   static override rules = ROYALE_RULES;
 }

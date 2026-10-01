@@ -34,10 +34,8 @@ import {
   TICK_RATE,
   WEAPONS,
   canDamage,
-  carriedGuns,
   cycleSlot,
   findMap,
-  freeGunSlot,
   gunAt,
   gunInHand,
   healProgress,
@@ -51,7 +49,8 @@ import {
   ownsCloud,
   smokeCover,
   smokeVeil,
-  swapTarget,
+  fTarget,
+  grenadeDef,
   weaponDef,
   zoneAt,
   zoneProgress,
@@ -65,15 +64,16 @@ import {
 import { getShowNames } from "./display.ts";
 import { isMuted, play, setListener, type PlayOptions, type SfxName } from "./audio.ts";
 import { LocalBullets } from "./bullets.ts";
-import type { FfaHud, Hud, HudModel, KillFeedLine, RoyaleHud, TeamHud } from "./hud.ts";
+import type { FfaHud, Hud, HudModel, KillFeedLine, LootLine, RoyaleHud, TeamHud } from "./hud.ts";
 import { screenToWorldMove, type Input } from "./input.ts";
 import { WEAPON_KEYS, grenadeView, gunView } from "./items.ts";
 import { SnapshotBuffer } from "./interpolation.ts";
+import { lootGained, type LootGain } from "./loot.ts";
 import type { Minimap } from "./minimap.ts";
 import type { Net, Snapshot } from "./net.ts";
 import { Predictor } from "./prediction.ts";
 import { paintFor, paintOf } from "./paint.ts";
-import { FADED_OPACITY, GameScene, PLAYER_CSS_COLORS, PlayerMesh, playerColor } from "./scene.ts";
+import { FADED_OPACITY, GameScene, PLAYER_CSS_COLORS, PlayerMesh, playerColor, type BulletDraw } from "./scene.ts";
 import type { SmokeCloud } from "./vfx.ts";
 import { byPlace, clock, secondsLeft, warmupLeft } from "./scoreboard.ts";
 import { sceneRig } from "./spectate/camera.ts";
@@ -108,6 +108,10 @@ const FLASH_HOLD = 1.6;
 /** How long a kill feed line stays up, fading over its last second. */
 export const KILL_FEED_MS = 6000;
 const KILL_FEED_FADE_MS = 1000;
+/** Battle royale: how long a loot feed line stays up, fading over its last part, and how many show at most. */
+export const LOOT_FEED_MS = 3000;
+const LOOT_FEED_FADE_MS = 600;
+const LOOT_FEED_LINES = 4;
 
 /** Dev-only autopilot for the headless checks: world-space move, aim angle, fire. */
 export interface Bot {
@@ -224,6 +228,11 @@ export class Match {
   /** Battle royale: the heal in progress as last predicted (NO_HEAL: none), and the line saying how the last one ended, until `until`. */
   private lastHeal = NO_HEAL;
   private healNote: { text: string; kind: string; until: number } | null = null;
+  /** Battle royale: what we just picked up (the loot feed), oldest first, each since `at`; `lootN` numbers them. */
+  private loot: (LootGain & { n: number; at: number })[] = [];
+  private lootN = 0;
+  /** Battle royale: the chests already seen open, so each one is heard opening once. */
+  private openCrates = new Set<string>();
   private disposed = false;
   /**
    * The spectator view (camera, player list), made on the first snapshot
@@ -462,6 +471,7 @@ export class Match {
     this.predictor.reset();
     this.localBullets.clear();
     this.lastView.clear();
+    this.loot.length = 0;
     this.accumulator = 0;
     s.grenades.forEach((g, id) => {
       this.seenGrenades.add(id);
@@ -518,7 +528,19 @@ export class Match {
         if (me) this.sfx(won ? "match_win" : "match_lose");
       }
       this.phase = s.phase;
+      // A new match (or its end): last match's pickups go.
+      this.loot.length = 0;
     }
+
+    // Battle royale: a chest opening, heard where it stands, whoever opened
+    // it. Not the ones already open in the first snapshot after a (re)connect.
+    s.crates.forEach((c, id) => {
+      if (!c.open) return void this.openCrates.delete(id);
+      if (this.openCrates.has(id)) return;
+      this.openCrates.add(id);
+      if (!newEpoch) this.sfx("chest_open", { x: c.x, z: c.z, delay: REMOTE_DELAY });
+    });
+    if (this.openCrates.size > 64) for (const id of this.openCrates) if (!s.crates.has(id)) this.openCrates.delete(id);
 
     s.grenades.forEach((g, id) => {
       // Our own throws were already heard from the prediction.
@@ -562,14 +584,19 @@ export class Match {
       if (prev.shieldHp > 0 && p.shieldHp === 0 && prev.shieldTicks > 1) this.sfx("shield_break", at);
       if (prev.alive && !p.alive) this.sfx("death", at);
       if (!prev.alive && p.alive) this.sfx("respawn", at);
-      // Battle royale: something picked up (a gun in a new slot, grenades, healing items, shield charges).
-      const more =
-        carriedGuns(p).length > carriedGuns(prev).length ||
-        p.kit.grenades > prev.kit.grenades ||
-        p.kit.bandages > prev.kit.bandages ||
-        p.kit.medkits > prev.kit.medkits ||
-        p.kit.shields > prev.kit.shields;
-      if (mine && p.alive && prev.alive && samePhase && more) this.sfx("weapon_pick");
+      // Battle royale: something picked up or swapped in with F (a gun,
+      // grenades, healing items, shield charges), read off our kit in two
+      // snapshots: a loot feed line each, and the pickup sound once. Alive in
+      // both and the same phase, so a match start, a reset or a knock-out
+      // isn't loot (and a reconnect has no `prev`).
+      if (mine && s.mode === "royale" && p.alive && prev.alive && samePhase) {
+        const gained = lootGained(prev, p);
+        if (gained.length > 0) {
+          for (const g of gained) this.loot.push({ ...g, n: this.lootN++, at: now });
+          if (this.loot.length > LOOT_FEED_LINES) this.loot.splice(0, this.loot.length - LOOT_FEED_LINES);
+          this.sfx("weapon_pick");
+        }
+      }
       // A healing item finished: its chime, for everyone near.
       if (prev.kit.heal !== NO_HEAL && p.kit.heal === NO_HEAL && p.kit.healStop === HEAL_STOP.done && p.alive) this.sfx("heal_chime", at);
 
@@ -768,11 +795,12 @@ export class Match {
     }
 
     // Battle royale: the zone as of now (the latest tick plus the time since
-    // it came in), the crates and the items on the floor.
+    // it came in), the chests and the items on the floor (loot falling out
+    // of a chest drawn at that tick too).
     const tickNow = latest ? latest.tick + (now - latest.t) / TICK_MS : 0;
     if (royale && latest) {
       scene.royale.setZone(zoneAt(latest.zone, tickNow));
-      scene.royale.sync(latest.crates, latest.items, now);
+      scene.royale.sync(latest.crates, latest.items, now, tickNow);
     }
 
     // 3. Remote players and bullets: interpolated ~100 ms in the past.
@@ -854,13 +882,14 @@ export class Match {
 
     // Our own bullets are drawn from the prediction; the server's copies of
     // them are skipped (see LocalBullets). Everyone else's are interpolated.
-    const bullets = new Map<string, { x: number; z: number; slot: number; owner?: string; weapon?: number; hidden?: boolean }>();
+    const bullets = new Map<string, BulletDraw>();
     for (const [id, b] of buffer.sampleBullets(renderTime)) {
       if (localBullets.owns(id)) continue;
       const owner = latest?.players.get(b.owner);
       // An enemy's bullet in or behind smoke isn't drawn (see above); a spectator sees them all.
       const hidden = !!viewer && clouds.length > 0 && !sameTeam(owner?.team ?? NO_TEAM, myTeam) && smokeCover(viewer, b, seenClouds) === "foreign";
-      bullets.set(id, { x: b.x, z: b.z, slot: owner ? paintOf(owner) : 0, owner: b.owner, hidden });
+      // The tracer's look: the shooter's gun in hand (snapshots don't say which gun fired a bullet).
+      bullets.set(id, { x: b.x, z: b.z, vx: b.vx, vz: b.vz, slot: owner ? paintOf(owner) : 0, owner: b.owner, weapon: owner?.weapon, hidden });
     }
     if (meServer) localBullets.render(this.accumulator / TICK_MS, paintOf(meServer), bullets, sessionId);
     scene.syncBullets(bullets);
@@ -994,13 +1023,26 @@ export class Match {
         reloading: !!sim && sim.kit.hand === i && sim.reloadTicks > 0,
       });
     }
-    // F's target, the same pick as the server's (swapTarget): only while
-    // playing, alive, with all three slots full. Items come with the latest
-    // snapshot and the kit with the prediction, so it changes on a snapshot
-    // or a step, never between two.
+    // F's target, the same pick as the server's (fTarget): only while
+    // playing and alive. Items and chests come with the latest snapshot (and
+    // its tick: loot still falling isn't offered) and the kit with the
+    // prediction, so it changes on a snapshot or a step, never between two.
+    // The grenade held is the server's (the step never changes its type).
     const target =
-      s.phase === "playing" && me?.alive && sim && freeGunSlot(sim.kit) === -1 ? swapTarget(sim.kit, sim.x, sim.z, s.items, this.net.sessionId) : null;
-    const swap = target && sim ? { from: gunInHand(sim.kit), to: target.item.item } : null;
+      s.phase === "playing" && me?.alive && sim
+        ? fTarget(sim.kit, { type: me.grenade, count: sim.kit.grenades }, sim.x, sim.z, s.items, s.crates, this.net.sessionId, s.tick)
+        : null;
+    let prompt: RoyaleHud["prompt"] = null;
+    if (target?.kind === "chest") prompt = { kind: "chest", from: "", to: "", fromName: "", toName: "" };
+    else if (target?.kind === "gun" && sim) {
+      const from = weaponDef(gunInHand(sim.kit));
+      const to = weaponDef(target.item.item);
+      prompt = { kind: "gun", from: from.key, to: to.key, fromName: from.name, toName: to.name };
+    } else if (target?.kind === "grenade" && me) {
+      const from = grenadeDef(me.grenade);
+      const to = grenadeDef(target.item.item);
+      prompt = { kind: "grenade", from: from.key, to: to.key, fromName: from.name, toName: to.name };
+    }
     return {
       alive,
       players: s.players.size,
@@ -1016,8 +1058,23 @@ export class Match {
       healing: sim && sim.kit.heal !== NO_HEAL ? sim.kit.heal : -1,
       healNote: note?.text ?? "",
       stopKind: note?.kind ?? "",
-      swap,
+      prompt,
+      loot: this.lootLines(now),
     };
+  }
+
+  /** The loot feed: our last few pickups, each shown for LOOT_FEED_MS. */
+  private lootLines(now: number): LootLine[] {
+    // Oldest first, so the expired ones are at the front.
+    while (this.loot.length > 0 && now - this.loot[0].at >= LOOT_FEED_MS) this.loot.shift();
+    return this.loot.map((l) => ({
+      n: l.n,
+      kind: l.kind,
+      key: l.key,
+      to: l.to,
+      from: l.from,
+      opacity: Math.min(1, (LOOT_FEED_MS - (now - l.at)) / LOOT_FEED_FADE_MS),
+    }));
   }
 
   /**

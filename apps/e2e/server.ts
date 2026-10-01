@@ -18,10 +18,12 @@
 //   POST /countdown { roomId, seconds }    the same for that room's pre-match countdowns
 //   POST /respawn { roomId, seconds }      the same for that room's respawn delays (every
 //                                          dead player respawns `seconds` from now)
-//   POST /loot { roomId, weapon }          battle royale: that room's crates drop this gun
+//   POST /loot { roomId, weapon }          battle royale: that room's chests drop this gun
 //                                          (a WEAPONS index) instead of a random item
 //   POST /loot { roomId, kind, item, amount }  the same with any floor item (an ITEM_KINDS
 //                                          index, which one, how many): healing, shields
+//   POST /lootdrop { roomId, seconds }     battle royale: a chest's loot takes `seconds` to
+//                                          land (and be takeable) instead of ROYALE.lootDrop
 //   POST /zone { roomId, wait, close }     battle royale: the running match's zone starts
 //                                          shrinking `wait` seconds from now and is closed
 //                                          `close` seconds from now
@@ -214,7 +216,7 @@ function setSmoke(body: string, reply: (status: number, text: string) => void) {
 }
 
 /**
- * POST /loot { roomId, weapon }: from now on that room's crates drop this gun
+ * POST /loot { roomId, weapon }: from now on that room's chests drop this gun
  * (with a full magazine) instead of a random line of the loot table, so a
  * spec knows what it will pick up. Only the room's Floor changes (its draw).
  * With `kind`, `item` and `amount` instead of `weapon`: that floor item
@@ -234,6 +236,21 @@ function setLoot(body: string, reply: (status: number, text: string) => void) {
   }
   if (typeof weapon !== "number" || !WEAPONS[weapon]) return reply(400, `bad weapon ${weapon}`);
   room.floor.force = { kind: ITEM_GUN, item: weapon, amount: WEAPONS[weapon].magazine };
+  reply(200, "ok");
+}
+
+/**
+ * POST /lootdrop { roomId, seconds }: from now on a chest's loot in that room
+ * takes `seconds` to land, and can't be taken before (the room's Floor, its
+ * `dropTime`). A spec slows the fall so a slow page still sees it.
+ */
+function setLootDrop(body: string, reply: (status: number, text: string) => void) {
+  const { roomId, seconds } = JSON.parse(body || "{}") as { roomId?: string; seconds?: number };
+  const room = roomId ? (matchMaker.getLocalRoomById(roomId) as unknown as { floor?: { dropTime: number } } | undefined) : undefined;
+  if (!room) return reply(404, `no room ${roomId}`);
+  if (!room.floor || typeof room.floor.dropTime !== "number") return reply(500, "GameRoom.floor.dropTime is gone: update apps/e2e/server.ts");
+  if (typeof seconds !== "number" || seconds <= 0) return reply(400, `bad seconds ${seconds}`);
+  room.floor.dropTime = seconds;
   reply(200, "ok");
 }
 
@@ -270,6 +287,7 @@ createHttpServer((req, res) => {
     if (req.method === "POST" && req.url === "/countdown") return setCountdown(body, reply);
     if (req.method === "POST" && req.url === "/respawn") return setRespawn(body, reply);
     if (req.method === "POST" && req.url === "/loot") return setLoot(body, reply);
+    if (req.method === "POST" && req.url === "/lootdrop") return setLootDrop(body, reply);
     if (req.method === "POST" && req.url === "/zone") return setZone(body, reply);
     if (req.method !== "POST" || req.url !== "/kill") return reply(404, "not found");
     const { roomId, killer, victim } = JSON.parse(body || "{}") as { roomId?: string; killer?: string; victim?: string };

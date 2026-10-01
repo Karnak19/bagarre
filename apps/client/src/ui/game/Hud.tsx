@@ -5,7 +5,7 @@
 // minimap (HudFfa.tsx); in a team deathmatch to the team score (HudTeam.tsx),
 // the same kill feed and minimap, in team colours; in a battle royale to
 // the players still in and the zone's timer, and the weapon box to the three
-// gun slots (HudRoyale.tsx).
+// gun slots, plus the loot feed (HudRoyale.tsx).
 //
 // match.ts writes a HudModel every frame (hud.ts). Nothing here re-renders
 // per frame: each widget selects the few fields it shows and re-renders only
@@ -39,7 +39,7 @@ import { paintOf } from "../../paint.ts";
 import { shallowEqual, useEngine, useSelector, useStoreEffect } from "../hooks.ts";
 import { shared, slotFill } from "../styles.ts";
 import { FfaPanel, KillFeed, MinimapBox } from "./HudFfa.tsx";
-import { GunSlots, HealItems, HealStatus, RoyalePanel, SwapPrompt, ZoneArrow } from "./HudRoyale.tsx";
+import { GunSlots, HealItems, HealStatus, LootFeed, RoyalePanel, SwapPrompt, ZoneArrow } from "./HudRoyale.tsx";
 import { TeamPanel } from "./HudTeam.tsx";
 import { PICKABLE_WEAPONS, WEAPON_KEYS, grenadeView } from "../../items.ts";
 import { GrenadePicker, WeaponPicker } from "./WeaponPicker.tsx";
@@ -188,6 +188,7 @@ export function Hud() {
       <Stunned />
       {royale && <SwapPrompt />}
       {royale && <HealStatus />}
+      {royale && <LootFeed />}
       <Watchers />
       <Debug />
       <FlashScreen />
@@ -469,9 +470,9 @@ function Warmup() {
       {royale ? (
         // Battle royale: nothing to pick.
         <Text xstyle={styles.warmupSub}>
-          One life. Everyone starts with the Pistol: break crates for guns, grenades, healing and shield charges (1-3 or the
-          wheel switch guns, F swaps with one on the floor, 4 bandage, 5 medkit, E uses a shield charge). Stay inside the
-          zone. Last one standing wins.
+          One life. Everyone starts with the Pistol: open the glowing chests with F for guns, grenades, healing and shield
+          charges (1-3 or the wheel switch guns, F swaps with one on the floor, 4 bandage, 5 medkit, E uses a shield charge).
+          Stay inside the zone. Last one standing wins.
         </Text>
       ) : (
         <>

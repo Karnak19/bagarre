@@ -11,6 +11,7 @@ anyway. The one font is under the SIL Open Font License.
 | Toon Shooter Game Kit | Quaternius | https://quaternius.com/packs/toonshootergamekit.html | CC0 1.0 | Arena props, the grenade |
 | Ultimate Nature Pack | Quaternius | https://quaternius.com/packs/ultimatenature.html | CC0 1.0 | Snowy rocks (cover) and trees (decor) on Ironvale |
 | Particle Pack (1.1) | Kenney | https://kenney.nl/assets/particle-pack | CC0 1.0 | Muzzle flashes, sparks, explosion, smoke, scorch marks |
+| Pirate Kit (2.1) | Kenney | https://kenney.nl/assets/pirate-kit | CC0 1.0 | The battle royale's chest |
 | Black Ops One | James Grieshaber (Typeset.it) | https://fonts.google.com/specimen/Black+Ops+One | SIL OFL 1.1 | The menu's title and a few display labels |
 
 ## Files in the repo
@@ -21,10 +22,11 @@ anyway. The one font is under the SIL Open Font License.
 | `apps/client/public/models/skins/*.glb` | 64–141 KB each, 1.54 MB for all 16 | One character per skin in `SKINS` (`packages/shared/src/skins.ts`): mesh and skeleton, no clips |
 | `apps/client/public/models/guns/*.glb` | 16–27 KB each, 152 KB for all 7 | One gun per weapon in `GUN_VIEW` (`apps/client/src/items.ts`) |
 | `apps/client/public/models/props.glb` | 278 KB | Arena props, one named node each (127 KB before the Ironvale props) |
+| `apps/client/public/models/chest.glb` | 18 KB | The battle royale's chest: a body and its lid, the texture embedded |
 | `apps/client/public/vfx/particles.png` | 212 KB | 4 x 4 greyscale atlas of Kenney particles |
 | `apps/client/public/fonts/black-ops-one.woff2` | 23 KB | Black Ops One, Latin subset (the Google Fonts woff2) |
 
-About 2.4 MB in total, but a match only loads the skins it shows: a room of 8
+About 2.5 MB in total, but a match only loads the skins it shows: a room of 8
 different skins is about 0.9 MB of characters.
 
 ### Characters
@@ -67,6 +69,16 @@ recoloured from the pack's slight lilac to a neutral cool white that matches
 Ironvale's floor, and Rock_Snow_4 and _7, modelled sunk about 0.25 m into
 the ground, are lifted onto it.
 
+### The chest
+
+From the Pirate Kit's `Models/GLB format` folder: chest.glb, its own file
+(`chest.glb`, not a node of props.glb, so a client with an older cached
+props.glb still gets it). Two nodes, `chest` and `lid` (a child hinged at
+the back, which the client swings open), one material on the kit's 512 px
+colour map (10 KB, embedded). The pack's open / close clips are dropped.
+When the file fails to load, the chests are drawn as the old crate prop
+(or a plain box), still glowing.
+
 ### Particles
 
 From `PNG (Transparent)`: muzzle_01, muzzle_02, muzzle_04, muzzle_05,
@@ -84,7 +96,9 @@ The raw packs are not in the repo. To rebuild the files above:
   gun FBX into glTF and measure each gun's grip and muzzle (`guns.json`, the
   numbers in `GUN_VIEW`). `props.glb` is only rebuilt with `--props` (the
   Toon Shooter kit) and `--nature` (the Ultimate Nature Pack's OBJ folder);
-  pass `-` for the characters and the guns to rebuild props.glb alone. The
+  pass `-` for the characters and the guns to rebuild props.glb alone.
+  `chest.glb` is built with `--chest <Pirate Kit's "Models/GLB format" dir>`
+  (it can go alone too: `- - <out dir> --chest <dir>`). The
   nature models go through `convert-nature.py` in headless Blender first
   (OBJ to glTF, base on the ground, snow recoloured, matte materials), then
   lose their normals and are welded: they are flat-shaded, and the client

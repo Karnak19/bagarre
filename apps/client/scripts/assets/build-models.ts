@@ -8,6 +8,8 @@
 //                     (converted by convert-guns.py in headless Blender)
 //   props.glb         optional, from the Toon Shooter Game Kit (--props) and
 //                     the Ultimate Nature Pack (--nature)
+//   chest.glb         optional, the battle royale's chest, from Kenney's
+//                     Pirate Kit (--chest)
 //
 // The gltf-transform packages are not dependencies of the repo, so run it from
 // a scratch directory (NODE_PATH, because Bun resolves imports from the
@@ -17,7 +19,7 @@
 //   bun add @gltf-transform/core @gltf-transform/functions @gltf-transform/extensions meshoptimizer
 //   NODE_PATH=$PWD/node_modules bun <repo>/apps/client/scripts/assets/build-models.ts \
 //     <chars glTF dir> <guns FBX dir> <repo>/apps/client/public/models \
-//     [--props <kit glTF dir> --nature <nature OBJ dir>]
+//     [--props <kit glTF dir> --nature <nature OBJ dir>] [--chest <pirate kit GLB dir>]
 //
 // <chars glTF dir> is the glTF folder of the Ultimate Animated Character Pack
 // (Soldier_Male.gltf, ...), <guns FBX dir> the FBX folder of the Ultimate Guns
@@ -35,6 +37,11 @@
 // in ./nature-raw of the current directory (base on the ground, snow
 // recoloured), and they join props.glb as named nodes too.
 //
+// --chest is the "Models/GLB format" folder of Kenney's Pirate Kit: its
+// chest.glb (a body node and a "lid" child hinged at the back, one textured
+// material on the kit's colour map) becomes chest.glb, its clips dropped and
+// the texture embedded. Pass "-" for the characters and the guns to build it alone.
+//
 // Every file goes through prune, dedup, resample (clips only) and meshopt
 // compression (decoded by MeshoptDecoder in GLTFLoader). Quantization keeps
 // the glTF coordinates: it moves the scale into a node transform.
@@ -50,10 +57,12 @@ const propsAt = args.indexOf("--props");
 const PROPS_SRC = propsAt >= 0 ? args.splice(propsAt, 2)[1] : undefined;
 const natureAt = args.indexOf("--nature");
 const NATURE_SRC = natureAt >= 0 ? args.splice(natureAt, 2)[1] : undefined;
+const chestAt = args.indexOf("--chest");
+const CHEST_SRC = chestAt >= 0 ? args.splice(chestAt, 2)[1] : undefined;
 if (PROPS_SRC && !NATURE_SRC) throw new Error("--props needs --nature <nature OBJ dir> too (props.glb holds the rocks and trees)");
 const [CHARS, GUNS, OUT] = args;
 if (!CHARS || !GUNS || !OUT) {
-  throw new Error("usage: bun build-models.ts <chars glTF dir> <guns FBX dir | -> <out dir> [--props <kit glTF dir> --nature <nature OBJ dir>]");
+  throw new Error("usage: bun build-models.ts <chars glTF dir> <guns FBX dir | -> <out dir> [--props <kit glTF dir> --nature <nature OBJ dir>] [--chest <pirate kit GLB dir>]");
 }
 await MeshoptEncoder.ready;
 const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies({ "meshopt.encoder": MeshoptEncoder });
@@ -220,4 +229,14 @@ if (PROPS_SRC) {
     b.dispose();
   }
   await finish(props, "props.glb");
+}
+
+// chest.glb (optional): the royale's chest, its own file (props.glb predates
+// it, and a client with an older cached props.glb still gets the chest). The
+// nodes keep the pack's names, "chest" and "lid": royaleView.ts opens the lid
+// itself, so the pack's open / close clips go.
+if (CHEST_SRC) {
+  const doc = await io.read(`${CHEST_SRC}/chest.glb`);
+  for (const a of doc.getRoot().listAnimations()) dropAnimation(a);
+  await finish(doc, "chest.glb");
 }

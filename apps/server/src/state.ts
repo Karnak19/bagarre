@@ -171,16 +171,22 @@ export const FloorItem = schema(
     amount: t.uint8().default(0),
     /** Who dropped it under their feet and hasn't stepped off it yet (a session id; "": nobody). See floor.ts. */
     blockedFor: t.string().default(""),
+    /** A chest's loot: the chest it pops out of, the tick it does, and the tick it lands (nobody takes it before). 0 for the rest. */
+    fromX: t.float32().default(0),
+    fromZ: t.float32().default(0),
+    dropTick: t.uint32().default(0),
+    readyTick: t.uint32().default(0),
   },
   "FloorItem",
 );
 export type FloorItem = SchemaType<typeof FloorItem>;
 
-/** A crate still standing (CrateView). */
+/** A chest (CrateView): F opens it once; it stays, open, until the match ends. */
 export const Crate = schema(
   {
     x: t.float32().default(0),
     z: t.float32().default(0),
+    open: t.boolean().default(false),
   },
   "Crate",
 );
@@ -262,7 +268,7 @@ export const GameState = schema(
     smokes: t.map(Smoke),
     /** Warmup: the tick it ends on, the match starts then (0 outside warmup). Synced as a tick so every client's timer agrees. */
     warmupEnd: t.uint32().default(0),
-    /** Battle royale: items on the floor, crates still standing (by id), and the zone. Empty in the other modes. */
+    /** Battle royale: items on the floor, the chests (by id), and the zone. Empty in the other modes. */
     items: t.map(FloorItem),
     crates: t.map(Crate),
     zone: Zone,

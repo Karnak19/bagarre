@@ -19,8 +19,9 @@ function isEditable(e: Event) {
  * Battle royale (`slotMode`, set by the match): the number keys 1-3 pick a
  * gun slot instead of a loadout gun (they never call `onPick` then), the
  * mouse wheel cycles through the guns carried (`onCycle`, which the match
- * turns into a slot from its predicted kit), and F asks for a swap with the
- * gun on the floor. A slot choice is an input like a shot: `slot` plus the
+ * turns into a slot from its predicted kit), and F asks the server to act on
+ * what is in reach (open a chest, or swap with the floor: fTarget). A slot
+ * choice is an input like a shot: `slot` plus the
  * `switch` press counter, checked by the shared step on both sides. 4 and 5
  * use a healing item (the bandage, the medkit: `heal` plus the `use`
  * counter), checked the same way. None of them is ever a loadout pick there.
@@ -41,7 +42,7 @@ export class Input {
   slot = 0;
   /** The healing item asked for by the latest 4 or 5 (InputMessage.heal, a HEAL_ITEMS index). */
   heal = 0;
-  /** Battle royale: 1-3 are gun slots, the wheel cycles them, F swaps. */
+  /** Battle royale: 1-3 are gun slots, the wheel cycles them, F opens a chest or swaps. */
   slotMode = false;
   /** Called with 1 (down) or -1 (up) when the wheel turns in slot mode. */
   onCycle: (dir: 1 | -1) => void = () => {};

@@ -18,6 +18,8 @@ export interface Assets {
   guns: (THREE.Object3D | null)[];
   /** Arena props by name (Crate, SackTrench_Small, ...), each a template to clone. */
   props: Map<string, THREE.Object3D> | null;
+  /** The battle royale's chest (models/chest.glb: a body and its "lid"), a template to clone. */
+  chest: THREE.Object3D | null;
   /** The particle atlas: 4 x 4 greyscale cells, see vfx.ts. */
   atlas: THREE.Texture | null;
 }
@@ -32,7 +34,8 @@ export const assetsLoaded = new Promise<Assets>((r) => (resolveLoaded = r));
 /** Loads every startup asset in parallel. `onProgress` gets a 0-1 fraction. */
 export async function loadAssets(onProgress: (fraction: number) => void): Promise<Assets> {
   const gunFiles = WEAPONS.map((w) => `models/${GUN_VIEW[w.key].model.file}`);
-  const files = [`models/${SKIN_ANIMS_FILE}`, "models/props.glb", "vfx/particles.png", ...gunFiles];
+  // The chest last, so the guns keep their indices.
+  const files = [`models/${SKIN_ANIMS_FILE}`, "models/props.glb", "vfx/particles.png", ...gunFiles, "models/chest.glb"];
   const loaded = files.map(() => 0);
   const tick = (i: number, f: number) => {
     loaded[i] = f;
@@ -64,10 +67,11 @@ export async function loadAssets(onProgress: (fraction: number) => void): Promis
       ),
     );
 
-  const [anims, props, atlas, ...guns] = await Promise.allSettled([
+  const [anims, props, atlas, chest, ...guns] = await Promise.allSettled([
     gltf(0),
     gltf(1),
     texture(2),
+    gltf(files.length - 1),
     ...gunFiles.map((_, i) => gltf(3 + i)),
   ]);
   const ok = <T>(r: PromiseSettledResult<T>, name: string): T | null => {
@@ -93,6 +97,7 @@ export async function loadAssets(onProgress: (fraction: number) => void): Promis
     anims: clips && clips.length > 0 ? clips : null,
     guns: guns.map((g, i) => ok(g as PromiseSettledResult<GLTF>, gunFiles[i])?.scene ?? null),
     props: propMap,
+    chest: ok(chest as PromiseSettledResult<GLTF>, files[files.length - 1])?.scene ?? null,
     atlas: tex,
   };
   resolveLoaded(result);

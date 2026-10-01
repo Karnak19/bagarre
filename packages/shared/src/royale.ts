@@ -11,7 +11,12 @@
 //   `swapTarget` is which floor gun an F press takes: the server swaps with
 //   it, and the client's HUD shows it before the press.
 // - Grenade stacks: one type at a time, counted (`takeGrenades`). The step
-//   spends one per throw.
+//   spends one per throw. Like a gun, a stack is only taken by walking over
+//   it when that swaps nothing (`walkTakesGrenades`); F swaps the other
+//   type in (`grenadeSwapTarget`).
+// - Chests and F: `fTarget` is what an F press does (open a chest, swap a
+//   gun, swap a grenade stack: the nearest wins). A chest's loot lands next
+//   to it (`lootSpot`) and can't be taken until it has (`itemReady`).
 // - The zone: `zoneAt` is its circle at a tick, `zoneDamage` what standing
 //   outside costs on that tick. Both read the synced ZoneView only.
 // - Healing items and shield charges: counted stacks (`takeStack`), used
@@ -41,9 +46,10 @@ import {
   ticks,
   type LootEntry,
 } from "./constants.ts";
-import type { MapDef } from "./maps/types.ts";
+import type { MapDef, Spawn } from "./maps/types.ts";
 import { fnv1a } from "./modes.ts";
-import type { FloorItemView, KitSim, MapLike, PlayerSim, ZoneView } from "./protocol.ts";
+import { circleOverlapsBox } from "./physics.ts";
+import type { CrateView, FloorItemView, KitSim, MapLike, PlayerSim, ZoneView } from "./protocol.ts";
 
 /** An empty gun slot (`KitSim.gun0`..`gun2`). */
 export const NO_GUN = 255;
@@ -168,25 +174,38 @@ export function swapGun(sim: PlayerSim, weapon: number, mag: number): { sim: Pla
   return { sim: s, dropped: old };
 }
 
+/** Whether a floor item can be taken at `tick`: a chest's loot only once it has landed (`readyTick`; 0: at once). */
+export function itemReady(item: { readyTick: number }, tick: number): boolean {
+  return tick >= item.readyTick;
+}
+
 /**
- * The floor gun an F press swaps with, for a player at (x, z) carrying
- * `kit`: the nearest gun within ROYALE.pickupRadius that isn't blocked for
- * them (`blockedFor`, they dropped it and haven't stepped off it yet; the
- * first one met wins a tie). Null when there is none, when that nearest gun
- * is one already carried (F then does nothing, even with another gun
- * further off), or when the hand isn't a gun slot: exactly when `swapGun`
- * would refuse it. The server's F (floor.ts) swaps with this one, and the
- * HUD's swap prompt names it, so the two never disagree. It doesn't check
- * for a free slot: with one, walking over a gun already picks it up.
+ * The nearest item of `kind` within ROYALE.pickupRadius of (x, z) that
+ * player `pid` may take at `tick`: not blocked for them (`blockedFor`, they
+ * dropped it and haven't stepped off it yet) and landed (`itemReady`). The
+ * first one met wins a tie.
  */
-export function swapTarget<T extends FloorItemView>(kit: KitSim, x: number, z: number, items: MapLike<T>, pid: string): { id: string; item: T } | null {
+function nearestItem<T extends FloorItemView>(kind: number, x: number, z: number, items: MapLike<T>, pid: string, tick: number): { id: string; item: T; d: number } | null {
   let best: { id: string; item: T; d: number } | null = null;
   items.forEach((item, id) => {
-    if (item.kind !== ITEM_GUN || item.blockedFor === pid) return;
+    if (item.kind !== kind || item.blockedFor === pid || !itemReady(item, tick)) return;
     const d = Math.hypot(x - item.x, z - item.z);
     if (d <= ROYALE.pickupRadius && (!best || d < best.d)) best = { id, item, d };
   });
-  const pick = best as { id: string; item: T; d: number } | null;
+  return best;
+}
+
+/**
+ * The floor gun an F press swaps with, for a player at (x, z) carrying
+ * `kit`, at `tick`: the nearest gun in reach they may take (`nearestItem`).
+ * Null when there is none, when that nearest gun is one already carried (F
+ * then does nothing, even with another gun further off), or when the hand
+ * isn't a gun slot: exactly when `swapGun` would refuse it. It doesn't check
+ * for a free slot: with one, walking over a gun already picks it up
+ * (`fTarget` does check, for the prompt).
+ */
+export function swapTarget<T extends FloorItemView>(kit: KitSim, x: number, z: number, items: MapLike<T>, pid: string, tick: number): { id: string; item: T } | null {
+  const pick = nearestItem(ITEM_GUN, x, z, items, pid, tick);
   if (!pick || carriesGun(kit, pick.item.item) || !isGunSlot(kit.hand)) return null;
   return { id: pick.id, item: pick.item };
 }
@@ -248,6 +267,29 @@ export function takeGrenades(held: GrenadeStack, floor: GrenadeStack): { held: G
   const have = held.count > 0 ? held.count : 0;
   const taken = Math.max(0, Math.min(max - have, floor.count));
   return { held: { type: floor.type, count: have + taken }, left: floor.count - taken, dropped: null, taken };
+}
+
+/**
+ * Whether walking over a stack of `type` takes it, with `held` in hand: only
+ * when it swaps nothing, like a gun into a free slot. None held, or the same
+ * type (topped up to its `stack`); another type stays on the floor, for F
+ * (`grenadeSwapTarget`).
+ */
+export function walkTakesGrenades(held: GrenadeStack, type: number): boolean {
+  return held.count <= 0 || held.type === type;
+}
+
+/**
+ * The floor grenade stack an F press swaps in, for a player at (x, z)
+ * holding `held`, at `tick`: the nearest stack in reach they may take
+ * (`nearestItem`), like `swapTarget` for guns. Null when there is none, or
+ * when walking over that nearest one already takes it (`walkTakesGrenades`:
+ * F has nothing to swap).
+ */
+export function grenadeSwapTarget<T extends FloorItemView>(held: GrenadeStack, x: number, z: number, items: MapLike<T>, pid: string, tick: number): { id: string; item: T } | null {
+  const pick = nearestItem(ITEM_GRENADE, x, z, items, pid, tick);
+  if (!pick || walkTakesGrenades(held, pick.item.item)) return null;
+  return { id: pick.id, item: pick.item };
 }
 
 /** A throw from a stack: one fewer, never below 0 (at 0 there is nothing to throw, see stepPlayer). */
@@ -478,6 +520,88 @@ export function pickZone(map: MapDef, seed: string, startTick: number, endTick: 
   };
 }
 
+// --- Chests and F ---------------------------------------------------------------------
+
+/** The nearest chest still closed within ROYALE.openRadius of (x, z) (the first one met wins a tie), or null. */
+export function chestTarget<T extends CrateView>(x: number, z: number, crates: MapLike<T>): { id: string; crate: T; d: number } | null {
+  let best: { id: string; crate: T; d: number } | null = null;
+  crates.forEach((crate, id) => {
+    if (crate.open) return;
+    const d = Math.hypot(x - crate.x, z - crate.z);
+    if (d <= ROYALE.openRadius && (!best || d < best.d)) best = { id, crate, d };
+  });
+  return best;
+}
+
+/** What an F press does (`fTarget`): open a chest, or swap the gun in hand or the grenade stack held for one on the floor. */
+export type FTarget<T extends FloorItemView = FloorItemView> =
+  | { kind: "chest"; id: string }
+  | { kind: "gun"; id: string; item: T }
+  | { kind: "grenade"; id: string; item: T };
+
+/**
+ * What an F press does, for player `pid` at (x, z) carrying `kit` and
+ * holding the grenade stack `held`, at `tick`. The candidates:
+ * - the nearest closed chest within ROYALE.openRadius (`chestTarget`);
+ * - the gun `swapTarget` picks, with all three slots full (with a free one,
+ *   walking over a gun takes it: F has nothing to do);
+ * - the grenade stack `grenadeSwapTarget` picks.
+ * The nearest of them wins, by the distance from the player's centre; a tie
+ * goes to the chest, then the gun. Null: F does nothing. The server's F
+ * (floor.ts) does this one and the HUD's prompt names it, so the two never
+ * disagree.
+ */
+export function fTarget<T extends FloorItemView, C extends CrateView>(
+  kit: KitSim,
+  held: GrenadeStack,
+  x: number,
+  z: number,
+  items: MapLike<T>,
+  crates: MapLike<C>,
+  pid: string,
+  tick: number,
+): FTarget<T> | null {
+  const dist = (o: { x: number; z: number }) => Math.hypot(x - o.x, z - o.z);
+  const options: { t: FTarget<T>; d: number }[] = [];
+  const chest = chestTarget(x, z, crates);
+  if (chest) options.push({ t: { kind: "chest", id: chest.id }, d: chest.d });
+  const gun = freeGunSlot(kit) === -1 ? swapTarget(kit, x, z, items, pid, tick) : null;
+  if (gun) options.push({ t: { kind: "gun", ...gun }, d: dist(gun.item) });
+  const nade = grenadeSwapTarget(held, x, z, items, pid, tick);
+  if (nade) options.push({ t: { kind: "grenade", ...nade }, d: dist(nade.item) });
+  // A stable sort: the order above breaks a tie.
+  options.sort((a, b) => a.d - b.d);
+  return options[0]?.t ?? null;
+}
+
+/** Radius a dropped item needs clear of cover (so it never lands inside a box). */
+export const ITEM_CLEARANCE = 0.3;
+
+/**
+ * Where a chest's loot lands, for a chest at (x, z) opened from `angle`
+ * (radians, from the chest toward the player): ROYALE.lootSpread out that
+ * way if it can, else the nearest way round (45° steps, then a step further
+ * out). The spot is inside the walls, clear of cover, and clear of `avoid`:
+ * circles (`r`) to stay out of, like the chests and the items already on the
+ * floor, so nothing lands in a chest or on another item. Without such a
+ * spot, the first one only clear of the walls and cover; without that, the
+ * chest's own spot.
+ */
+export function lootSpot(map: MapDef, x: number, z: number, angle: number, avoid: readonly { x: number; z: number; r: number }[]): Spawn {
+  const tries: Spawn[] = [];
+  for (const k of [1, 1.6]) {
+    for (let i = 0; i < 8; i++) {
+      // 0, +45°, -45°, +90°, ...: the nearest ways round first.
+      const a = angle + (i % 2 === 1 ? 1 : -1) * Math.ceil(i / 2) * (Math.PI / 4);
+      tries.push({ x: x + Math.cos(a) * ROYALE.lootSpread * k, z: z + Math.sin(a) * ROYALE.lootSpread * k });
+    }
+  }
+  const open = (p: Spawn) =>
+    Math.abs(p.x) < map.halfX - 0.5 && Math.abs(p.z) < map.halfZ - 0.5 && !map.obstacles.some((b) => circleOverlapsBox(p.x, p.z, ITEM_CLEARANCE, b));
+  const clear = (p: Spawn) => avoid.every((o) => Math.hypot(p.x - o.x, p.z - o.z) >= o.r);
+  return tries.find((p) => open(p) && clear(p)) ?? tries.find(open) ?? { x, z };
+}
+
 // --- Loot ------------------------------------------------------------------------------
 
 /** One item for the floor: an ITEM_KINDS index, which one, and how many. */
@@ -498,7 +622,7 @@ export function lootItem(e: LootEntry): ItemDrop {
   return { kind: ITEM_SHIELD, item: 0, amount: e.amount };
 }
 
-/** A crate's drop: the LOOT line `r` (in [0, 1), e.g. Math.random()) lands on, by weight. */
+/** A chest's drop: the LOOT line `r` (in [0, 1), e.g. Math.random()) lands on, by weight. */
 export function rollLoot(r: number, table: readonly LootEntry[] = LOOT): ItemDrop {
   const total = table.reduce((n, e) => n + e.weight, 0);
   let at = Math.min(Math.max(r, 0), 0.999999) * total;

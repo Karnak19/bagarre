@@ -27,6 +27,24 @@ export interface KillFeedLine {
   opacity: number;
 }
 
+/**
+ * One line of the battle royale's loot feed: something we just took off the
+ * floor, or swapped in with F ("+ Rifle", "+ 2 💥 Frag", "Pistol → Rifle").
+ */
+export interface LootLine {
+  /** Unique in this match (the key). */
+  n: number;
+  kind: "gun" | "grenade" | "heal" | "shield";
+  /** The stable key of what we got ("rifle", "frag", "bandage", "shield"). */
+  key: string;
+  /** What we got, with how many ("Rifle", "2 💥 Frag", "1 Shield charge"). */
+  to: string;
+  /** On a swap, what we gave up ("Pistol", "💥 Frag"); "" for a plain pickup. */
+  from: string;
+  /** 0..1: 1 while fresh, fading to 0 before it goes (LOOT_FEED_MS). */
+  opacity: number;
+}
+
 /** A free-for-all's own HUD: rank, kills, the top 3 and the clock. */
 export interface FfaHud {
   /** Our place right now (kills, then deaths; shared places allowed), and as "2nd". */
@@ -90,12 +108,16 @@ export interface RoyaleHud {
   healNote: string;
   stopKind: string;
   /**
-   * What F would do right now (the swap prompt): the gun in hand it
-   * replaces (`from`) with the one on the floor (`to`), WEAPONS indices. Null when F would do nothing: not playing,
-   * out, a free slot (walking over a gun picks it up), or no gun `swapTarget`
-   * would take. From the predicted position and kit.
+   * What F would do right now (the F prompt, `fTarget`'s pick): open a chest,
+   * or swap the gun in hand or the grenade stack held (`from`) for the one
+   * on the floor (`to`), as stable keys and display names ("" for a chest).
+   * Null when F would do nothing: not playing, out, or nothing in reach F
+   * acts on (with a free slot, walking over a gun picks it up). From the
+   * predicted position and kit.
    */
-  swap: { from: number; to: number } | null;
+  prompt: { kind: "chest" | "gun" | "grenade"; from: string; to: string; fromName: string; toName: string } | null;
+  /** What we just picked up or swapped in, oldest first, at most a few lines. From the server's snapshots of our kit. */
+  loot: LootLine[];
 }
 
 export interface HudModel {

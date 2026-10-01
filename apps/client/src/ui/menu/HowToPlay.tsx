@@ -86,9 +86,9 @@ export function HowToPlay() {
         Battle royale: up to {ROYALE_MAX_PLAYERS} players, one life each. The first player in is the host and starts the
         match ({k("Enter")} or Start) once {ROYALE_MIN_PLAYERS} are in; if the host leaves, the next one in takes over.
         Everyone starts with the Pistol and no grenades;
-        walk into crates for guns and grenades, and over what the fallen drop. You carry {ROYALE.gunSlots} guns ({k("1")}-
-        {k("3")} or the wheel to switch, {k("F")} to swap the one in hand for one on the floor) and one grenade type at a
-        time, counted. Health doesn't come back on its own: {k("4")} uses a bandage (+{HEAL_ITEMS[HEAL_BANDAGE].amount} HP,{" "}
+        open the glowing chests with {k("F")} for guns, grenades and healing (the loot falls out next to the chest), and walk
+        over what the fallen drop. You carry {ROYALE.gunSlots} guns ({k("1")}-{k("3")} or the wheel to switch, {k("F")} to
+        swap the one in hand for one on the floor) and one grenade type at a time, counted ({k("F")} swaps in another type). Health doesn't come back on its own: {k("4")} uses a bandage (+{HEAL_ITEMS[HEAL_BANDAGE].amount} HP,{" "}
         {HEAL_ITEMS[HEAL_BANDAGE].duration} s), {k("5")} a medkit (back to full, {HEAL_ITEMS[HEAL_MEDKIT].duration} s). You walk at
         half speed meanwhile, and any damage, a shot, a throw or a switch cancels it (the item is kept). The shield ({k("E")})
         uses a charge, up to {ROYALE.shieldStack}. The zone closes in over {Math.round(ZONE.close / 60)} minutes and hurts

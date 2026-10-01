@@ -1,4 +1,4 @@
-import type { BulletView, GrenadeView, PlayerView } from "@bagarre/shared";
+import { TICK_DT, type BulletView, type GrenadeView, type PlayerView } from "@bagarre/shared";
 import type { Snapshot } from "./net.ts";
 
 const KEEP_MS = 1000;
@@ -100,15 +100,25 @@ export class SnapshotBuffer {
     return out;
   }
 
-  /** Bullets present in both bracketing snapshots, interpolated. */
-  sampleBullets(renderTime: number): Map<string, BulletView> {
-    const out = new Map<string, BulletView>();
+  /**
+   * Bullets present in both bracketing snapshots, interpolated, with their
+   * velocity (m/s, from the two snapshots they are in: bullets fly straight).
+   * Held on one snapshot (render time past the latest), the velocity comes
+   * from the one before it; 0, 0 if the bullet isn't in that one either.
+   */
+  sampleBullets(renderTime: number): Map<string, BulletView & { vx: number; vz: number }> {
+    const out = new Map<string, BulletView & { vx: number; vz: number }>();
     const br = this.bracket(renderTime);
     if (!br) return out;
+    const prev = br.a !== br.b ? br.a : this.snaps[this.snaps.indexOf(br.b) - 1];
+    const dt = prev ? (br.b.tick - prev.tick) * TICK_DT : 0;
     br.b.bullets.forEach((bb, id) => {
       const ba = br.a.bullets.get(id);
       if (!ba) return;
-      out.set(id, { ...bb, x: lerp(ba.x, bb.x, br.alpha), z: lerp(ba.z, bb.z, br.alpha) });
+      const bp = prev?.bullets.get(id);
+      const vx = bp && dt > 0 ? (bb.x - bp.x) / dt : 0;
+      const vz = bp && dt > 0 ? (bb.z - bp.z) / dt : 0;
+      out.set(id, { ...bb, x: lerp(ba.x, bb.x, br.alpha), z: lerp(ba.z, bb.z, br.alpha), vx, vz });
     });
     return out;
   }
