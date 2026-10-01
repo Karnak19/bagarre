@@ -1,10 +1,27 @@
-// How each gun and grenade type looks and sounds: the client's half of the
-// item definitions (WEAPONS and GRENADES in packages/shared/src/constants.ts,
+// How each gun, grenade type and perk looks and sounds: the client's half of the
+// item definitions (WEAPONS, GRENADES and PERKS in packages/shared/src/constants.ts,
 // which say how to add one). Looked up by the item's `key`, never by its
 // position, and typed as Record<key, ...>: an item missing here is a compile
 // error.
 
-import { FLASH, GRENADE, HEAL, SMOKE, STUN, WEAPONS, grenadeDef, isPickableWeapon, weaponDef, type GrenadeKey, type WeaponKey } from "@bagarre/shared";
+import {
+  DASH,
+  FLASH,
+  GRENADE,
+  HEAL,
+  PERKS,
+  ROYALE,
+  SMOKE,
+  STUN,
+  WEAPONS,
+  grenadeDef,
+  isPickableWeapon,
+  perkDef,
+  weaponDef,
+  type GrenadeKey,
+  type PerkKey,
+  type WeaponKey,
+} from "@bagarre/shared";
 import type { SfxName } from "./audio.ts";
 import { Cell, type MuzzleFlash, type Vfx } from "./vfx.ts";
 
@@ -223,4 +240,51 @@ export const GRENADE_VIEW: Record<GrenadeKey, GrenadeViewDef> = {
 /** The view of a grenade type (a GRENADES index); an unknown type gets the frag's, like grenadeDef. */
 export function grenadeView(kind: number): GrenadeViewDef {
   return GRENADE_VIEW[grenadeDef(kind).key];
+}
+
+// --- Perks ---------------------------------------------------------------------
+
+export interface PerkViewDef {
+  /** One glyph, in the picker, the HUD, the loot feed and over the head on the name plate. */
+  icon: string;
+  /** What it does, in How to play and the picker's tooltip. */
+  blurb: string;
+}
+
+const perkKey = (key: PerkKey) => PERKS.find((p) => p.key === key)!;
+const percent = (k: number | undefined) => Math.round(Math.abs(1 - (k ?? 1)) * 100);
+
+export const PERK_VIEW: Record<PerkKey, PerkViewDef> = {
+  "double-dash": {
+    icon: "⏩",
+    blurb: `After a dash, dash once more within ${perkKey("double-dash").dashWindow} s. Then a ${perkKey("double-dash").dashCooldown} s cooldown (instead of ${DASH.cooldown} s), from the second dash or once the ${perkKey("double-dash").dashWindow} s run out.`,
+  },
+  "long-dash": {
+    icon: "🏃",
+    blurb: `Your dash goes ${+(DASH.distance * (perkKey("long-dash").dashDistance ?? 1)).toFixed(1)} m instead of ${DASH.distance} m.`,
+  },
+  "quick-dash": {
+    icon: "⏱️",
+    blurb: `Dash cooldown ${perkKey("quick-dash").dashCooldown} s instead of ${DASH.cooldown} s.`,
+  },
+  "big-mag": {
+    icon: "🔋",
+    blurb: `${percent(perkKey("big-mag").magazine)}% more rounds in every magazine.`,
+  },
+  "quick-hands": {
+    icon: "✋",
+    blurb: `Reloads ${percent(perkKey("quick-hands").handling)}% faster, and (battle royale) you switch guns faster (${(ROYALE.switchTime * (perkKey("quick-hands").handling ?? 1)).toFixed(1)} s).`,
+  },
+};
+
+/** The view of a perk (a PERKS index); null for NO_PERK, like perkDef. */
+export function perkView(id: number): PerkViewDef | null {
+  const def = perkDef(id);
+  return def ? PERK_VIEW[def.key] : null;
+}
+
+/** A perk as one short label, "⏩ Double dash" ("" for none). */
+export function perkLabel(id: number): string {
+  const def = perkDef(id);
+  return def ? `${PERK_VIEW[def.key].icon} ${def.name}` : "";
 }

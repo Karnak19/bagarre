@@ -1,5 +1,5 @@
 import { schema, t, type SchemaType } from "@colyseus/schema";
-import { DEFAULT_GRENADE, DEFAULT_MAP_ID, DEFAULT_WEAPON, MAX_HP, NO_GUN, NO_HEAL, NO_TEAM, WEAPONS } from "@bagarre/shared";
+import { DEFAULT_GRENADE, DEFAULT_MAP_ID, DEFAULT_WEAPON, MAX_HP, NO_GUN, NO_HEAL, NO_PERK, NO_TEAM, WEAPONS } from "@bagarre/shared";
 
 /**
  * What a player carries in the battle royale (KitSim in @bagarre/shared):
@@ -118,6 +118,12 @@ export const Player = schema(
     // read by the shared step. Other clients see a strike as `meleeCd` jumping up.
     meleeCd: t.uint16().default(0),
     meleeSeen: t.uint32().default(0),
+
+    // Perks (appended, like the grenades). `perk` is PlayerSim.perk, read by
+    // the shared step (dash, magazine, reload); `perkPick` the loadout's, put
+    // in hand on the next spawn. Both NO_PERK for none.
+    perk: t.uint8().default(NO_PERK),
+    perkPick: t.uint8().default(NO_PERK),
   },
   "Player",
 );

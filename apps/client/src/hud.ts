@@ -29,13 +29,14 @@ export interface KillFeedLine {
 
 /**
  * One line of the battle royale's loot feed: something we just took off the
- * floor, or swapped in with F ("+ Rifle", "+ 2 💥 Frag", "Pistol → Rifle").
+ * floor, or swapped in with F ("+ Rifle", "+ 2 💥 Frag", "Pistol → Rifle",
+ * "+ ⏩ Double dash").
  */
 export interface LootLine {
   /** Unique in this match (the key). */
   n: number;
-  kind: "gun" | "grenade" | "heal" | "shield";
-  /** The stable key of what we got ("rifle", "frag", "bandage", "shield"). */
+  kind: "gun" | "grenade" | "heal" | "shield" | "perk";
+  /** The stable key of what we got ("rifle", "frag", "bandage", "shield", "double-dash"). */
   key: string;
   /** What we got, with how many ("Rifle", "2 💥 Frag", "1 Shield charge"). */
   to: string;
@@ -109,13 +110,13 @@ export interface RoyaleHud {
   stopKind: string;
   /**
    * What F would do right now (the F prompt, `fTarget`'s pick): open a chest,
-   * or swap the gun in hand or the grenade stack held (`from`) for the one
-   * on the floor (`to`), as stable keys and display names ("" for a chest).
+   * or swap the gun in hand, the grenade stack held or the perk (`from`) for
+   * the one on the floor (`to`), as stable keys and display names ("" for a chest).
    * Null when F would do nothing: not playing, out, or nothing in reach F
    * acts on (with a free slot, walking over a gun picks it up). From the
    * predicted position and kit.
    */
-  prompt: { kind: "chest" | "gun" | "grenade"; from: string; to: string; fromName: string; toName: string } | null;
+  prompt: { kind: "chest" | "gun" | "grenade" | "perk"; from: string; to: string; fromName: string; toName: string } | null;
   /** What we just picked up or swapped in, oldest first, at most a few lines. From the server's snapshots of our kit. */
   loot: LootLine[];
 }

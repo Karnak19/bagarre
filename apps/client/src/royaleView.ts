@@ -2,7 +2,7 @@
 // with a light tint outside it, the chests, and the items on the floor (a
 // gun lying on a gold disc, grenades on a disc in their type's colour,
 // healing items as a small box on a green disc, shield charges as a blue
-// orb). GameScene owns one and match.ts feeds it every frame from the latest
+// orb, a perk as its glyph on a floating violet badge). GameScene owns one and match.ts feeds it every frame from the latest
 // snapshot; outside a royale it is simply empty.
 //
 // The zone's circle comes from the shared `zoneAt` on the synced numbers, at
@@ -18,9 +18,19 @@
 // the server's), drawn at the client's estimate of the server tick, so it
 // lands when the server lets it be taken.
 
-import { HEAL_MEDKIT, ITEM_GRENADE, ITEM_GUN, ITEM_HEAL, ITEM_SHIELD, type CrateView, type FloorItemView } from "@bagarre/shared";
+import {
+  HEAL_MEDKIT,
+  ITEM_GRENADE,
+  ITEM_GUN,
+  ITEM_HEAL,
+  ITEM_KINDS,
+  ITEM_PERK,
+  ITEM_SHIELD,
+  type CrateView,
+  type FloorItemView,
+} from "@bagarre/shared";
 import * as THREE from "three";
-import { grenadeView } from "./items.ts";
+import { grenadeView, perkView } from "./items.ts";
 
 /** Gun on the floor: its longest side, metres. Crate (the chest's fallback shape): its size. */
 const GUN_LENGTH = 0.95;
@@ -32,6 +42,10 @@ const HALO_SIZE = 2.4;
 /** The glow's colour, and its pulse (emissive intensity and halo opacity, low to high). */
 const GLOW_COLOR = 0xffb648;
 const GLOW_PULSE_MS = 1400;
+/** A perk on the floor: the HUD's perk colour (its badge and disc), and the badge's size and height, metres. */
+const PERK_COLOR = 0xe0b4ff;
+const PERK_BADGE = 0.7;
+const PERK_BADGE_Y = 0.42;
 /** The lid opened: its angle (radians, back about its hinge) and how long it takes, ms. */
 const LID_OPEN = -1.95;
 const LID_MS = 260;
@@ -79,6 +93,31 @@ function haloTexture(): THREE.Texture {
   return t;
 }
 
+/** A perk's badge: its glyph on a dark violet disc ringed in PERK_COLOR (any glyph: "?" for an unknown perk). */
+function perkTexture(glyph: string): THREE.Texture {
+  const size = 128;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const g = c.getContext("2d");
+  if (g) {
+    g.beginPath();
+    g.arc(size / 2, size / 2, size / 2 - 6, 0, 2 * Math.PI);
+    g.fillStyle = "rgba(46,22,66,0.9)";
+    g.fill();
+    g.lineWidth = 8;
+    g.strokeStyle = "#e0b4ff";
+    g.stroke();
+    g.font = `${Math.round(size * 0.5)}px system-ui, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillStyle = "#ffffff";
+    g.fillText(glyph, size / 2, size / 2 + size * 0.03);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
 /** A clone scaled so its longest side is `size`, sitting on the ground, centred on its origin. */
 function fitted(template: THREE.Object3D, size: number): THREE.Object3D {
   const o = template.clone();
@@ -118,6 +157,8 @@ export class RoyaleView {
   private readonly bandageMat = new THREE.MeshStandardMaterial({ color: 0xf1e9dc, roughness: 0.8 });
   private readonly medkitMat = new THREE.MeshStandardMaterial({ color: 0xd8342c, roughness: 0.6 });
   private readonly shieldMat = new THREE.MeshStandardMaterial({ color: 0x7fc8ff, emissive: 0x2a6fb0, roughness: 0.3 });
+  /** A perk's badge (a sprite, so it always faces the camera), one material per perk, made when first seen. */
+  private readonly perkMats = new Map<number, THREE.SpriteMaterial>();
   private readonly haloGeo = new THREE.PlaneGeometry(HALO_SIZE, HALO_SIZE);
   private readonly haloMat = new THREE.MeshBasicMaterial({
     color: GLOW_COLOR,
@@ -152,6 +193,15 @@ export class RoyaleView {
       this.glowMats.set(m, g);
     }
     return g;
+  }
+
+  private perkMat(id: number): THREE.SpriteMaterial {
+    let m = this.perkMats.get(id);
+    if (!m) {
+      m = new THREE.SpriteMaterial({ map: perkTexture(perkView(id)?.icon ?? "?"), transparent: true });
+      this.perkMats.set(id, m);
+    }
+    return m;
   }
 
   private discMat(color: number): THREE.MeshBasicMaterial {
@@ -290,9 +340,19 @@ export class RoyaleView {
 
   private makeItem(it: FloorItemView): THREE.Group {
     const g = new THREE.Group();
+    // Its kind, for a test reading the scene (`__bagarre.scene.royale.group`).
+    g.name = `item:${ITEM_KINDS[it.kind] ?? "unknown"}`;
     const gun = it.kind === ITEM_GUN;
     const color =
-      it.kind === ITEM_GRENADE ? grenadeView(it.item).telegraph : it.kind === ITEM_HEAL ? 0x6dff9a : it.kind === ITEM_SHIELD ? 0x7fc8ff : 0xffd24a;
+      it.kind === ITEM_GRENADE
+        ? grenadeView(it.item).telegraph
+        : it.kind === ITEM_HEAL
+          ? 0x6dff9a
+          : it.kind === ITEM_SHIELD
+            ? 0x7fc8ff
+            : it.kind === ITEM_PERK
+              ? PERK_COLOR
+              : 0xffd24a;
     const disc = new THREE.Mesh(this.discGeo, this.discMat(color));
     disc.rotation.x = -Math.PI / 2;
     disc.position.y = 0.03;
@@ -309,8 +369,17 @@ export class RoyaleView {
     } else if (it.kind === ITEM_SHIELD) {
       body = new THREE.Mesh(this.ballGeo, this.shieldMat);
       body.position.y = 0.2;
-    } else {
+    } else if (it.kind === ITEM_PERK) {
+      // Its glyph floating above the disc (the spin's turn does nothing to a sprite, the bob does).
+      body = new THREE.Sprite(this.perkMat(it.item));
+      body.scale.setScalar(PERK_BADGE);
+      body.position.y = PERK_BADGE_Y;
+    } else if (it.kind === ITEM_GRENADE) {
       body = this.grenadeModel ? fitted(this.grenadeModel, 0.35) : new THREE.Mesh(this.ballGeo, this.discMat(grenadeView(it.item).telegraph));
+    } else {
+      // A kind this client doesn't know (a newer server): a plain brown ball, never another kind's view.
+      body = new THREE.Mesh(this.ballGeo, this.crateMat);
+      body.position.y = 0.2;
     }
     const spin = new THREE.Group();
     spin.add(body);

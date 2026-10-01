@@ -5,9 +5,9 @@
 // match start, a reset, a knock-out or a reconnect's first snapshot never
 // counts. What only goes down (a shot, a throw, a heal used) adds nothing.
 
-import { HEAL_ITEMS, NO_GUN, ROYALE, grenadeDef, gunAt, healsOf, weaponDef, type PlayerView } from "@bagarre/shared";
+import { HEAL_ITEMS, NO_GUN, NO_PERK, ROYALE, grenadeDef, gunAt, healsOf, perkDef, weaponDef, type PlayerView } from "@bagarre/shared";
 import type { LootLine } from "./hud.ts";
-import { grenadeView } from "./items.ts";
+import { grenadeView, perkLabel } from "./items.ts";
 
 /** A loot feed line before it has a number and a fade. */
 export type LootGain = Omit<LootLine, "n" | "opacity">;
@@ -16,7 +16,7 @@ function grenadeName(type: number): string {
   return `${grenadeView(type).icon} ${grenadeDef(type).name}`;
 }
 
-/** What `next` carries that `prev` didn't: guns into a slot (or swapped in), grenades, healing items, shield charges. */
+/** What `next` carries that `prev` didn't: guns into a slot (or swapped in), grenades, healing items, shield charges, a perk. */
 export function lootGained(prev: PlayerView, next: PlayerView): LootGain[] {
   const out: LootGain[] = [];
   for (let i = 0; i < ROYALE.gunSlots; i++) {
@@ -40,5 +40,8 @@ export function lootGained(prev: PlayerView, next: PlayerView): LootGain[] {
   });
   const shields = next.kit.shields - prev.kit.shields;
   if (shields > 0) out.push({ kind: "shield", key: "shield", to: `${shields} Shield charge`, from: "" });
+  // A perk: walked over with none held, or an F swap (the old one named).
+  const perk = perkDef(next.perk);
+  if (perk && next.perk !== prev.perk) out.push({ kind: "perk", key: perk.key, to: perkLabel(next.perk), from: prev.perk === NO_PERK ? "" : perkLabel(prev.perk) });
   return out;
 }

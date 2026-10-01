@@ -1,4 +1,6 @@
-// Name plates: the name and a health bar over each character's head.
+// Name plates: the name and a health bar over each character's head, and
+// the perk held as one glyph after the name (still shown with "Show names"
+// off, alone over the bar), so everyone can tell who dashes twice.
 //
 // Everything is one instanced mesh, one draw call for every plate: each quad
 // (a bar's background, its fill, the trailing damage segment, the shield
@@ -105,8 +107,9 @@ interface Plate {
   /** Pool slot, also the atlas row. */
   readonly index: number;
   id: string;
-  /** The name drawn in this slot's atlas row, and its drawn width (CSS px). */
+  /** The name and perk badge drawn in this slot's atlas row (`label`'s key), and its drawn width (CSS px). */
   drawnName: string;
+  drawnBadge: string;
   nameW: number;
   /** `Plates.frame` when last set: a plate not set since the last draw is hidden. */
   frame: number;
@@ -122,6 +125,7 @@ interface Plate {
   trailHold: number;
   alive: boolean;
   connected: boolean;
+  /** The atlas row (name, perk badge, or both) is drawn over the bar. */
   showName: boolean;
   /** Smoke: 1 drawn as usual, 0 hidden (an enemy in smoke), in between see-through (a spectator watching one). */
   fade: number;
@@ -134,6 +138,8 @@ export interface PlateDebug {
   visible: boolean;
   /** The name as shown, "" when no name is drawn (the local player, "Show names" off). */
   name: string;
+  /** The perk badge as shown (a glyph), "" with none. */
+  badge: string;
   hp: number;
   shield: number;
   dimmed: boolean;
@@ -224,6 +230,7 @@ export class Plates {
         index: i,
         id: "",
         drawnName: "",
+        drawnBadge: "",
         nameW: 0,
         frame: -1,
         x: 0,
@@ -282,20 +289,26 @@ export class Plates {
     ctx.fillText(text, x, y + ROW_H / 2 + 0.5);
   }
 
-  /** Draws `name` in the plate's atlas row (only when it changed). */
-  private drawName(p: Plate, name: string) {
+  /**
+   * Draws `name` and the perk `badge` after it in the plate's atlas row (only
+   * when either changed). A long name is cut, never the badge. Either may be "".
+   */
+  private drawName(p: Plate, name: string, badge: string) {
     const { ctx, dpr } = this;
     p.drawnName = name;
+    p.drawnBadge = badge;
     const top = p.index * ROW_H;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, top, ROW_W, ROW_H);
     ctx.font = FONT;
     let text = name;
-    const max = ROW_W - PAD * 2;
+    const tail = badge ? (name ? ` ${badge}` : badge) : "";
+    const max = ROW_W - PAD * 2 - (tail ? ctx.measureText(tail).width : 0);
     if (ctx.measureText(text).width > max) {
       while (text.length > 1 && ctx.measureText(`${text}…`).width > max) text = text.slice(0, -1);
       text = `${text}…`;
     }
+    text += tail;
     p.nameW = text ? Math.ceil(ctx.measureText(text).width) + PAD * 2 : 0;
     if (text) this.textAt(text, PAD, top);
     this.texture.needsUpdate = true;
@@ -304,9 +317,10 @@ export class Plates {
   /**
    * This frame's state of one player's plate. `x`, `z`: where their body is
    * drawn (predicted for us, interpolated for the others). `hp`, `shield`:
-   * fractions 0..1. `showName` false draws the bar alone.
+   * fractions 0..1. `showName` false draws the bar alone, with the perk
+   * `badge` (a glyph, "" for none) over it if there is one.
    */
-  set(id: string, x: number, z: number, name: string, paint: number, hp: number, shield: number, alive: boolean, connected: boolean, showName: boolean, fade = 1) {
+  set(id: string, x: number, z: number, name: string, paint: number, hp: number, shield: number, alive: boolean, connected: boolean, showName: boolean, fade = 1, badge = "") {
     let p = this.byId.get(id);
     if (!p) {
       p = this.free.pop();
@@ -315,7 +329,9 @@ export class Plates {
       p.snap = true;
       this.byId.set(id, p);
     }
-    if (p.drawnName !== name) this.drawName(p, name);
+    // The row holds what is shown: the name only when names are on.
+    const shownName = showName ? name : "";
+    if (p.drawnName !== shownName || p.drawnBadge !== badge) this.drawName(p, shownName, badge);
     hp = Math.min(1, Math.max(0, hp));
     // Back from the dead, or healed: snap. Hit: the fill eases down and the trail waits.
     if (alive && (!p.alive || hp > p.hp)) p.snap = true;
@@ -328,7 +344,7 @@ export class Plates {
     p.shield = Math.min(1, Math.max(0, shield));
     p.alive = alive;
     p.connected = connected;
-    p.showName = showName;
+    p.showName = showName || badge !== "";
     p.fade = Math.min(1, Math.max(0, fade));
   }
 
@@ -454,6 +470,7 @@ export class Plates {
         id: p.id,
         visible,
         name: visible && p.showName ? p.drawnName : "",
+        badge: visible ? p.drawnBadge : "",
         hp: p.hp,
         shield: p.shield,
         dimmed: !p.connected,

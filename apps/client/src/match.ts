@@ -42,7 +42,9 @@ import {
   healProgress,
   healsOf,
   isGrenadeType,
+  isPerkPick,
   magAt,
+  magazineOf,
   ordinal,
   outsideZone,
   playerCan,
@@ -52,6 +54,7 @@ import {
   smokeVeil,
   fTarget,
   grenadeDef,
+  perkDef,
   weaponDef,
   zoneAt,
   zoneProgress,
@@ -67,7 +70,7 @@ import { isMuted, play, setListener, type PlayOptions, type SfxName } from "./au
 import { LocalBullets } from "./bullets.ts";
 import type { FfaHud, Hud, HudModel, KillFeedLine, LootLine, RoyaleHud, TeamHud } from "./hud.ts";
 import { screenToWorldMove, type Input } from "./input.ts";
-import { WEAPON_KEYS, grenadeView, gunView } from "./items.ts";
+import { WEAPON_KEYS, grenadeView, gunView, perkLabel, perkView } from "./items.ts";
 import { SnapshotBuffer } from "./interpolation.ts";
 import { lootGained, type LootGain } from "./loot.ts";
 import type { Minimap } from "./minimap.ts";
@@ -357,6 +360,14 @@ export class Match {
   pickGrenade(type: number): boolean {
     if (!this.canPick || !isGrenadeType(type)) return false;
     this.net.sendPick({ grenade: type });
+    this.sfx("weapon_pick");
+    return true;
+  }
+
+  /** Picks the perk for the next (re)spawn (NO_PERK: none), same rules as a weapon. Returns whether it was sent. */
+  pickPerk(perk: number): boolean {
+    if (!this.canPick || !isPerkPick(perk)) return false;
+    this.net.sendPick({ perk });
     this.sfx("weapon_pick");
     return true;
   }
@@ -863,7 +874,8 @@ export class Match {
       m.setHealing(s.alive && s.kit.heal !== NO_HEAL ? healProgress(s.kit) : -1);
       // Their plate follows the interpolated body, and shows what it shows (hits land when drawn).
       const fade = veil === "hidden" ? 0 : veil === "faded" ? FADED_OPACITY : 1;
-      scene.plates.set(id, s.x, s.z, s.name, paintOf(s), s.hp / MAX_HP, shield, s.alive, s.connected, showNames, fade);
+      // Their perk, as a glyph after the name: what they hold is everyone's to see.
+      scene.plates.set(id, s.x, s.z, s.name, paintOf(s), s.hp / MAX_HP, shield, s.alive, s.connected, showNames, fade, perkView(s.perk)?.icon ?? "");
       if (!s.alive) return;
       // Our predicted bullets stop on whoever they can hurt, and fly through
       // teammates, like the server's (canDamage).
@@ -1034,7 +1046,7 @@ export class Match {
         weapon: w === NO_GUN ? -1 : w,
         name: def?.name ?? "",
         ammo: sim && def ? magAt(sim, i) : 0,
-        magazine: def?.magazine ?? 0,
+        magazine: sim && def ? magazineOf(def, sim.perk) : 0,
         hand: !!sim && sim.kit.hand === i,
         reloading: !!sim && sim.kit.hand === i && sim.reloadTicks > 0,
       });
@@ -1046,7 +1058,7 @@ export class Match {
     // The grenade held is the server's (the step never changes its type).
     const target =
       s.phase === "playing" && me?.alive && sim
-        ? fTarget(sim.kit, { type: me.grenade, count: sim.kit.grenades }, sim.x, sim.z, s.items, s.crates, this.net.sessionId, s.tick)
+        ? fTarget(sim.kit, { type: me.grenade, count: sim.kit.grenades }, sim.x, sim.z, s.items, s.crates, this.net.sessionId, s.tick, sim.perk)
         : null;
     let prompt: RoyaleHud["prompt"] = null;
     if (target?.kind === "chest") prompt = { kind: "chest", from: "", to: "", fromName: "", toName: "" };
@@ -1058,6 +1070,10 @@ export class Match {
       const from = grenadeDef(me.grenade);
       const to = grenadeDef(target.item.item);
       prompt = { kind: "grenade", from: from.key, to: to.key, fromName: from.name, toName: to.name };
+    } else if (target?.kind === "perk" && sim) {
+      const from = perkDef(sim.perk);
+      const to = perkDef(target.item.item);
+      if (from && to) prompt = { kind: "perk", from: from.key, to: to.key, fromName: perkLabel(sim.perk), toName: perkLabel(target.item.item) };
     }
     return {
       alive,
