@@ -41,7 +41,9 @@ export default defineConfig({
     {
       // The real game server with short rules and a test-only control API (server.ts).
       command: "bun server.ts",
-      env: { PORT: String(SERVER_PORT), NODE_ENV: "development" },
+      // No OpenRouter key, even one from the shell or a .env file: bots decide on
+      // the rule brain, the same every run.
+      env: { PORT: String(SERVER_PORT), NODE_ENV: "development", OPENROUTER_API_KEY: "" },
       url: `http://localhost:${SERVER_PORT}/games`,
       reuseExistingServer: false,
       timeout: 30_000,

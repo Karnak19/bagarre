@@ -1,11 +1,14 @@
 // Bots in the battle royale (#48): the host adds and removes them from the
 // lobby, nobody else can, they take seats with bot names and a BOT tag (the
 // lobby seats, the name plate, the scoreboard, the placement table), never
-// become host, and one person with bots can start a match. For now bots
-// stand still (the server feeds them a neutral input); playing comes next.
+// become host, and one person with bots can start a match. In a match they
+// play on the rule brain (the e2e server has no OpenRouter key, so every run
+// is the same): they move, loot, fight, and finish in the placement table.
 
-import { ROYALE_MAX_PLAYERS } from "@bagarre/shared";
-import { ROYALE_MAP, expect, kill, listedRooms, place, pressStart, roomExists, test, type Player, type Players } from "./fixtures.ts";
+import { MAX_HP, NO_GUN, PISTOL, ROYALE_MAX_PLAYERS } from "@bagarre/shared";
+import { ROYALE_MAP, expect, kill, listedRooms, place, pressStart, roomExists, setLoot, test, type Player, type Players } from "./fixtures.ts";
+
+const RIFLE = 0;
 
 /** Sends a bot request straight through the page's room, as a tampered client would, then lets the server tick past it. */
 async function sendBot(p: Player, type: "bot:add" | "bot:remove") {
@@ -94,7 +97,10 @@ test("battle royale: one person with bots starts a match; the bots carry the BOT
     { timeout: 15_000, polling: 50 },
   );
 
-  // The scoreboard (Tab): a BOT tag on each bot's row, ping "–".
+  // Out at once: next to us, it would shoot us down.
+  await kill(code, ida, b1.id);
+
+  // The scoreboard (Tab): a BOT tag on each bot's row (the one out too), ping "–".
   const board = a.testId("scoreboard-layer").getByTestId("scoreboard");
   await a.page.keyboard.down("Tab");
   await expect(board).toBeVisible();
@@ -102,7 +108,6 @@ test("battle royale: one person with bots starts a match; the bots carry the BOT
   await a.page.keyboard.up("Tab");
 
   // Both bots out: A wins, and the placement table shows them with their tag.
-  await kill(code, ida, b1.id);
   await kill(code, ida, b2.id);
   await a.expectState("phase", "ended");
   await expect(a.testId("result-card")).toContainText("You won!");
@@ -110,6 +115,43 @@ test("battle royale: one person with bots starts a match; the bots carry the BOT
   await expect(a.testId("placement-row").getByTestId("player-tag").filter({ hasText: "BOT" })).toHaveCount(2);
   // One person: not counted in the stats, bots don't make up the number.
   await expect(a.testId("result-stats")).toContainText("bots not included");
+});
+
+test("battle royale: the bots play: they move, open chests and pick up the loot, fight, and finish in the placement table", async ({ players }) => {
+  const { host: a, code } = await players.host("royale", "A");
+  const ida = (await a.state()).you;
+  for (let n = 0; n < 4; n++) await a.testId("royale-add-bot").click();
+  await pressStart(a, 5);
+  await a.expectState("phase", "playing");
+  const spawned = await bots(a);
+  expect(spawned).toHaveLength(4);
+
+  // They move: off their start spots, on their own.
+  const from = new Map(spawned.map((b) => [b.id, b]));
+  const away = async () => (await bots(a)).filter((b) => Math.hypot(b.x - from.get(b.id)!.x, b.z - from.get(b.id)!.z) > 3).length;
+  await expect.poll(away, { message: "the bots walked off their start spots", timeout: 15_000 }).toBeGreaterThanOrEqual(3);
+
+  // They loot: each bot put 2 m from a chest (a Pistol and no heals is a weak kit, so loot wins)
+  // opens it, and the rifle in it ends up in a bot's slots.
+  await setLoot(code, RIFLE);
+  const crates = (await a.state()).crates;
+  for (const [i, b] of spawned.entries()) await place(code, b.id, crates[i].x + 2, crates[i].z);
+  await expect.poll(async () => (await a.state()).crates.filter((c) => c.open).length, { message: "a bot opened a chest", timeout: 15_000 }).toBeGreaterThanOrEqual(1);
+  const armed = async () => (await bots(a)).filter((b) => b.guns.some((g) => g !== NO_GUN && g !== PISTOL)).length;
+  await expect.poll(armed, { message: "a bot picked up a rifle", timeout: 15_000 }).toBeGreaterThanOrEqual(1);
+
+  // They fight: two bots side by side shoot each other.
+  const [b1, b2] = (await bots(a)).filter((b) => b.alive);
+  await place(code, b1.id, b2.x + 1.5, b2.z);
+  await expect.poll(async () => (await bots(a)).filter((b) => b.hp < MAX_HP || !b.alive).length, { message: "a bot was hit", timeout: 15_000 }).toBeGreaterThanOrEqual(1);
+
+  // The end: everyone still in but one is knocked out (A wins if still in), and the result lists the bots.
+  const alive = (await a.state()).players.filter((p) => p.alive);
+  const winner = alive.find((p) => p.id === ida) ?? alive[0];
+  for (const p of alive) if (p.id !== winner.id) await kill(code, winner.id, p.id);
+  await a.expectState("phase", "ended");
+  await expect(a.testId("placement-row")).toHaveCount(5);
+  await expect(a.testId("placement-row").getByTestId("player-tag").filter({ hasText: "BOT" })).toHaveCount(4);
 });
 
 /**
