@@ -12,3 +12,4 @@ export * from "./messages.ts";
 export * from "./modes.ts";
 export * from "./accounts.ts";
 export * from "./skins.ts";
+export * from "./bots/index.ts";
