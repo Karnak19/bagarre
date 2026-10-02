@@ -20,12 +20,18 @@ export const BOT_TUNING = {
   // --- Deciding (the rule brain) ---
   /** Seconds between two decisions of one bot (the server staggers them). */
   decideEvery: 1,
-  /** The zone counts as "about to close over the bot" if it would be outside this many seconds from now. */
-  zoneLookahead: 6,
-  /** ...or if it is closer than this to the zone's edge while the zone shrinks. */
+  /**
+   * `zoneClosing` (view.ts): the zone's edge reaches the bot (standing
+   * still) within this many seconds, or within the time it needs to walk to
+   * where the zone ends, whichever is longer...
+   */
+  zoneClosingTime: 6,
+  /** ...walking at this share of PLAYER_SPEED (paths are longer than straight lines)... */
+  zoneWalkShare: 0.7,
+  /** ...or it is closer than this to the edge while the zone shrinks. */
   zoneEdgeMargin: 3,
-  /** Heal below this HP (and out of sight, with an item). */
-  healBelow: 70,
+  /** `lowHp` (view.ts): below this HP. The rule brain heals then (out of sight, with an item). */
+  lowHp: 70,
   /** A medkit rather than a bandage below this HP (when both are carried). */
   medkitBelow: 45,
   /** An enemy is "in range" up to this share of the gun's bullet range. */

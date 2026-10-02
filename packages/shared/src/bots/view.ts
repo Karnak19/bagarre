@@ -11,14 +11,14 @@
 // test judges a shot against, so the bot aims there.
 
 import type { Arena, Box } from "../arena.ts";
-import { BULLET_RADIUS, HEAL_BANDAGE, HEAL_ITEMS, HEAL_MEDKIT, ITEM_GUN, ITEM_HEAL, ITEM_PERK, ITEM_SHIELD, NO_HEAL, NO_PERK, PISTOL, PLAYER_RADIUS, ROYALE, TICK_RATE } from "../constants.ts";
+import { BULLET_RADIUS, HEAL_BANDAGE, HEAL_ITEMS, HEAL_MEDKIT, ITEM_GUN, ITEM_HEAL, ITEM_PERK, ITEM_SHIELD, NO_HEAL, NO_PERK, PISTOL, PLAYER_RADIUS, PLAYER_SPEED, ROYALE, TICK_RATE } from "../constants.ts";
 import { readSim, sameTeam, weaponDef } from "../combat.ts";
 import type { MapDef } from "../maps/types.ts";
 import { magazineOf } from "../perks.ts";
 import { clearShot, bodiesSee } from "../sight.ts";
 import type { Vec2 } from "../physics.ts";
 import type { CrateView, FloorItemView, MapLike, PlayerSim, ZoneView } from "../protocol.ts";
-import { NO_GUN, canStartHeal, carriedGuns, carriesGun, freeGunSlot, gunInHand, healsOf, healing, itemReady, outsideZone, swapTarget, zoneAt, zoneDps } from "../royale.ts";
+import { NO_GUN, canStartHeal, carriedGuns, carriesGun, freeGunSlot, gunInHand, healsOf, healing, itemReady, outsideZone, swapTarget, zoneAt, zoneDps, zoneProgress } from "../royale.ts";
 import { BOT_TUNING } from "./tuning.ts";
 
 /**
@@ -74,6 +74,12 @@ export interface BotEnemy {
   shielded: boolean;
   /** A bullet from the bot's centre reaches the aim point (`clearShot`). */
   shot: boolean;
+  /**
+   * Worth fighting from here: a clear shot (`shot`) and within the useful
+   * range of the bot's gun in hand, its bullet range (weaponDef) times
+   * BOT_TUNING.fightRangeScale.
+   */
+  inRange: boolean;
 }
 
 export interface BotChest {
@@ -107,7 +113,7 @@ export interface BotZone {
   tx: number;
   tz: number;
   tr: number;
-  /** Outside now, and outside BOT_TUNING.zoneLookahead seconds from now (or this close to the edge while it shrinks). */
+  /** Outside now (`BotSelf.outsideZone`), and about to be (`soon`: the same as `BotSelf.zoneClosing`). */
   outside: boolean;
   soon: boolean;
   /** Metres to the edge: positive inside, negative outside. */
@@ -115,6 +121,14 @@ export interface BotZone {
   /** Damage per second outside right now. */
   dps: number;
   shrinking: boolean;
+  /**
+   * Seconds until the edge reaches the bot if it stands still (`zoneEdgeIn`):
+   * 0 when outside, null when it never does (the zone stops shrinking with
+   * the bot still inside).
+   */
+  edgeIn: number | null;
+  /** Seconds the bot needs to walk to the final circle (`BotSelf.zoneClosing`): distance over PLAYER_SPEED * BOT_TUNING.zoneWalkShare. */
+  walkIn: number;
 }
 
 export interface BotSelf {
@@ -132,7 +146,7 @@ export interface BotSelf {
   guns: { slot: number; weapon: number; mag: number }[];
   /** A gun slot is free (walking over a gun takes it). */
   freeSlot: boolean;
-  /** Only the Pistol: the "weak kit" of the decision table. */
+  /** Only the Pistol (one half of `weakKit`). */
   pistolOnly: boolean;
   bandages: number;
   medkits: number;
@@ -144,6 +158,23 @@ export interface BotSelf {
   heal: number;
   /** Shield bubble up. */
   shielded: boolean;
+
+  // Derived flags, defined here once: the rule brain decides on them, and a
+  // prompt (the Jev brain) states them, so both read the same situation.
+
+  /** Standing outside the zone now (`outsideZone`, royale.ts). False with no zone. */
+  outsideZone: boolean;
+  /**
+   * Inside, but the zone is about to close over the bot: its edge reaches the
+   * bot (`BotZone.edgeIn`) within max(BOT_TUNING.zoneClosingTime, the walk to
+   * the final circle `BotZone.walkIn`), or the bot is within
+   * BOT_TUNING.zoneEdgeMargin of the edge while it shrinks. False with no zone.
+   */
+  zoneClosing: boolean;
+  /** HP below BOT_TUNING.lowHp. */
+  lowHp: boolean;
+  /** The decision table's weak kit: the Pistol only, or no healing item. */
+  weakKit: boolean;
 }
 
 export interface BotView {
@@ -220,6 +251,43 @@ export function botSees(arena: Arena, a: Vec2, b: Vec2): boolean {
   return near.length === 0 || bodiesSee({ halfX: arena.halfX, halfZ: arena.halfZ, obstacles: near }, a, b);
 }
 
+/**
+ * Seconds until the zone's edge reaches a body standing still at (x, z),
+ * from `tick`: 0 when it is outside already, null when it never does (no
+ * zone, or the zone stops shrinking with it inside). Exact: the circle moves
+ * and shrinks linearly (`zoneAt`), so this is the first root of a quadratic.
+ */
+export function zoneEdgeIn(zone: ZoneView, tick: number, x: number, z: number): number | null {
+  if (zone.end <= 0) return null;
+  if (outsideZone(zone, tick, x, z)) return 0;
+  const dur = zone.end - zone.start;
+  if (dur <= 0) return null;
+  const u0 = zoneProgress(zone, tick);
+  // Outside at progress u when |p - c(u)|^2 - r(u)^2 > 0, with c and r linear in u.
+  const ax = x - zone.x0;
+  const az = z - zone.z0;
+  const cx = zone.x1 - zone.x0;
+  const cz = zone.z1 - zone.z0;
+  const dr = zone.r1 - zone.r0;
+  const A = cx * cx + cz * cz - dr * dr;
+  const B = -2 * (ax * cx + az * cz + zone.r0 * dr);
+  const C = ax * ax + az * az - zone.r0 * zone.r0;
+  const roots: number[] = [];
+  if (Math.abs(A) < 1e-12) {
+    if (Math.abs(B) > 1e-12) roots.push(-C / B);
+  } else {
+    const disc = B * B - 4 * A * C;
+    if (disc >= 0) {
+      const s = Math.sqrt(disc);
+      roots.push((-B - s) / (2 * A), (-B + s) / (2 * A));
+    }
+  }
+  let u = Infinity;
+  for (const r of roots) if (r >= u0 && r <= 1 && r < u) u = r;
+  if (u === Infinity) return null;
+  return Math.max(0, (zone.start + u * dur - tick) / TICK_RATE);
+}
+
 /** By distance, then id: a stable order. */
 const byDist = <T extends { dist: number; id: string }>(a: T, b: T) => a.dist - b.dist || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
@@ -255,6 +323,10 @@ export function buildBotView(world: BotWorld, id: string): BotView | null {
     healing: healing(sim.kit),
     heal: bestHeal(sim),
     shielded: me.shieldTicks > 0,
+    outsideZone: false,
+    zoneClosing: false,
+    lowHp: me.hp < BOT_TUNING.lowHp,
+    weakKit: guns.every((g) => g.weapon === PISTOL) || sim.kit.bandages + sim.kit.medkits === 0,
   };
 
   let zone: BotZone | null = null;
@@ -263,7 +335,11 @@ export function buildBotView(world: BotWorld, id: string): BotView | null {
     const d = Math.hypot(me.x - c.x, me.z - c.z);
     const shrinking = tick >= world.zone.start && tick < world.zone.end;
     const outside = outsideZone(world.zone, tick, me.x, me.z);
-    const later = outsideZone(world.zone, tick + BOT_TUNING.zoneLookahead * TICK_RATE, me.x, me.z);
+    const edgeIn = zoneEdgeIn(world.zone, tick, me.x, me.z);
+    const walkIn = Math.max(0, Math.hypot(me.x - world.zone.x1, me.z - world.zone.z1) - world.zone.r1) / (PLAYER_SPEED * BOT_TUNING.zoneWalkShare);
+    const closing = !outside && ((edgeIn !== null && edgeIn <= Math.max(BOT_TUNING.zoneClosingTime, walkIn)) || (shrinking && c.r - d < BOT_TUNING.zoneEdgeMargin));
+    self.outsideZone = outside;
+    self.zoneClosing = closing;
     zone = {
       x: c.x,
       z: c.z,
@@ -272,15 +348,18 @@ export function buildBotView(world: BotWorld, id: string): BotView | null {
       tz: world.zone.z1,
       tr: world.zone.r1,
       outside,
-      soon: !outside && (later || (shrinking && c.r - d < BOT_TUNING.zoneEdgeMargin)),
+      soon: closing,
       edge: c.r - d,
       dps: zoneDps(world.zone, tick),
       shrinking,
+      edgeIn,
+      walkIn,
     };
   }
 
   const enemies: BotEnemy[] = [];
   const range2 = BOT_TUNING.sightRange * BOT_TUNING.sightRange;
+  const useful = weaponDef(weapon).range * BOT_TUNING.fightRangeScale;
   world.players.forEach((p, pid) => {
     if (pid === id || !p.alive || sameTeam(me.team, p.team)) return;
     const d2 = (p.x - me.x) ** 2 + (p.z - me.z) ** 2;
@@ -288,6 +367,7 @@ export function buildBotView(world: BotWorld, id: string): BotView | null {
     if (!botSees(arena, pos, p)) return;
     const past = world.rewound?.get(pid);
     const aim = past ?? { x: p.x, z: p.z };
+    const shot = clearShot(arena, pos, aim);
     enemies.push({
       id: pid,
       x: p.x,
@@ -298,7 +378,8 @@ export function buildBotView(world: BotWorld, id: string): BotView | null {
       hp: p.hp,
       weapon: p.weapon,
       shielded: p.shieldTicks > 0,
-      shot: clearShot(arena, pos, aim),
+      shot,
+      inRange: shot && Math.sqrt(d2) <= useful,
     });
   });
   enemies.sort(byDist);

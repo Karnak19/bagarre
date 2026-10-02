@@ -11,7 +11,6 @@
 //   loot         a weak kit (Pistol only, no heals) and a chest or item nearby
 //   roam         nothing else: toward the zone's centre
 
-import { weaponDef } from "../combat.ts";
 import { NO_HEAL } from "../constants.ts";
 import { BOT_TUNING } from "./tuning.ts";
 import type { BotView } from "./view.ts";
@@ -43,26 +42,23 @@ export interface ScoredGoal {
 export function scoreGoals(view: BotView): ScoredGoal[] {
   const S = BOT_TUNING.score;
   const out: ScoredGoal[] = [{ goal: { kind: "roam" }, score: S.roam }];
-  const { self, zone } = view;
+  const { self } = view;
   if (!self.alive) return out;
 
-  if (zone?.outside) out.push({ goal: { kind: "escape_zone" }, score: S.escapeOutside });
-  else if (zone?.soon) out.push({ goal: { kind: "escape_zone" }, score: S.escapeSoon });
+  if (self.outsideZone) out.push({ goal: { kind: "escape_zone" }, score: S.escapeOutside });
+  else if (self.zoneClosing) out.push({ goal: { kind: "escape_zone" }, score: S.escapeSoon });
 
   // Heal: low, nobody in sight, and a heal can start (or one is running: keep at it).
-  if (view.enemies.length === 0 && self.hp < BOT_TUNING.healBelow && (self.heal !== NO_HEAL || self.healing)) {
-    out.push({ goal: { kind: "heal" }, score: S.heal + (BOT_TUNING.healBelow - self.hp) / 10 });
+  if (view.enemies.length === 0 && self.lowHp && (self.heal !== NO_HEAL || self.healing)) {
+    out.push({ goal: { kind: "heal" }, score: S.heal + (BOT_TUNING.lowHp - self.hp) / 10 });
   }
 
-  // Fight: the best target in sight, the nearest with a clear shot first (the list is nearest first).
-  const target = view.enemies.find((e) => e.shot) ?? view.enemies[0];
-  if (target) {
-    const inRange = target.dist <= weaponDef(self.weapon).range * BOT_TUNING.fightRangeScale;
-    out.push({ goal: { kind: "fight", target: target.id }, score: inRange ? S.fight : S.fightFar });
-  }
+  // Fight: the nearest enemy in range (`inRange`: a clear shot, within the gun's useful range), else the nearest in sight.
+  const target = view.enemies.find((e) => e.inRange) ?? view.enemies.find((e) => e.shot) ?? view.enemies[0];
+  if (target) out.push({ goal: { kind: "fight", target: target.id }, score: target.inRange ? S.fight : S.fightFar });
 
   // Loot: the nearest chest or wanted item. A weak kit wants it from anywhere in the view, a good one only close by.
-  const weak = self.pistolOnly || self.bandages + self.medkits === 0;
+  const weak = self.weakKit;
   const chest = view.chests[0];
   const item = view.items[0];
   const pick = chest && (!item || chest.dist <= item.dist) ? { target: chest.id, source: "chest" as const, dist: chest.dist } : item ? { target: item.id, source: "item" as const, dist: item.dist } : null;

@@ -13,7 +13,7 @@ import type { CrateView, FloorItemView, KitSim, ZoneView } from "../protocol.ts"
 import { startKit } from "../royale.ts";
 import { goalValid, ruleBrain, scoreGoals, type Goal } from "./brain.ts";
 import { BOT_TUNING } from "./tuning.ts";
-import { buildBotView, gunScore, type BotPlayerInput, type BotView, type BotWorld } from "./view.ts";
+import { buildBotView, gunScore, zoneEdgeIn, type BotPlayerInput, type BotView, type BotWorld } from "./view.ts";
 
 const RIFLE = WEAPONS.findIndex((w) => w.key === "rifle");
 const SMG = WEAPONS.findIndex((w) => w.key === "smg");
@@ -90,6 +90,67 @@ describe("the view", () => {
   });
 });
 
+describe("derived flags (one definition for every brain)", () => {
+  const still = (x: number, z: number, r: number): ZoneView => ({ x0: x, z0: z, x1: x, z1: z, r0: r, r1: r, start: 0, end: 1_000_000 });
+  /** Round the origin from 60 m to nothing in 20 s: the edge comes in at 3 m/s. */
+  const fast: ZoneView = { x0: 0, z0: 0, x1: 0, z1: 0, r0: 60, r1: 0, start: 0, end: 20 * TICK_RATE };
+  const self = (x: number, zone: ZoneView, opts: { hp?: number; kit?: Partial<KitSim> } = {}) => view(world({ me: player(x, 0, opts) }, { zone, tick: 0 })).self;
+
+  test("outsideZone: outside the circle now; never with no zone", () => {
+    expect(self(0, still(20, 0, 10)).outsideZone).toBe(true);
+    expect(self(15, still(20, 0, 10)).outsideZone).toBe(false);
+    expect(self(0, NO_ZONE).outsideZone).toBe(false);
+  });
+  test("zoneEdgeIn: exact, for a shrinking zone and a moving one; null when it never comes", () => {
+    expect(zoneEdgeIn(fast, 0, 40, 0)).toBeCloseTo(20 / 3, 6);
+    // Radius 10 sliding from x = 0 to x = 20 over 100 s: a body at x = -5 is left out once the centre passes x = 5.
+    expect(zoneEdgeIn({ x0: 0, z0: 0, x1: 20, z1: 0, r0: 10, r1: 10, start: 0, end: 100 * TICK_RATE }, 0, -5, 0)).toBeCloseTo(25, 6);
+    expect(zoneEdgeIn(still(0, 0, 10), 0, 3, 0)).toBeNull();
+    expect(zoneEdgeIn(still(20, 0, 10), 0, 0, 0)).toBe(0);
+  });
+  test("zoneClosing: the edge within BOT_TUNING.zoneClosingTime", () => {
+    // 15 m inside, coming at 3 m/s: 5 s.
+    expect(self(45, fast).zoneClosing).toBe(true);
+    // A circle that doesn't move: never.
+    expect(self(5, still(0, 0, 10)).zoneClosing).toBe(false);
+  });
+  test("zoneClosing: or within the walk to the final circle, when that takes longer", () => {
+    // 20 m inside: the edge comes in 6.7 s, more than zoneClosingTime, but the 40 m walk takes ~9.5 s.
+    const v = view(world({ me: player(40, 0) }, { zone: fast, tick: 0 }));
+    expect(v.zone!.edgeIn!).toBeGreaterThan(BOT_TUNING.zoneClosingTime);
+    expect(v.zone!.walkIn).toBeGreaterThan(v.zone!.edgeIn!);
+    expect(v.self.zoneClosing).toBe(true);
+    // At the centre: the edge is 20 s away, the walk is nothing.
+    expect(self(0, fast).zoneClosing).toBe(false);
+  });
+  test("zoneClosing: never when outside (that's outsideZone)", () => {
+    expect(self(0, still(20, 0, 10)).zoneClosing).toBe(false);
+  });
+  test("lowHp: below BOT_TUNING.lowHp", () => {
+    expect(self(0, NO_ZONE, { hp: BOT_TUNING.lowHp - 1 }).lowHp).toBe(true);
+    expect(self(0, NO_ZONE, { hp: BOT_TUNING.lowHp }).lowHp).toBe(false);
+  });
+  test("weakKit: the Pistol only, or no healing item", () => {
+    expect(self(0, NO_ZONE, { kit: { bandages: 2 } }).weakKit).toBe(true);
+    expect(self(0, NO_ZONE, { kit: { gun1: RIFLE, mag1: 12 } }).weakKit).toBe(true);
+    expect(self(0, NO_ZONE, { kit: { gun1: RIFLE, mag1: 12, medkits: 1 } }).weakKit).toBe(false);
+  });
+  test("inRange: a clear shot within the gun's useful range", () => {
+    const pistolRange = WEAPONS[PISTOL].range * BOT_TUNING.fightRangeScale;
+    const v = view(world({ me: player(0, 0), near: player(-pistolRange + 1, 0), far: player(0, pistolRange + 2) }));
+    expect(Object.fromEntries(v.enemies.map((e) => [e.id, e.inRange]))).toEqual({ near: true, far: false });
+    // The rifle in hand reaches further.
+    const r = view(world({ me: player(0, 0, { kit: { gun1: RIFLE, mag1: 12, hand: 1 } }), far: player(0, pistolRange + 2) }));
+    expect(r.enemies[0].inRange).toBe(true);
+  });
+  test("inRange: not without a clear shot, even close (a post on the line, the bodies' edges still in sight)", () => {
+    const post: MapDef = { ...MAP, obstacles: [{ kind: "barrels", x: -5, z: 0, w: 0.4, d: 0.4, h: 1 }] };
+    const v = view({ ...world({ me: player(0, 0), them: player(-10, 0) }), map: post });
+    expect(v.enemies).toHaveLength(1);
+    expect(v.enemies[0]).toMatchObject({ shot: false, inRange: false });
+  });
+});
+
 describe("the rule brain: each goal wins in its situation", () => {
   const zoneAt = (x: number, z: number, r: number): ZoneView => ({ x0: x, z0: z, x1: x, z1: z, r0: r, r1: r, start: 0, end: 1_000_000 });
 
@@ -111,6 +172,11 @@ describe("the rule brain: each goal wins in its situation", () => {
   });
   test("fight: an enemy in sight and in range, even when low (no heal with an enemy in sight)", () => {
     expect(decide(view(world({ me: player(0, 0, { hp: 40, kit: armed }), them: player(6, 0) })))).toEqual({ kind: "fight", target: "them" });
+  });
+  test("an enemy in sight but out of range: a far fight, below looting with a weak kit", () => {
+    const far = player(0, WEAPONS[PISTOL].range * BOT_TUNING.fightRangeScale + 2);
+    expect(scoreGoals(view(world({ me: player(0, 0, { kit: armed }), far }))).map((g) => [g.goal.kind, g.score])[0]).toEqual(["fight", BOT_TUNING.score.fightFar]);
+    expect(decide(view(world({ me: player(0, 0), far }, { crates: { c: { x: -5, z: 0, open: false } } }))).kind).toBe("loot");
   });
   test("fight: the nearest with a clear shot", () => {
     const g = decide(view(world({ me: player(0, 0, { kit: armed }), a: player(0, 9), b: player(-6, 0) })));
