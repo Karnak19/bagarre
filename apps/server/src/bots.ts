@@ -31,6 +31,13 @@ export function botName(taken: ReadonlySet<string>): string {
   for (let i = BOT_NAMES.length + 1; ; i++) if (!taken.has(`Bot ${i}`)) return `Bot ${i}`;
 }
 
+/** Where a player stood at the end of a past tick (GameRoom's hit history). */
+export interface BotPose {
+  x: number;
+  z: number;
+  alive: boolean;
+}
+
 /**
  * Everything a bot can read when it decides its input, once a tick. The
  * whole room state (players, items, crates, zone, bullets, grenades, tick,
@@ -45,6 +52,15 @@ export interface BotTick {
   map: MapDef;
   /** The seq this input must carry: one more than the last (applyInput acks it, `bulletId` uses it). */
   seq: number;
+  /**
+   * Where player `id` stood HIT_REWIND_TICKS ago: what a human sees of them
+   * (their client draws everyone that far back), and the pose hits are
+   * judged against. A bot aims at this, never at `state.players`' live
+   * position, or it would lead every moving target perfectly. Undefined when
+   * that tick isn't in the history (the first ticks of a match) or the
+   * player wasn't seated then.
+   */
+  seenPose(id: string): BotPose | undefined;
 }
 
 /**

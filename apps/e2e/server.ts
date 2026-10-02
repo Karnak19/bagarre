@@ -10,6 +10,8 @@
 //                                          (through the real damage path: nothing
 //                                          happens between teammates)
 //   POST /place { roomId, id, x, z }       puts a player on (x, z) (a teleport)
+//   POST /room { roomId }                  200 while that room exists on this server,
+//                                          404 once it is gone (closed, disposed)
 //   POST /warmup { roomId, seconds }       that room's warmups last `seconds`, the one
 //                                          running included (from now)
 //   POST /hp { roomId, id, hp }            sets a living player's HP (1..MAX_HP), with no
@@ -281,6 +283,10 @@ createHttpServer((req, res) => {
   req.on("end", () => {
     const reply = (status: number, text: string) => res.writeHead(status, { "content-type": "text/plain" }).end(text);
     if (req.method === "POST" && req.url === "/place") return place(body, reply);
+    if (req.method === "POST" && req.url === "/room") {
+      const { roomId } = JSON.parse(body || "{}") as { roomId?: string };
+      return roomId && matchMaker.getLocalRoomById(roomId) ? reply(200, "ok") : reply(404, `no room ${roomId}`);
+    }
     if (req.method === "POST" && req.url === "/warmup") return setWarmup(body, reply);
     if (req.method === "POST" && req.url === "/smoke") return setSmoke(body, reply);
     if (req.method === "POST" && req.url === "/hp") return setHp(body, reply);

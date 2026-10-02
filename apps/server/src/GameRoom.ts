@@ -797,12 +797,15 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
    * bot that left (`gone`) or one still with an input queued.
    */
   private feedBots() {
+    // What a human sees: everyone HIT_REWIND_TICKS back, the poses hits are judged against.
+    const seen = this.historyAt(this.state.tick - HIT_REWIND_TICKS);
+    const seenPose = (id: string) => seen?.poses.get(id);
     this.internals.forEach((internal, id) => {
       if (internal.identity.kind !== "bot" || internal.gone || internal.queue.length > 0) return;
       const player = this.state.players.get(id);
       if (!player?.connected) return;
       internal.botSeq++;
-      internal.queue.push(botInput({ id, player, state: this.state, map: this.map, seq: internal.botSeq }));
+      internal.queue.push(botInput({ id, player, state: this.state, map: this.map, seq: internal.botSeq, seenPose }));
     });
   }
 

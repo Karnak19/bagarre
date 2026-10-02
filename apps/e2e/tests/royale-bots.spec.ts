@@ -5,7 +5,7 @@
 // stand still (the server feeds them a neutral input); playing comes next.
 
 import { ROYALE_MAX_PLAYERS } from "@bagarre/shared";
-import { expect, kill, place, pressStart, test, type Player } from "./fixtures.ts";
+import { ROYALE_MAP, expect, kill, listedRooms, place, pressStart, roomExists, test, type Player, type Players } from "./fixtures.ts";
 
 /** Sends a bot request straight through the page's room, as a tampered client would, then lets the server tick past it. */
 async function sendBot(p: Player, type: "bot:add" | "bot:remove") {
@@ -110,4 +110,51 @@ test("battle royale: one person with bots starts a match; the bots carry the BOT
   await expect(a.testId("placement-row").getByTestId("player-tag").filter({ hasText: "BOT" })).toHaveCount(2);
   // One person: not counted in the stats, bots don't make up the number.
   await expect(a.testId("result-stats")).toContainText("bots not included");
+});
+
+/**
+ * A public battle royale (quick match, so it is listed), hosted by A with two
+ * bots in it and C watching. With C in, Colyseus would keep the room open on
+ * its own: only the server's "only bots left" rule closes it.
+ */
+async function publicRoyaleWithBots(players: Players) {
+  const a = await players.open("A");
+  await a.goto("/", ROYALE_MAP);
+  await a.testId("play-royale").click();
+  await expect(a.testId("waiting-card")).toBeVisible();
+  const roomId = (await a.state()).roomId;
+  await a.testId("royale-add-bot").click();
+  await a.testId("royale-add-bot").click();
+  await expect.poll(async () => (await bots(a)).length).toBe(2);
+  await expect.poll(listedRooms, { message: "the room is listed while A is in" }).toContain(roomId);
+  const c = await players.open("C");
+  await c.goto(`/game/${roomId}/watch`, ROYALE_MAP);
+  await c.expectState("role", "spectator");
+  return { a, c, roomId };
+}
+
+/** After the last person left: the room closes (the spectator is told) and isn't listed any more. */
+async function expectClosed(c: Player, roomId: string) {
+  await expect(c.testId("notice")).toContainText("The game ended");
+  await expect.poll(() => roomExists(roomId), { message: "the room is gone" }).toBe(false);
+  expect(await listedRooms()).not.toContain(roomId);
+}
+
+// Both quick-match into the public royale: one after the other, so they never share a room.
+test.describe.serial("battle royale: the last person leaving closes the room, bots or not", () => {
+  test("in the lobby", async ({ players }) => {
+    const { a, c, roomId } = await publicRoyaleWithBots(players);
+    await a.testId("waiting-cancel").click();
+    await expectClosed(c, roomId);
+  });
+
+  test("during a match", async ({ players }) => {
+    const { a, c, roomId } = await publicRoyaleWithBots(players);
+    await pressStart(a, 3);
+    await a.expectState("phase", "playing");
+    await expect.poll(listedRooms).toContain(roomId);
+    await a.page.keyboard.press("Escape");
+    await a.testId("esc-leave").click();
+    await expectClosed(c, roomId);
+  });
 });
