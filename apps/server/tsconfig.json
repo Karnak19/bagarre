@@ -3,5 +3,7 @@
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": ["src", "smoke.ts", "smoke-accounts.ts"]
+  "include": ["src", "smoke.ts", "smoke-accounts.ts"],
+  // The tests are checked by tsconfig.test.json, with bun's types.
+  "exclude": ["src/**/*.test.ts"]
 }

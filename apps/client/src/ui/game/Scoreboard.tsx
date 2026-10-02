@@ -121,7 +121,11 @@ function Row({ row, you, placed, testId }: { row: ScoreboardRow | null; you?: bo
         <Text as="span" xstyle={row ? styles.name : null}>
           {row ? (row.you ? `${row.name} (you)` : row.name) : "Open seat"}
         </Text>
-        {row && <Text as="span" xstyle={styles.tag}>{row.account ? "Account" : "Guest"}</Text>}
+        {row && (
+          <Text as="span" xstyle={styles.tag} data-testid="player-tag">
+            {row.bot ? "BOT" : row.account ? "Account" : "Guest"}
+          </Text>
+        )}
         {placed && row?.away && (
           <Text as="span" xstyle={styles.away}>
             reconnecting…

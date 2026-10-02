@@ -124,6 +124,9 @@ export const Player = schema(
     // in hand on the next spawn. Both NO_PERK for none.
     perk: t.uint8().default(NO_PERK),
     perkPick: t.uint8().default(NO_PERK),
+
+    /** A bot (PlayerView.bot): a seat the server drives, no client behind it. Appended, like the grenades. */
+    bot: t.boolean().default(false),
   },
   "Player",
 );

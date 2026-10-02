@@ -98,6 +98,8 @@ export interface PlayerState {
     name: string;
     /** The server saw an account with a username (false: a guest). */
     account: boolean;
+    /** A bot: a seat the server drives, no client (added by the royale's host). */
+    bot: boolean;
     kills: number;
     deaths: number;
     weapon: number;
@@ -207,6 +209,7 @@ export class Player {
           id,
           name: String(p.name),
           account: !!p.account,
+          bot: !!p.bot,
           kills: Number(p.kills),
           deaths: Number(p.deaths),
           weapon: Number(p.weapon),

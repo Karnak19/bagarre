@@ -40,6 +40,14 @@
 // full state (no StateView), sends nothing that counts (every handler drops
 // its messages), keeps its place through rematches and map changes, and can
 // take a free seat on the same connection (MSG_TAKE_SEAT).
+//
+// Bots (battle royale only, bots.ts): a seat with no client, added and
+// removed by the host (MSG_BOT_ADD / MSG_BOT_REMOVE, `acceptsBot`). Its id
+// starts with BOT_ID_PREFIX, its identity is `{ kind: "bot" }`, it is always
+// connected and never in `joinOrder` (so never the host), and each tick
+// `feedBots` queues its input from `botInput`. Removing one is a leave
+// (`freeSeat`). Bots count toward the start minimum, not toward the stats
+// (`royaleRecorded`), and a room left with only bots closes.
 
 import {
   CloseCode,
@@ -61,7 +69,6 @@ import {
   TEAM_BLUE,
   TEAM_RED,
   TEAM_RULES,
-  ROYALE_MIN_RECORDED,
   ROYALE_RULES,
   DEFAULT_GRENADE,
   PISTOL,
@@ -89,6 +96,8 @@ import {
   MSG_PING,
   MSG_PONG,
   MSG_START,
+  MSG_BOT_ADD,
+  MSG_BOT_REMOVE,
   MSG_TAKE_SEAT,
   MSG_TEAM,
   CLOSE_NO_PLAYERS,
@@ -114,6 +123,7 @@ import {
   isSkinId,
   randomSkin,
   acceptsStart,
+  acceptsBot,
   hostOf,
   rank,
   rankRoyale,
@@ -139,6 +149,7 @@ import {
   parsePick,
   parsePong,
   parseStart,
+  parseBotRequest,
   parseTakeSeat,
   parseTeam,
   sameTeam,
@@ -160,8 +171,10 @@ import {
   type Standing,
   type Vec2,
 } from "@bagarre/shared";
-import { guestName, recordMatch, resolveIdentity, type Identity, type MatchResult } from "./accounts.ts";
+import { guestName, recordMatch, resolveIdentity, type Identity } from "./accounts.ts";
+import { BOT_ID_PREFIX, botInput, botName } from "./bots.ts";
 import { Floor } from "./floor.ts";
+import { matchResults, type SeatOutcome } from "./stats.ts";
 import { Bullet, GameState, Grenade, KillEvent, Player, Smoke } from "./state.ts";
 
 /** Server-only bookkeeping per seat. Never synced. */
@@ -192,6 +205,8 @@ interface PlayerInternal {
    * so the place still shows and is recorded.
    */
   gone: boolean;
+  /** A bot's last input seq (bots.ts builds one input per tick); 0 for a client's seat. */
+  botSeq: number;
 }
 
 /** Server-only bookkeeping per bullet. */
@@ -346,6 +361,16 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       this.startRequested(client.sessionId);
     },
 
+    // Battle royale: the host adds a bot, or removes the one added last (see botRequested).
+    [MSG_BOT_ADD]: (client: Client, raw: unknown) => {
+      if (this.spectators.has(client.sessionId) || !parseBotRequest(raw)) return;
+      this.botRequested(client.sessionId, true);
+    },
+    [MSG_BOT_REMOVE]: (client: Client, raw: unknown) => {
+      if (this.spectators.has(client.sessionId) || !parseBotRequest(raw)) return;
+      this.botRequested(client.sessionId, false);
+    },
+
     // Any other type is dropped. Without this fallback Colyseus closes the
     // sender's connection in production (and answers with an error in dev).
     "*": () => {},
@@ -405,8 +430,12 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   private metaKey = "";
   /** Battle royale: the chests and the items on the floor. */
   private floor = new Floor(this.state, () => this.map);
-  /** Battle royale: players in the match when it started (below ROYALE_MIN_RECORDED it isn't recorded). */
-  private royaleStarters = 0;
+  /** Battle royale: humans in the match when it started (below ROYALE_MIN_RECORDED it isn't recorded; bots don't count). */
+  private royaleHumanStarters = 0;
+  /** Bots added so far: the next bot's id is `bot:<n + 1>`. Never reused, so a removed bot's id never comes back. */
+  private botsAdded = 0;
+  /** The room is closing because only bots are left (closeIfOnlyBots). */
+  private closing = false;
   /** Battle royale: someone was knocked out this tick; see who is left at its end (checkLastStanding). */
   private knockedOut = false;
 
@@ -542,6 +571,13 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     return this.state.players.size;
   }
 
+  /** Seats held by people, dropped ones included, leavers kept for a royale's result (`gone`) not. */
+  private humanSeats(): number {
+    let n = 0;
+    this.internals.forEach((i) => (n += i.identity.kind !== "bot" && !i.gone ? 1 : 0));
+    return n;
+  }
+
   /** Seats whose player is connected right now. */
   private connectedSeats(): number {
     let n = 0;
@@ -629,10 +665,15 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       this.addSpectator(client, options);
       return;
     }
-    this.seat(client, options);
+    this.seat(client.sessionId, this.identityOf(client), options);
     this.maybeStart();
     this.syncListing();
     this.updateSeatLock();
+  }
+
+  /** Who a client is, from onAuth (a guest when it gave nothing). */
+  private identityOf(client: Client): Identity {
+    return (client.auth as Identity | undefined) ?? { kind: "guest", name: guestName() };
   }
 
   private addSpectator(client: Client, options: unknown) {
@@ -655,14 +696,18 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     this.spectators.delete(id);
     this.state.spectators = Math.min(255, this.spectators.size);
     // A dev `?map=` is only read at the first join.
-    this.seat(client, { guestName: optionsRecord(options).guestName });
+    this.seat(id, this.identityOf(client), { guestName: optionsRecord(options).guestName });
     this.maybeStart();
     this.syncListing();
     this.updateSeatLock();
   }
 
-  /** Gives this client a seat: a Player on a spawn, and its internals. The caller checked that one is free. */
-  private seat(client: Client, options: unknown) {
+  /**
+   * Gives a seat to `id` (a client's session id, or a bot's): a Player on a
+   * spawn, and its internals. The caller checked that one is free. Nothing
+   * here needs a client, so a bot is seated the same way (addBot).
+   */
+  private seat(id: string, identity: Identity, options: unknown) {
     // A dev `?map=` from a later player pins the room too, unless a match is
     // running (a duel can't be mid-match here: the room holds two). A
     // server-pinned map wins.
@@ -675,18 +720,20 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     const names = new Set<string>();
     this.state.players.forEach((p) => names.add(p.name));
     const slot = this.freeSlot();
-    const identity: Identity = (client.auth as Identity | undefined) ?? { kind: "guest", name: guestName() };
+    const bot = identity.kind === "bot";
     const hasUsername = identity.kind === "account" && !!identity.username;
     // A guest keeps the guest name the client shows on its menu, if it is one
     // (`Guest-` and four digits: nobody can pick a real-looking name this way).
-    let name = hasUsername ? identity.name : (requestedGuestName(options) ?? identity.name);
+    // A bot's name is picked free by addBot.
+    let name = hasUsername || bot ? identity.name : (requestedGuestName(options) ?? identity.name);
     // Two guests could draw the same number.
-    if (names.has(name) && !hasUsername) name = guestName(names);
+    if (names.has(name) && !hasUsername && !bot) name = guestName(names);
 
     const player = new Player();
     player.slot = slot;
     player.name = name;
     player.account = hasUsername;
+    player.bot = bot;
     player.skin = this.skinFor(identity);
     // Battle royale: the Pistol, already while waiting.
     if (this.rules.royale) player.weapon = PISTOL;
@@ -705,11 +752,69 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       writeSim(player, spawnSim(spawn.x, spawn.z, player.weapon, undefined, this.freshKit()));
       player.aim = this.hubAim(spawn);
     }
-    this.state.players.set(client.sessionId, player);
+    this.state.players.set(id, player);
     // A drop-in reached its 0 kills at the match start, like everyone else.
     const reachedAt = this.state.startTick;
-    this.internals.set(client.sessionId, { queue: [], tokens: INPUT_BURST, identity, deaths: 0, reachedAt, ping: null, baselined: false, gone: false });
-    this.joinOrder.push(client.sessionId);
+    this.internals.set(id, { queue: [], tokens: INPUT_BURST, identity, deaths: 0, reachedAt, ping: null, baselined: false, gone: false, botSeq: 0 });
+    // Never a bot: it must never become the host.
+    if (!bot) this.joinOrder.push(id);
+  }
+
+  /**
+   * MSG_BOT_ADD / MSG_BOT_REMOVE from `sender`: honoured only from the
+   * battle royale's host, and an add only while waiting with a seat free
+   * (`acceptsBot`). Anything else is ignored.
+   */
+  private botRequested(sender: string, add: boolean) {
+    const req = { add, phase: this.state.phase, sender, host: this.state.host, seats: this.claimedSeats() };
+    if (!acceptsBot(this.rules, req)) return;
+    if (add) this.addBot();
+    else this.removeBot();
+  }
+
+  /** Seats a new bot (bots.ts): a free bot name, a random skin, no client. */
+  private addBot() {
+    const names = new Set<string>();
+    this.state.players.forEach((p) => names.add(p.name));
+    const id = `${BOT_ID_PREFIX}${++this.botsAdded}`;
+    this.seat(id, { kind: "bot", name: botName(names) }, {});
+    this.syncListing();
+    this.updateSeatLock();
+  }
+
+  /** Removes the bot added last (still in the match): a leave, through the same path as a client's (freeSeat). */
+  private removeBot() {
+    let last = "";
+    this.internals.forEach((i, id) => {
+      if (i.identity.kind === "bot" && !i.gone) last = id;
+    });
+    if (last) this.freeSeat(last);
+  }
+
+  /**
+   * Bots: one input each per tick, from their brain (`botInput`, bots.ts),
+   * queued like a client's so it goes through the same applyInput. Not for a
+   * bot that left (`gone`) or one still with an input queued.
+   */
+  private feedBots() {
+    this.internals.forEach((internal, id) => {
+      if (internal.identity.kind !== "bot" || internal.gone || internal.queue.length > 0) return;
+      const player = this.state.players.get(id);
+      if (!player?.connected) return;
+      internal.botSeq++;
+      internal.queue.push(botInput({ id, player, state: this.state, map: this.map, seq: internal.botSeq }));
+    });
+  }
+
+  /**
+   * People have all left but bots are still seated: the room closes (its
+   * spectators with it). With no client left at all, Colyseus disposes of it
+   * anyway; this covers the spectators, and a royale's bots playing on.
+   */
+  private closeIfOnlyBots() {
+    if (this.closing || this.humanSeats() > 0 || this.state.players.size === 0) return;
+    this.closing = true;
+    void this.disconnect(CLOSE_NO_PLAYERS);
   }
 
   /**
@@ -821,6 +926,12 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       return;
     }
     if (!this.state.players.has(id)) return; // No seat (a refused join).
+    this.freeSeat(id);
+    this.closeIfOnlyBots();
+  }
+
+  /** A seat's player is gone for good (a client's leave, or a bot removed by the host). */
+  private freeSeat(id: string) {
     // Battle royale, from the start of play to the end of the result:
     // leaving is a knock-out, now (if still in). The seat stays, not
     // connected and `gone`, so the place shows and is recorded; purgeGone
@@ -892,6 +1003,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   }
 
   private probeLatency() {
+    // Clients only: a bot has none, and its ping stays 0 (shown as "–").
     for (const client of this.clients) {
       const internal = this.internals.get(client.sessionId);
       if (!internal) continue;
@@ -939,7 +1051,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       hostName: host?.name ?? "",
       mapId: this.map.id,
       phase: this.state.phase as Phase,
-      players: this.seats,
+      // A room with no people in it (bots only, about to close) is never listed (players < 1).
+      players: this.humanSeats() > 0 ? this.seats : 0,
       maxPlayers: this.rules.maxPlayers,
       teams: this.rules.teams ? this.teamCounts(false) : undefined,
       spectators: this.spectators.size,
@@ -1074,7 +1187,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     const royale = this.rules.royale;
     if (royale) {
       // Who plays it (a leave during warmup doesn't count): a small one isn't recorded.
-      this.royaleStarters = this.seats;
+      this.royaleHumanStarters = this.humanSeats();
       const t = this.state.startTick;
       const z = pickZone(this.map, this.matchId, t + ticks(royale.zoneWait), t + ticks(Math.max(royale.zoneWait, royale.zoneClose)));
       Object.assign(this.state.zone, z);
@@ -1162,6 +1275,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     //    few inputs after jitter but caps the average at one per tick, which is
     //    also what makes the tick-counted cooldowns (fire interval, dash, ...)
     //    impossible to beat by sending inputs faster.
+    //    Bots' inputs are queued first, built by the server (feedBots).
+    this.feedBots();
     this.state.players.forEach((player, id) => {
       const internal = this.internals.get(id);
       if (!internal) return;
@@ -1791,28 +1906,21 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   }
 
   /**
-   * Records the finished match for the account players (guests are
-   * skipped), with the places set on the players. A win is first place (the
-   * one winner); every other place is a loss. A battle royale that started
-   * with fewer than ROYALE_MIN_RECORDED players isn't recorded (one kill
-   * would be a win).
+   * Records the finished match for the account players (guests and bots
+   * are skipped), with the places set on the players, bots included. A win
+   * is first place (the one winner); every other place is a loss. A battle
+   * royale started by fewer than ROYALE_MIN_RECORDED humans isn't recorded
+   * (one kill would be a win; see matchResults in stats.ts).
    */
   private recordStats(winningTeam = NO_TEAM) {
-    if (this.rules.royale && this.royaleStarters < ROYALE_MIN_RECORDED) return;
-    const results: MatchResult[] = [];
+    const seats: SeatOutcome[] = [];
     this.state.players.forEach((p, id) => {
       const internal = this.internals.get(id);
-      if (internal?.identity.kind !== "account") return;
-      const place = p.place;
-      // Teams: a win for everyone on the winning team, a loss for the others.
-      if (this.rules.teams) {
-        results.push({ userId: internal.identity.userId, kills: p.kills, deaths: internal.deaths, won: p.team === winningTeam, place, team: p.team });
-        return;
-      }
-      results.push({ userId: internal.identity.userId, kills: p.kills, deaths: internal.deaths, won: place === 1, place });
+      if (internal) seats.push({ identity: internal.identity, place: p.place, kills: p.kills, deaths: internal.deaths, team: p.team });
     });
+    const results = matchResults(this.rules, seats, this.royaleHumanStarters, winningTeam);
     // Fire and forget: the game loop never waits on the database.
-    void recordMatch(this.matchId, results, this.rules.mode);
+    if (results) void recordMatch(this.matchId, results, this.rules.mode);
   }
 
   /**

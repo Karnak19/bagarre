@@ -22,6 +22,7 @@ import {
   ROYALE_END_DELAY,
   ROYALE_MAX_PLAYERS,
   ROYALE_MIN_PLAYERS,
+  ROYALE_MIN_RECORDED,
   ROYALE_ROOM_NAME,
   ROYALE_WARMUP,
   SUDDEN_DEATH_MAX,
@@ -245,6 +246,28 @@ export function hostOf(joinOrder: readonly string[], seated: (id: string) => boo
  */
 export function acceptsStart(rules: ModeRules, req: { phase: string; sender: string; host: string; ready: boolean }): boolean {
   return rules.hostStarts && req.phase === "waiting" && req.sender !== "" && req.sender === req.host && req.ready;
+}
+
+/**
+ * Whether a bot request (MSG_BOT_ADD / MSG_BOT_REMOVE) is honoured: only in a
+ * battle royale (a mode whose host starts it), only from the host. A bot is
+ * added only while waiting and with a seat free (`seats`: taken plus
+ * promised to joins in flight); one is removed in any phase, as a leave
+ * (the room checks there is a bot to remove). Anything else is ignored.
+ */
+export function acceptsBot(rules: ModeRules, req: { add: boolean; phase: string; sender: string; host: string; seats: number }): boolean {
+  if (!rules.hostStarts || !rules.royale || req.sender === "" || req.sender !== req.host) return false;
+  return !req.add || (req.phase === "waiting" && req.seats < rules.maxPlayers);
+}
+
+/**
+ * Whether a finished battle royale goes into the stats: it takes
+ * ROYALE_MIN_RECORDED humans among those who started it. Bots never count
+ * toward it (a solo player with nine bots would farm wins), but once a match
+ * counts, places are the order everyone went out in, bots included.
+ */
+export function royaleRecorded(humanStarters: number): boolean {
+  return humanStarters >= ROYALE_MIN_RECORDED;
 }
 
 /** The rules of a synced `mode` string; an unknown one reads as a duel. */

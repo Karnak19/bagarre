@@ -99,6 +99,11 @@ export function parseStart(raw: unknown): Record<string, never> | null {
   return record(raw) ? {} : null;
 }
 
+/** MSG_BOT_ADD and MSG_BOT_REMOVE: a plain object; its fields are ignored. */
+export function parseBotRequest(raw: unknown): Record<string, never> | null {
+  return record(raw) ? {} : null;
+}
+
 /** MSG_TEAM: TEAM_RED or TEAM_BLUE, nothing else. */
 export function parseTeam(raw: unknown): TeamMessage | null {
   const m = record(raw);

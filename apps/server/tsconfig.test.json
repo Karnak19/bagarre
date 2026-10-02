@@ -1,0 +1,8 @@
+{
+  // The bun:test files, with bun's types (and Node's, which they bring).
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["bun"]
+  },
+  "include": ["src/**/*.test.ts"]
+}

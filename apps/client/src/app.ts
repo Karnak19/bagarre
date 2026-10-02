@@ -345,6 +345,15 @@ export class App {
     this.current?.net.sendStart();
   }
 
+  /** Battle royale, while waiting: the host adds a bot, or removes the last one added (the server checks it is the host). */
+  addBot() {
+    this.current?.net.sendBot(true);
+  }
+
+  removeBot() {
+    this.current?.net.sendBot(false);
+  }
+
   /** "Join the game" while watching: take the free seat, on the same connection. */
   joinSeat() {
     this.current?.net.takeSeat();
