@@ -104,7 +104,9 @@ function buildFloor(group: THREE.Group, map: MapDef) {
   const t = map.theme;
   const sx = map.halfX * 2;
   const sz = map.halfZ * 2;
-  const outer = own(new THREE.Mesh(new THREE.PlaneGeometry(160, 160), new THREE.MeshStandardMaterial({ color: t.outerFloor, roughness: 1 })));
+  // The snow outside the walls: 40 m past them on every side (the trees stand up to 15 m out), and never under 160 m.
+  const outerSide = Math.max(160, 2 * Math.max(map.halfX, map.halfZ) + 80);
+  const outer = own(new THREE.Mesh(new THREE.PlaneGeometry(outerSide, outerSide), new THREE.MeshStandardMaterial({ color: t.outerFloor, roughness: 1 })));
   outer.rotation.x = -Math.PI / 2;
   outer.position.y = -0.01;
   outer.receiveShadow = true;

@@ -53,8 +53,12 @@ const LID_MS = 260;
 const LOOT_FROM_Y = 0.55;
 const LOOT_ARC = 0.9;
 const EDGE_WIDTH = 0.35;
-/** The tint outside the zone reaches this far past its edge (past any map). */
-const OUTSIDE_REACH = 160;
+/**
+ * The tint outside the zone reaches this far past its edge: past any map,
+ * even round a closed zone at the edge of its final rectangle (Ironvale's
+ * farthest corner from one is about 150 m).
+ */
+const OUTSIDE_REACH = 240;
 /** Rebuild the ring meshes when the radius has moved more than this. */
 const REBUILD_STEP = 0.04;
 

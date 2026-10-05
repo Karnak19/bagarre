@@ -614,9 +614,9 @@ the royale map's layout, see [docs/royale-maps.md](docs/royale-maps.md)).
   picker and can't be picked in the other modes) and no grenades. Nobody can
   join once it started (the room locks itself, `closedToJoins`); watching
   still works.
-- **The map**: Ironvale, a 90 x 90 m mining town in the snow, the only map
+- **The map**: Ironvale, a 150 x 150 m mining town in the snow, the only map
   in the royale pool (`ROYALE_MAPS`, [docs/royale-maps.md](docs/royale-maps.md)).
-- **Chests**: the map lists crate spots (`MapDef.royale.crates`, 23 on
+- **Chests**: the map lists crate spots (`MapDef.royale.crates`, 48 on
   Ironvale). A closed chest stands on each at the start (`state.crates`,
   with `open`), drawn glowing (a pulsing emissive and a soft halo on the
   ground) so it reads as something to open, not as cover. Walking into one
@@ -676,8 +676,8 @@ the royale map's layout, see [docs/royale-maps.md](docs/royale-maps.md)).
   1 s after the last bubble ended (`ROYALE.shieldGap`), so charges never
   chain into one long bubble. Raising it doesn't cancel a heal.
 - **The zone** (`state.zone`: start and end centre and radius, start and end
-  tick) covers the whole map, waits 30 s, then shrinks smoothly to nothing at
-  4:30, round a centre drawn from the match id inside `MapDef.royale.zone`.
+  tick) covers the whole map, waits 45 s, then shrinks smoothly to nothing at
+  6:45 (about 0.3 m/s on Ironvale, far below walking speed), round a centre drawn from the match id inside `MapDef.royale.zone`.
   Outside it you lose HP every tick (2 per second at first, 14 once closed:
   `zoneDamage`, whole HP from the integral of that rate). Server and client
   compute the circle with the same `zoneAt`. A zone death reads "Zone" in

@@ -9,7 +9,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { playerCan, spawnSim, stepPlayer } from "./combat.ts";
-import { GRENADES, GRENADE_FRAG, GRENADE_SMOKE, ITEM_GRENADE, ITEM_GUN, LOOT, PISTOL, PLAYER_RADIUS, ROYALE, TICK_RATE, WEAPONS, ZONE, ticks } from "./constants.ts";
+import { GRENADES, GRENADE_FRAG, GRENADE_SMOKE, ITEM_GRENADE, ITEM_GUN, LOOT, PISTOL, PLAYER_RADIUS, PLAYER_SPEED, ROYALE, TICK_RATE, WEAPONS, ZONE, ticks } from "./constants.ts";
 import { MAPS, ROYALE_MAPS } from "./maps/index.ts";
 import { lotOf, rankRoyale, ROYALE_RULES, type RoyaleStanding } from "./modes.ts";
 import { circleOverlapsBox } from "./physics.ts";
@@ -120,11 +120,19 @@ describe("the zone", () => {
     expect(outsideZone(zone, zone.end - 1, 8, -6)).toBe(false);
     expect(outsideZone(zone, halfway, 30, 0)).toBe(true);
   });
-  test(`the real zone closes by 4:30 (${ZONE.close} s)`, () => {
+  test(`the real zone closes by 7:00 (${ZONE.close} s)`, () => {
     expect(ROYALE_RULES.royale?.zoneClose).toBe(ZONE.close);
-    expect(ZONE.close).toBeLessThanOrEqual(4.5 * 60);
+    expect(ZONE.close).toBeLessThanOrEqual(7 * 60);
     expect(ZONE.wait).toBeLessThan(ZONE.close);
   });
+  // The starting circle reaches the corners, so a bigger map shrinks faster:
+  // keep it a slow squeeze (about 0.3 m/s), far below walking speed.
+  for (const map of ROYALE_MAPS) {
+    const speed = (Math.hypot(map.halfX, map.halfZ) + ZONE.margin) / (ZONE.close - ZONE.wait);
+    test(`${map.id}: the real zone shrinks at ${speed.toFixed(2)} m/s (at most 0.35, walking is ${PLAYER_SPEED})`, () => {
+      expect(speed).toBeLessThanOrEqual(0.35);
+    });
+  }
 
   // Damage outside: whole HP each tick, growing, summing to the dose.
   const perSecond = (from: number) => {

@@ -3,10 +3,10 @@
 // Run with `bun run test` (or `bun test src/maps/royale` in packages/shared).
 //
 // For every map in ROYALE_MAPS:
-// 1. size 80..100 m a side; box heights and the thin-long rule; no narrow gaps;
+// 1. size 80..160 m a side; box heights and the thin-long rule; no narrow gaps;
 // 2. at least 10 start spots; every start and crate spot standable and in bounds;
 // 3. no two start spots see each other (any distance);
-// 4. 15..25 crate spots, none within 3 m of a start, none on top of each other;
+// 4. 15..60 crate spots, none within 3 m of a start, none on top of each other;
 // 5. everything reachable on foot, and the whole floor one connected region;
 // 6. the final zone's rectangle well inside the map;
 // 7. endgame cover: the real zone 30 s before it closes, for every final
@@ -26,9 +26,9 @@ import { TALL_DECOR, type Obstacle, type Spawn } from "../types.ts";
 import { ROYALE_MAPS, type RoyaleMapDef } from "./index.ts";
 
 /** Side of the map, metres. */
-const SIZE: [number, number] = [80, 100];
+const SIZE: [number, number] = [80, 160];
 const MIN_STARTS = 10;
-const CRATE_COUNT: [number, number] = [15, 25];
+const CRATE_COUNT: [number, number] = [15, 60];
 /** A crate this close to a start spot would hand that player a free crate (royale.test.ts's rule too). */
 const CRATE_START_MIN = 3;
 /** A crate spot keeps its crate and a player touching it clear of every box (royale.test.ts's rule too). */
