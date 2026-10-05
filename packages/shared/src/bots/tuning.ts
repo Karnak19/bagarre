@@ -84,6 +84,8 @@ export const BOT_TUNING = {
   reaction: 0.35,
   /** A target out of sight longer than this needs a new reaction when it shows again. */
   forget: 1,
+  /** A fight goal walks to where its target was last seen for this long, then roams. */
+  chaseTime: 5,
   /** Aim error: uniform in [-aimSpread, aimSpread], drawn again every `aimJitter` seconds. */
   aimSpread: 0.09,
   aimJitter: 0.2,

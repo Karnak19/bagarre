@@ -129,7 +129,7 @@ const T = {
   aimJitter: ticks(BOT_TUNING.aimJitter),
   press: ticks(BOT_TUNING.pressGap),
   roam: ticks(BOT_TUNING.roamTimeout),
-  chase: ticks(5),
+  chase: ticks(BOT_TUNING.chaseTime),
 };
 
 /** Presses `key` once, if its gap since the last press has run. */
