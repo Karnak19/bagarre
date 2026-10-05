@@ -53,7 +53,7 @@ const flowMs = performance.now() - t;
 // A real zone: it waits 10 s, then closes over the run on a seeded corner, so bots escape it, loot and fight.
 const lim = map.royale?.zone ?? { x0: 0, z0: 0, x1: 0, z1: 0 };
 const r0 = Math.hypot(map.halfX, map.halfZ) + 2;
-const zone: ZoneView = { x0: 0, z0: 0, x1: lim.x1 * 0.7, z1: lim.z0 * 0.7, r0, r1: 6, start: 10 * TICK_RATE, end: WARMUP + TICKS };
+const zone: ZoneView = { x0: 0, z0: 0, x1: lim.x1 * 0.7, z1: lim.z1 * 0.7, r0, r1: 6, start: 10 * TICK_RATE, end: WARMUP + TICKS };
 const sim = createBotSim({ map, count: BOTS, seed: SEED, zone });
 
 const times: Record<Section, Float64Array> = {
