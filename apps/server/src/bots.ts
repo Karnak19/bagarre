@@ -16,8 +16,6 @@ import type { GameState, Player } from "./state.ts";
  */
 export const BOT_ID_PREFIX = "bot:";
 
-export const isBotId = (id: string): boolean => id.startsWith(BOT_ID_PREFIX);
-
 /**
  * Bot names, in the order they are handed out. Never a guest name, and never
  * a username (those have no spaces), so nobody mistakes a bot for a person.
