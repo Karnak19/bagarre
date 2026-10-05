@@ -249,14 +249,17 @@ export function acceptsStart(rules: ModeRules, req: { phase: string; sender: str
 }
 
 /**
- * Whether a bot request (MSG_BOT_ADD / MSG_BOT_REMOVE) is honoured: only in a
- * battle royale (a mode whose host starts it), only from the host. A bot is
- * added only while waiting and with a seat free (`seats`: taken plus
- * promised to joins in flight); one is removed in any phase, as a leave
- * (the room checks there is a bot to remove). Anything else is ignored.
+ * Whether a bot request (MSG_BOT_ADD / MSG_BOT_REMOVE) is honoured, in any
+ * mode: only from the room's host (`hostOf`: the first person seated, never
+ * a bot). A bot is added only while waiting and with a seat free (`seats`:
+ * taken plus promised to joins in flight, against the mode's maxPlayers: 2
+ * in a duel, so one bot fills the other seat); one is removed in any phase,
+ * as a leave (the room checks there is a bot to remove). Anything else is
+ * ignored. A duel or an FFA has no Start button: the host here only means
+ * who may add bots, the match still starts on its own.
  */
 export function acceptsBot(rules: ModeRules, req: { add: boolean; phase: string; sender: string; host: string; seats: number }): boolean {
-  if (!rules.hostStarts || !rules.royale || req.sender === "" || req.sender !== req.host) return false;
+  if (req.sender === "" || req.sender !== req.host) return false;
   return !req.add || (req.phase === "waiting" && req.seats < rules.maxPlayers);
 }
 
@@ -268,6 +271,20 @@ export function acceptsBot(rules: ModeRules, req: { add: boolean; phase: string;
  */
 export function royaleRecorded(humanStarters: number): boolean {
   return humanStarters >= ROYALE_MIN_RECORDED;
+}
+
+/**
+ * Whether a finished match goes into the stats at all, bots or not (a bot's
+ * own result is never recorded: it has no account). A battle royale:
+ * `royaleRecorded` on the humans who started it. A duel: never with a bot
+ * in it (`bots`: bot seats at the end), a win against a bot is no win. An
+ * FFA or a team deathmatch: always, the humans' places and wins as they
+ * finished, bots included in the order.
+ */
+export function matchRecorded(rules: ModeRules, m: { humanStarters: number; bots: number }): boolean {
+  if (rules.royale) return royaleRecorded(m.humanStarters);
+  if (rules.mode === "duel") return m.bots === 0;
+  return true;
 }
 
 /** The rules of a synced `mode` string; an unknown one reads as a duel. */

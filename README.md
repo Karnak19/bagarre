@@ -705,8 +705,14 @@ the royale map's layout, see [docs/royale-maps.md](docs/royale-maps.md)).
   BOT tag on the seats, its name plate, the scoreboard and the placement
   table. It counts toward the 2 needed to start, so one person with bots can
   play. A bot never becomes host, and a room left with only bots closes.
-  The server drives bots itself (`apps/server/src/bots.ts`, `botInput`):
-  for now they stand still.
+  The server drives bots itself (`apps/server/src/bots.ts`, `botInput`).
+  The same buttons are in a duel's, an FFA's and a team deathmatch's lobby,
+  for that room's host (the first person in): a bot takes an open seat (in
+  a duel, the opponent's, and the duel starts at once), gets a team like a
+  join, respawns and plays on, and never shoots a teammate. Those matches
+  still start on their own. A duel against a bot is never recorded; an FFA
+  or a team deathmatch records the people only (`matchRecorded`). The e2e
+  spec is `apps/e2e/tests/bots-modes.spec.ts`.
 - **After the result** (10 s, `ROYALE_END_DELAY`): no rematch on its own.
   Everyone still in the room is back in the lobby, on their feet with the
   Pistol, and the host starts the next match with Start, like the first.

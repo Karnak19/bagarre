@@ -1,11 +1,12 @@
 // Tests of what a bot sees (view.ts) and the rule brain (brain.ts): sight
 // range and cover, the lag-compensated aim point, no names in a view, the
-// items a bot wants, and each goal of #48's table winning in its situation.
+// items a bot wants, and each goal of #48's table winning in its situation;
+// and the other modes (no zone, no loot, the loadout kit, teams).
 // Run with `bun run test` (or `bun test src/bots` in packages/shared).
 
 import { describe, expect, test } from "bun:test";
 import { spawnSim } from "../combat.ts";
-import { HEAL_BANDAGE, HEAL_MEDKIT, ITEM_GRENADE, ITEM_GUN, ITEM_HEAL, NO_TEAM, PISTOL, WEAPONS, GRENADE_FRAG, TICK_RATE } from "../constants.ts";
+import { DEFAULT_WEAPON, HEAL_BANDAGE, NO_HEAL, HEAL_MEDKIT, ITEM_GRENADE, ITEM_GUN, ITEM_HEAL, NO_TEAM, PISTOL, TEAM_BLUE, TEAM_RED, WEAPONS, GRENADE_FRAG, TICK_RATE } from "../constants.ts";
 import { YARD } from "../maps/yard.ts";
 import type { MapDef } from "../maps/types.ts";
 import type { Vec2 } from "../physics.ts";
@@ -221,5 +222,29 @@ describe("goalValid: a late answer is checked against the view", () => {
     expect(goalValid({ kind: "loot", target: "i", source: "chest" }, v)).toBe(false);
     expect(goalValid({ kind: "loot", target: "zz", source: "item" }, v)).toBe(false);
     expect(goalValid({ kind: "escape_zone" }, v)).toBe(false);
+  });
+});
+
+describe("a duel, an FFA, a team deathmatch: no zone, no loot, the loadout kit", () => {
+  /** A player as those modes seat one: the picked gun in hand, an empty kit. */
+  const loadout = (x: number, z: number, team = NO_TEAM): BotPlayerInput => ({ ...spawnSim(x, z, DEFAULT_WEAPON), hp: 100, alive: true, team, weapon: DEFAULT_WEAPON, shieldTicks: 0 });
+
+  test("the view: no zone, nothing to loot or heal with, the gun in hand is the pick", () => {
+    const v = view(world({ me: loadout(0, 0), them: loadout(6, 0) }));
+    expect(v.zone).toBeNull();
+    expect(v.self).toMatchObject({ weapon: DEFAULT_WEAPON, outsideZone: false, zoneClosing: false, heal: NO_HEAL });
+    expect([v.chests, v.items, v.swap]).toEqual([[], [], null]);
+  });
+  test("an enemy in sight: fight; nobody: roam (never escape_zone, loot or heal), even low", () => {
+    expect(decide(view(world({ me: loadout(0, 0), them: loadout(6, 0) })))).toEqual({ kind: "fight", target: "them" });
+    const alone = view(world({ me: { ...loadout(0, 0), hp: 20 } }));
+    expect(decide(alone)).toEqual({ kind: "roam" });
+    expect(scoreGoals(alone).map((g) => g.goal.kind)).toEqual(["roam"]);
+    expect(goalValid({ kind: "escape_zone" }, alone)).toBe(false);
+  });
+  test("teams: a teammate is never an enemy, the other team is", () => {
+    const v = view(world({ me: loadout(0, 0, TEAM_RED), mate: loadout(3, 0, TEAM_RED), foe: loadout(-6, 0, TEAM_BLUE) }));
+    expect(v.enemies.map((e) => e.id)).toEqual(["foe"]);
+    expect(decide(v)).toEqual({ kind: "fight", target: "foe" });
   });
 });

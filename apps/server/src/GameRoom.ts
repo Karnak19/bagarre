@@ -41,13 +41,18 @@
 // its messages), keeps its place through rematches and map changes, and can
 // take a free seat on the same connection (MSG_TAKE_SEAT).
 //
-// Bots (battle royale only, bots.ts): a seat with no client, added and
-// removed by the host (MSG_BOT_ADD / MSG_BOT_REMOVE, `acceptsBot`). Its id
-// starts with BOT_ID_PREFIX, its identity is `{ kind: "bot" }`, it is always
-// connected and never in `joinOrder` (so never the host), and each tick
-// `feedBots` queues its input from the room's BotDriver (`bots`), which
-// plays it on the shared bot brain. Removing one is a leave (`freeSeat`). Bots count toward the start minimum, not toward the stats
-// (`royaleRecorded`), and a room left with only bots closes.
+// Bots (every mode, bots.ts): a seat with no client, added and removed by
+// the room's host from the lobby (MSG_BOT_ADD / MSG_BOT_REMOVE,
+// `acceptsBot`; a duel, an FFA or a team deathmatch has a host for this
+// alone, their matches still start on their own). Its id starts with
+// BOT_ID_PREFIX, its identity is `{ kind: "bot" }`, it is always connected
+// and never in `joinOrder` (so never the host), it gets a team like anyone
+// (`pickTeam`) and the default loadout, and each tick `feedBots` queues its
+// input from the room's BotDriver (`bots`), which plays it on the shared bot
+// brain. Removing one is a leave (`freeSeat`). Bots count toward the start
+// minimum, never toward the stats (`matchRecorded`: a royale needs enough
+// humans, a duel against a bot isn't recorded), and a room left with only
+// bots closes. Never added by matchmaking: only the host adds them.
 
 import {
   CloseCode,
@@ -362,7 +367,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       this.startRequested(client.sessionId);
     },
 
-    // Battle royale: the host adds a bot, or removes the one added last (see botRequested).
+    // The host adds a bot, or removes the one added last (see botRequested).
     [MSG_BOT_ADD]: (client: Client, raw: unknown) => {
       if (this.spectators.has(client.sessionId) || !parseBotRequest(raw)) return;
       this.botRequested(client.sessionId, true);
@@ -772,7 +777,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
 
   /**
    * MSG_BOT_ADD / MSG_BOT_REMOVE from `sender`: honoured only from the
-   * battle royale's host, and an add only while waiting with a seat free
+   * room's host, and an add only while waiting with a seat free
    * (`acceptsBot`). Anything else is ignored.
    */
   private botRequested(sender: string, add: boolean) {
@@ -782,12 +787,16 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     else this.removeBot();
   }
 
-  /** Seats a new bot (bots.ts): a free bot name, a random skin, no client. */
+  /**
+   * Seats a new bot (bots.ts): a free bot name, a random skin, no client, a
+   * team with teams. A duel it fills starts at once, like a join (maybeStart).
+   */
   private addBot() {
     const names = new Set<string>();
     this.state.players.forEach((p) => names.add(p.name));
     const id = `${BOT_ID_PREFIX}${++this.botsAdded}`;
     this.seat(id, { kind: "bot", name: botName(names) }, {});
+    this.maybeStart();
     this.syncListing();
     this.updateSeatLock();
   }
@@ -1176,13 +1185,14 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       });
     }
     // Battle royale: a closed chest on every crate spot, no zone until play
-    // starts. The bots start afresh, their map's grid built now (not in a tick).
+    // starts.
     if (this.rules.royale) {
       this.floor.reset(this.map.royale?.crates ?? []);
       this.state.zone.end = 0;
       this.knockedOut = false;
-      if (this.botSeats() > 0) this.bots.startMatch(this.map);
     }
+    // The bots start afresh, their map's grid built now (not in a tick).
+    if (this.botSeats() > 0) this.bots.startMatch(this.map);
     // Not started yet: the clock, the time limit and the tiebreaks begin
     // with `playing` (beginPlay).
     this.state.startTick = 0;
@@ -1850,11 +1860,15 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       this.floor.clear();
       this.state.zone.end = 0;
       this.knockedOut = false;
-      // Where this match's bot decisions came from (the Jev brain, or the rule brain), counted again from 0.
-      const counts = this.bots.takeCounts();
-      if (this.botSeats() > 0) console.log("[room] bots: decisions", counts);
     }
+    this.logBotDecisions();
     this.recordStats();
+  }
+
+  /** Where this match's bot decisions came from (the Jev brain, or the rule brain), counted again from 0. */
+  private logBotDecisions() {
+    const counts = this.bots.takeCounts();
+    if (this.botSeats() > 0) console.log("[room] bots: decisions", counts);
   }
 
   /** Every seat's standing for `rank`: kills, damage dealt, and when the kill count was reached. */
@@ -1947,7 +1961,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
    * are skipped), with the places set on the players, bots included. A win
    * is first place (the one winner); every other place is a loss. A battle
    * royale started by fewer than ROYALE_MIN_RECORDED humans isn't recorded
-   * (one kill would be a win; see matchResults in stats.ts).
+   * (one kill would be a win), nor is a duel against a bot (see
+   * matchResults in stats.ts).
    */
   private recordStats(winningTeam = NO_TEAM) {
     const seats: SeatOutcome[] = [];
@@ -2043,15 +2058,18 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
 
   /**
    * Evens the teams out between matches (a leave can make them 3v1): while
-   * they differ by more than one, the latest joiner of the bigger team moves
-   * to the other one, and to its side.
+   * they differ by more than one, the bigger team's last bot added (else its
+   * latest joiner) moves to the other one, and to its side.
    */
   private rebalance() {
     for (;;) {
       const [red, blue] = this.teamCounts(false);
       if (Math.abs(red - blue) <= 1) return;
       const from = red > blue ? TEAM_RED : TEAM_BLUE;
-      const id = [...this.joinOrder].reverse().find((s) => this.state.players.get(s)?.team === from);
+      // A bot moves first (the last one added), then the last person in: a person keeps the team they chose
+      // when a bot can even it out instead. Bots aren't in `joinOrder`.
+      const bots = [...this.internals].filter(([, i]) => i.identity.kind === "bot").map(([id]) => id);
+      const id = [...bots.reverse(), ...[...this.joinOrder].reverse()].find((s) => this.state.players.get(s)?.team === from);
       const p = id ? this.state.players.get(id) : undefined;
       if (!id || !p) return;
       p.team = from === TEAM_RED ? TEAM_BLUE : TEAM_RED;
@@ -2107,6 +2125,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     this.setPhase("ended");
     this.matchResetTicks = ticks(this.rules.endDelay);
     this.clearProjectiles();
+    this.logBotDecisions();
     this.recordStats(winningTeam);
   }
 

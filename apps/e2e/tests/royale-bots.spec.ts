@@ -23,16 +23,16 @@ const bots = async (p: Player) => (await p.state()).players.filter((x) => x.bot)
 test("battle royale: only the host adds and removes bots; they get bot names and a BOT tag, never the host's seat", async ({ players }) => {
   const { host: a, invite } = await players.host("royale", "A");
   const ida = (await a.state()).you;
-  const add = a.testId("royale-add-bot");
-  const remove = a.testId("royale-remove-bot");
+  const add = a.testId("add-bot");
+  const remove = a.testId("remove-bot");
   await expect(add).toBeVisible();
   await expect(remove).toBeDisabled();
 
   // B, not the host, sees no bot buttons, and its own requests are ignored.
   const b = await players.join(invite, "B", "ironvale");
   await expect.poll(async () => (await b.state()).players.length).toBe(2);
-  await expect(b.testId("royale-add-bot")).toHaveCount(0);
-  await expect(b.testId("royale-remove-bot")).toHaveCount(0);
+  await expect(b.testId("add-bot")).toHaveCount(0);
+  await expect(b.testId("remove-bot")).toHaveCount(0);
   await sendBot(b, "bot:add");
   expect((await b.state()).players.length).toBe(2);
 
@@ -64,10 +64,10 @@ test("battle royale: only the host adds and removes bots; they get bot names and
   // The host leaves: B is host, never the bot that was in before B.
   await a.testId("waiting-cancel").click();
   await b.expectState("host", (await b.state()).you);
-  await expect(b.testId("royale-add-bot")).toBeVisible();
+  await expect(b.testId("add-bot")).toBeVisible();
 
   // Up to the seat cap, no further.
-  const addB = b.testId("royale-add-bot");
+  const addB = b.testId("add-bot");
   for (let n = 2; n < ROYALE_MAX_PLAYERS; n++) {
     await addB.click();
     await expect(b.testId("royale-start")).toHaveAttribute("data-players", String(n + 1));
@@ -81,8 +81,8 @@ test("battle royale: one person with bots starts a match; the bots carry the BOT
   const { host: a, code } = await players.host("royale", "A");
   const ida = (await a.state()).you;
   await expect(a.testId("royale-start")).toHaveAttribute("data-ready", "false");
-  await a.testId("royale-add-bot").click();
-  await a.testId("royale-add-bot").click();
+  await a.testId("add-bot").click();
+  await a.testId("add-bot").click();
   await pressStart(a, 3);
   await a.expectState("phase", "playing");
   const [b1, b2] = await bots(a);
@@ -120,7 +120,7 @@ test("battle royale: one person with bots starts a match; the bots carry the BOT
 test("battle royale: the bots play: they move, open chests and pick up the loot, fight, and finish in the placement table", async ({ players }) => {
   const { host: a, code } = await players.host("royale", "A");
   const ida = (await a.state()).you;
-  for (let n = 0; n < 4; n++) await a.testId("royale-add-bot").click();
+  for (let n = 0; n < 4; n++) await a.testId("add-bot").click();
   await pressStart(a, 5);
   await a.expectState("phase", "playing");
   const spawned = await bots(a);
@@ -167,8 +167,8 @@ async function publicRoyaleWithBots(players: Players) {
   await a.testId("play-royale").click();
   await expect(a.testId("waiting-card")).toBeVisible();
   const roomId = (await a.state()).roomId;
-  await a.testId("royale-add-bot").click();
-  await a.testId("royale-add-bot").click();
+  await a.testId("add-bot").click();
+  await a.testId("add-bot").click();
   await expect.poll(async () => (await bots(a)).length).toBe(2);
   await expect.poll(listedRooms, { message: "the room is listed while A is in" }).toContain(roomId);
   const c = await players.open("C");

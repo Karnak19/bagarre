@@ -87,14 +87,16 @@ export interface JevBrain extends BotBrain {
 
 // ─── The request ──────────────────────────────────────────────────────────
 
-const INSTRUCTIONS = "You control a bot in a top-down battle royale shooter. Which goal should it follow for the next second?";
+// Every mode: a duel, an FFA or a team deathmatch has no zone, chests or floor items, so only
+// fight and roam (and heal, with something to heal with) are offered there.
+const INSTRUCTIONS = "You control a bot in a top-down shooter. Which goal should it follow for the next second?";
 
 const HELP = {
   escape_zone: "Run back inside the safe zone. Pick when outside_zone is true, or zone_closing is true (the zone is about to close over the bot).",
   heal: "Use a bandage or medkit. Pick when low_hp is true and no enemy is listed.",
   fight: "Attack an enemy. Pick when an enemy is in range (in_range true); prefer a close, weak one.",
   loot: "Go to a chest or floor item. Pick when weak_kit is true (pistol only, or no heals) and loot is near, or the loot is very close.",
-  roam: "Walk toward the zone centre. Pick when nothing else applies.",
+  roam: "Walk toward the zone centre (the map centre when there is no zone). Pick when nothing else applies.",
 } as const;
 
 /** "chest", or the floor item's kind and key ("gun rifle", "heal medkit", "perk ..."). */

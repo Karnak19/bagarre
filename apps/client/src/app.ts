@@ -345,7 +345,7 @@ export class App {
     this.current?.net.sendStart();
   }
 
-  /** Battle royale, while waiting: the host adds a bot, or removes the last one added (the server checks it is the host). */
+  /** While waiting, in any mode: the host adds a bot, or removes the last one added (the server checks it is the host). */
   addBot() {
     this.current?.net.sendBot(true);
   }

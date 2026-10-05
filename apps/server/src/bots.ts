@@ -1,4 +1,4 @@
-// Bots: battle royale seats the server drives (#48). A bot is a seat like
+// Bots: seats the server drives (#48), in every mode. A bot is a seat like
 // any other (a Player in `state.players` and its internals in GameRoom), with
 // no Colyseus client: GameRoom.addBot seats it, and every tick
 // GameRoom.feedBots puts one input from the room's `BotDriver` in its queue,
@@ -15,7 +15,11 @@
 // next decision the rule brain's.
 //
 // Outside "playing" (the lobby, the warmup, the result) a bot stands still
-// and presses nothing.
+// and presses nothing. The same bots play every mode: with no zone, no
+// chests and no floor items (a duel, an FFA, a team deathmatch) the view
+// only has enemies (never a teammate), so they fight or roam round the map's
+// middle. A dead bot decides nothing; one that respawns (the modes with
+// respawns) starts afresh where it stands, like at a match start.
 
 import {
   BOT_TUNING,
@@ -122,6 +126,8 @@ interface BotMind {
   answer: Goal | null;
   /** The last decision failed: the next one is the rule brain's. */
   fallback: boolean;
+  /** Alive on its last feed: a dead bot alive again has respawned. */
+  alive: boolean;
 }
 
 /** A 32-bit hash of a string (FNV-1a): a bot's own seed from its id. */
@@ -204,17 +210,26 @@ export class BotDriver {
   startMatch(map: MapDef) {
     navGrid(map);
     this.minds.forEach((m) => {
-      this.settle(m);
-      const fresh = createBotState(m.state.id, m.state.aim);
-      fresh.seq = m.state.seq;
-      fresh.presses = m.state.presses;
-      m.state = fresh;
-      m.goal = { kind: "roam" };
-      m.answer = null;
-      m.fallback = false;
+      this.restart(m);
       // Its first decision is staggered from the first tick of play.
       m.playing = false;
     });
+  }
+
+  /**
+   * A bot starts afresh (a match start, a respawn): its path, target, roam
+   * and goal go, its press counters and seq stay, and any decision still out
+   * is given up.
+   */
+  private restart(m: BotMind) {
+    this.settle(m);
+    const fresh = createBotState(m.state.id, m.state.aim);
+    fresh.seq = m.state.seq;
+    fresh.presses = m.state.presses;
+    m.state = fresh;
+    m.goal = { kind: "roam" };
+    m.answer = null;
+    m.fallback = false;
   }
 
   /** Play starts with this zone: its flow field (escape_zone) is built now rather than in a tick. */
@@ -240,6 +255,12 @@ export class BotDriver {
     const me = world.players.get(id);
     if (!me) return null;
     const m = this.mind(id);
+    // Respawned (a duel, an FFA, a team deathmatch): a fresh start where it stands, and a decision at once.
+    if (me.alive && !m.alive) {
+      this.restart(m);
+      m.nextDecide = world.tick;
+    }
+    m.alive = me.alive;
     if (world.phase !== "playing") {
       m.playing = false;
       m.state.seq++;
@@ -263,7 +284,7 @@ export class BotDriver {
     if (!m) {
       // Staggered: bots seen one after the other decide on different ticks.
       const offset = this.seen++ % ticks(BOT_TUNING.decideEvery);
-      m = { state: createBotState(id), rng: createRng(hash(id) ^ this.seed), goal: { kind: "roam" }, nextDecide: 0, offset, playing: false, pending: null, answer: null, fallback: false };
+      m = { state: createBotState(id), rng: createRng(hash(id) ^ this.seed), goal: { kind: "roam" }, nextDecide: 0, offset, playing: false, pending: null, answer: null, fallback: false, alive: true };
       this.minds.set(id, m);
     }
     return m;
