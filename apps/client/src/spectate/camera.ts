@@ -107,7 +107,7 @@ export class SpectatorCamera {
   ) {
     this.followViewHeight = options.followViewHeight ?? 22;
     this.minViewHeight = options.minViewHeight ?? 10;
-    this.maxViewHeight = options.maxViewHeight ?? 90;
+    this.maxViewHeight = options.maxViewHeight ?? 160;
     this.panSpeed = options.panSpeed ?? 0.9;
     const rm = options.reducedMotion;
     this.reducedMotion = rm === undefined ? prefersReducedMotion : () => rm;

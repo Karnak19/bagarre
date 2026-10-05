@@ -16,7 +16,7 @@ so it is an FFA and team map only and the royale pool can't pick it.
 
 | Map | Size | Boxes | Starts | Crates | Plays like | Favours |
 | --- | --- | --- | --- | --- | --- | --- |
-| Ironvale | 90 x 90 | 228 | 14 | 23 | A mining town in the snow: a walled shaft tower in the middle, an open ring road, cluttered districts round it | rifle, sniper, SMG |
+| Ironvale | 150 x 150 | 366 | 26 | 48 | A mining town in the snow: a walled shaft tower in the middle, an open ring road, the pit works halfway out, the old town's cluttered districts against the walls, open snow between | rifle, sniper, SMG |
 
 ## Tools
 
@@ -59,14 +59,14 @@ from every spawn, and that the zone closes inside `royale.zone`.
 `src/maps/royale/royale-maps.test.ts` checks the layout, using the duel validator's
 geometry (`scripts/analyze.ts`):
 
-1. Size 80..100 m a side. Boxes 0.8-2.0 m tall; a box under 1.5 m thick and
+1. Size 80..160 m a side. Boxes 0.8-2.0 m tall; a box under 1.5 m thick and
    4 m or longer is 1.1-1.4 m tall. No gap between boxes (or a box and the
    outer wall) under 1.6 m unless they touch.
 2. At least 10 start spots. Every start spot clear of every box by the
    player radius plus 0.25 m, every crate spot by 1.1 m (royale.test.ts's
    rule), and inside the walls.
 3. No two start spots see each other (`bodiesSee`, all pairs).
-4. 15-25 crate spots, none within 3 m of a start (royale.test.ts's rule),
+4. 15-60 crate spots, none within 3 m of a start (royale.test.ts's rule),
    none within 1.5 m of another.
 5. Flood fill (0.2 m grid) from start 0 reaches every start and crate, and
    the whole floor is one connected region, so any open part of the circle
@@ -76,13 +76,14 @@ geometry (`scripts/analyze.ts`):
    rectangle, the real zone `LATE_SECONDS` (30 s) before it closes there
    (`lateCircle`: `pickZone`'s circles through `zoneAt`) holds at least 2
    boxes and at least 50 % floor a player can stand on. The zone shrinks
-   linearly from about 65.6 m (the map's half-diagonal plus 2 m) to nothing
-   over 240 s (`ZONE`: 30 s wait, closed at 4:30), about 0.27 m/s, while its
-   centre slides from the middle to the final one. 30 s before the end it is
-   8.2 m across the radius (16 m wide: the issue's "last 10 to 15 m"),
-   centred 7/8 of the way to the final centre; that is the last circle two
-   or three players still move and fight in (20 s before, 5.5 m, it is a
-   shootout at arm's length).
+   linearly from about 108 m on Ironvale (the map's half-diagonal plus 2 m)
+   to nothing over 360 s (`ZONE`: 45 s wait, closed at 6:45), about 0.3 m/s
+   (royale.test.ts keeps it at most 0.35 m/s, walking is 6), while its
+   centre slides from the middle to the final one. 30 s before the end its
+   radius is 9 m (18 m wide: the issue's "last 10 to 15 m" and a little
+   more), centred 11/12 of the way to the final centre; that is the last
+   circle two or three players still move and fight in (20 s before, 6 m,
+   it is a shootout at arm's length).
 8. Tall decor (the trees) stands outside the walls and hides no floor from
    the camera. The camera looks down (-1, -1, -1) from the +x / +z side, so
    a tree just outside the +x or +z wall stands between it and the floor
@@ -97,22 +98,28 @@ the tight and open floor shares as the
 FFA validator defines them (`ffaSight` in `scripts/ffa/analyze.ts`): tight
 floor sees less than 250 m² within 30 m (shotgun and SMG ground), open floor
 sees at least 150 m² beyond 18 m (sniper lanes). Samples every 2 m (1 m
-takes about 25 s on a 90 m map and differs by 0.1 pp), which is most of the
-script's 3-4 s. The tests skip it and take well under a second.
+takes about 25 s on a 90 m map and differs by 0.1 pp), which is nearly all
+of the script's minute on the 150 m map. The tests skip it and take about a
+second.
 
 Results:
 
 ```
 map        size   boxes  starts  crates  min start gap  worst endgame circle           tight  open   time
-ironvale   90x90  228    14      23      14.1 m         (-2, 5) 7 boxes 57% floor      30.9%  28.1%  3.5 s
+ironvale   150x150 366    26      48      20.8 m         (-30, -30) 2 boxes 95% floor   7.6%   87.9%  60.2 s
 ```
 
-The worst endgame circle is the zone closing on (-2, 5), in the Headframe
-compound: plenty of cover, the least room to stand. With the old 7 m circle
-round the final centre itself, the worst was (3, -21), 2 boxes, in the
-ring.
+The worst endgame circle is the zone closing on (-30, -30), the ring's
+north-west corner: two boxes, the least cover. On the 90 m map (228 boxes,
+14 starts, 23 crates) it was 30.9 % tight and 28.1 % open, the worst circle
+(-2, 5) in the Headframe compound. The 150 m map kept every district's
+lanes as they were (moved, not scaled), so the dense districts are as tight
+as before; the tight share fell because the new floor is mostly open snow
+and the lighter pit works, on purpose (room to travel and loot before the
+fights). The open share is high for the same reason: the snow between the
+belts is long sight lines.
 
-The first version (149 boxes, an even scatter round the middle) was 13 %
+On the 90 m map, the first version (149 boxes, an even scatter round the middle) was 13 %
 tight and 74 % open. The ring road and the Checkpoint are more than half the
 floor and stay open on purpose (about 2-8 % tight), so the tight share comes
 from the districts, the Headframe compound and the four ring yards. Ironvale
@@ -122,7 +129,13 @@ duel maps sit at 0-2.9 %).
 ## Ironvale: the mining town
 
 An abandoned mining town under an overcast winter sky: pale blue-white
-snow, a cold low sun. Coordinates as in docs/maps.md, north is -z.
+snow, a cold low sun. 150 m a side (90 m until the first play tests: a
+7-player match was over in about 30 s, everyone met at once). Coordinates
+as in docs/maps.md, north is -z.
+
+Plan, metres from the centre: the Headframe compound to 9, the Ring Road to
+about 31, open snow to 35, the pit works from 35 to about 53, open snow to
+57, the old town from 57 to the walls at 75.
 
 - **Headframe** (|x|, |z| < 9): the mine shaft tower, a 5 x 5 m container
   (1.9 m), in a brick compound with four doors in a pinwheel (none on a
@@ -130,12 +143,33 @@ snow, a cold low sun. Coordinates as in docs/maps.md, north is -z.
   of 3.5 m lanes round the tower. Four crates sit in those lanes: the
   reason to go in early.
 - **Roads**: four clear 9 m lanes (|x| or |z| < 4.5) from the compound to
-  the edge, with cover only along their edges (barriers and parked trucks
-  in the ring, wagons and crates in the Rail Sidings, huts in Workers' Row).
-- **Ring Road** (about 9-27 m out): open ground round four small brick
-  yards, one per quarter (9 x 9 m, two 2.5 m doors in opposite corners, a
-  crate stack inside). The yards are what gives every final circle cover.
-- Districts round the ring. Five are dense, with 2-3 m lanes:
+  the edge, with cover only along their edges (barriers and crates in the
+  ring and the pit works, wagons and crates in the Rail Sidings, huts in
+  Workers' Row).
+- **Ring Road** (about 9-31 m out): open ground round four small brick
+  yards, one per quarter at (±19, ±19) (9 x 9 m, two 2.5 m doors in
+  opposite corners, a crate stack inside), and a crate on each road where
+  it leaves the ring. They are what gives every final circle cover.
+- **The pit works** (35-53 m out): four districts on the diagonals, built
+  the same way as the old town (2-3 m lanes), and lighter outskirts by the
+  roads:
+  - North-west, **Sawmill**: three rows of lumber stacks (crates) along x,
+    2.5 m lanes, each row broken once (staggered), and the saw house.
+  - North-east, **Freight Depot**: tall shipping containers (1.9 m) in
+    three staggered rows.
+  - South-east, **Pithead Baths**: a 14 x 12 m brick building, a door in
+    each side, a partition with a doorway: lockers in the west room, the
+    boiler (a tank) in the east one.
+  - South-west, **Tank Farm**: three lines of lying tanks along z, each
+    broken once, and gas tank clusters.
+  - North road, **Dugouts**: four U-shaped sandbag posts, open to the south.
+  - East road, **Truck Stop**: parked trucks (dumpsters) in two lots.
+  - South road, **Spoil Tips**: loose boulders.
+  - West road, **Powder Store**: two brick magazines with gas tanks round
+    them.
+- **The old town** (57-75 m out, against the walls): the eight districts of
+  the 90 m map, each moved out as one piece (30 m along x and/or z, nothing
+  scaled, so their lanes are the same). Five are dense, with 2-3 m lanes:
   - North, **Rail Sidings**: three lines of container wagons along x; the
     ones nearest the middle line the north road. Crates span the strips
     between the lines every few wagons, and crates between line A and the
@@ -158,32 +192,31 @@ snow, a cold low sun. Coordinates as in docs/maps.md, north is -z.
     street zigzags, barrels in two houses and junk in the yards.
   - West, **Checkpoint**: a barrier chicane across the west road and two
     guard huts. Kept open.
-- **Props** (see ASSETS.md): snowy rocks (`rock`) in the Quarry Camp and
-  the Slag Heaps, dumpsters (`dumpster`) in the Main Street yards and
-  Workers' Row alleys, long containers (`wagon`) for the rail wagons,
-  full-size sandbags (`trench`) for the Quarry Camp and Checkpoint trenches,
-  gas tanks (`gastank`) and lying water tanks (`tank`) in the Fuel Yard and
-  the Engine Shed.
-- **Trees**: 34 snowy pines and dead trees (scale 2-2.2, 4.4-7.9 m tall)
-  outside the walls: 14 along the north wall and 10 along the west wall (the
-  top of the screen, where nothing they cover is floor), and 5 each 15 m out
+- **The Outskirts**: the open snow between the old districts along the
+  walls (north, south, east and west), two lone miner's huts in each, door
+  to the wall and a start inside, two boulders beside each hut.
+- **Props** (see ASSETS.md): snowy rocks (`rock`) in the Quarry Camp, the
+  Slag Heaps, the Spoil Tips and the Outskirts, dumpsters (`dumpster`) in
+  the Main Street yards, Workers' Row alleys and the Truck Stop, long
+  containers (`wagon`) for the rail wagons, full-size sandbags (`trench`)
+  for the Quarry Camp and Checkpoint trenches, gas tanks (`gastank`) and
+  lying water tanks (`tank`) in the Fuel Yard, the Engine Shed, the Tank
+  Farm, the Pithead Baths and the Powder Store.
+- **Trees**: 52 snowy pines and dead trees (scale 2-2.2) outside the walls:
+  20 along the north wall and 16 along the west wall, 5-10 m out (the top
+  of the screen, where nothing they cover is floor), and 8 each 15 m out
   beyond the south and east walls (far enough that their tops clear the
-  arena, check 8). They are baked into one mesh per material like the
-  cover: 3 draw calls, about 62,000 triangles, no shadow pass.
-- **Starts**: 14, one or two per district plus two in ring yards (north-east
-  and south-west), none in the centre. Each is tucked next to cover or
-  inside a building whose door faces a wall.
-- **Final zone**: centres within |x|, |z| <= 24, the whole ring and the
-  inner edge of the districts; no corner pocket.
-- **Crates**: 23. Four in the Headframe lanes (the early cluster), ten in
-  buildings and the cluttered districts, nine in the open on the roads and
-  the ring. Three moved when #32's rule (1.1 m clear of cover) landed: the
-  two Headframe crates at (5, -5) and (-5, 5) half a metre inward, off the
-  crate stacks against the compound wall, to (4.5, -5) and (-4.5, 5); the
-  Quarry Camp crate from (-34.5, -41) to (-35, -41), off a trench.
+  arena, check 8).
+- **Starts**: 26, all in the old town, the pit works and the Outskirts,
+  none on the Ring Road; each tucked in a building or a pocket. The closest
+  two are 20.8 m apart, and `ffaStartSpawns` spreads up to 10 players over
+  them, farthest first.
+- **Final zone**: centres within |x|, |z| <= 30, the whole ring; no district.
+- **Crates**: 48. Four in the Headframe lanes (the early cluster), ten in
+  the old town's buildings and cluttered districts, ten in the pit works'
+  districts and the Powder Store, thirteen in the open on the roads and the
+  ring, eleven in the outskirts by the roads, the Rail Sidings' west end and
+  the snow along the walls.
 - Hardest to satisfy: the tight share against the endgame cover rule. The
   ring must stay open, yet every late circle in it needs two boxes; the four
-  walled yards do both (tight inside, cover for the circles round them).
-  Clutter that only breaks lanes (spans in the strips, carts in a lane)
-  moved the tight share by less than 1 pp each: a spot is tight only when
-  it is closed in on most sides.
+  walled yards and the road crates do both.

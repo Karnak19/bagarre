@@ -1,5 +1,5 @@
 // Battle royale maps: up to 10 players, one life, crates to loot, and a zone
-// that closes on a final circle. They are bigger than the FFA maps (80-100 m
+// that closes on a final circle. They are bigger than the FFA maps (80-160 m
 // a side) and carry what the mode needs on top of a MapDef: start spots
 // (no respawns, so `spawns` are fair starts, not pairs), named districts for
 // callouts and the maps page, and `royale` (crate spots and the rectangle the
@@ -33,7 +33,7 @@ export interface RoyaleMapDef extends MapDef {
    * respawns in this mode, so these are only about fair starts.
    */
   // spawns: readonly Spawn[] (inherited)
-  /** Crate spots (15-25 here) and the final zone's limits. Required on a royale map. */
+  /** Crate spots (15-60 here) and the final zone's limits. Required on a royale map. */
   royale: RoyaleMapData;
 }
 

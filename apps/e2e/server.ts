@@ -56,7 +56,7 @@ export const E2E_RULES = {
   tdm: { countdown: 2, respawnDelay: 0.5, warmup: E2E_WARMUP },
   /**
    * A battle royale starts when its host presses Start (no countdown); its zone waits
-   * 60 s and closes at 90 s (30 s and 4:30 in the game): long enough for a
+   * 60 s and closes at 90 s (45 s and 6:45 in the game): long enough for a
    * spec's steps, short enough to watch it close (POST /zone moves it on).
    * The result stays 10 s, like the duel's.
    */

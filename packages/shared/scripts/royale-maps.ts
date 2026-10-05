@@ -16,12 +16,12 @@ import { ffaSight, OPEN_M2, TIGHT_M2, type FfaSight } from "./ffa/analyze.ts";
 /**
  * The endgame the cover test looks at: the zone this many seconds before it
  * closes. The real zone (pickZone, ZONE) shrinks linearly from a circle round
- * the whole map (r ~65.6 m on a 90 m map) to nothing over ZONE.close -
- * ZONE.wait = 240 s, about 0.27 m/s, while its centre slides from the map's
- * centre to the final one. 30 s before the end it is about 8.2 m across the
- * radius (16 m wide, the issue's "last 10 to 15 m"), and it is the last
- * circle two or three players still fight in: 20 s before, 5.5 m, is a
- * shootout at arm's length.
+ * the whole map (r ~108 m on Ironvale's 150 m) to nothing over ZONE.close -
+ * ZONE.wait = 360 s, about 0.3 m/s, while its centre slides from the map's
+ * centre to the final one. 30 s before the end its radius is about 9 m
+ * (18 m wide, the issue's "last 10 to 15 m" and a little more), and it is
+ * the last circle two or three players still fight in: 20 s before, 6 m, is
+ * a shootout at arm's length.
  */
 export const LATE_SECONDS = 30;
 

@@ -497,7 +497,7 @@ export const ROYALE = {
   /** Two dropped items land at least this far apart, so they never stack on one spot. */
   lootGap: 0.6,
   /** Items on the floor at most; past it the oldest one goes. */
-  maxItems: 60,
+  maxItems: 120,
   /** A dead player's items land this far round where they fell. */
   dropSpread: 1.1,
   /** Walking speed multiplier while a healing item is being used (HEAL_ITEMS). */
@@ -557,9 +557,9 @@ export const NO_HEAL = 255;
  */
 export const ZONE = {
   /** Seconds after the match starts before it shrinks. */
-  wait: 30,
+  wait: 45,
   /** Seconds after the match starts when it is closed (radius 0). */
-  close: 270,
+  close: 405,
   /** Damage per second outside it when it starts shrinking, and once it is closed (linear in between). */
   dpsStart: 2,
   dpsEnd: 14,

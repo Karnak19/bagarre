@@ -94,7 +94,7 @@ test("walking around a map builds its arena with no server connection; 2 is Over
   await expect(a.testId("maps")).toBeVisible();
   await expect.poll(() => walk(a)).toBeNull();
 
-  // The battle royale map builds too (90 m a side, the biggest arena).
+  // The battle royale map builds too (150 m a side, the biggest arena).
   await a.testId(`walk-${ROYALE}`).click();
   await expect(a.page).toHaveURL(new RegExp(`/maps/${ROYALE}(\\?|$)`));
   await expect.poll(() => walk(a).then((w) => w?.mapId)).toBe(ROYALE);

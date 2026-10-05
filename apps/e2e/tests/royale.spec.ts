@@ -47,6 +47,13 @@ test("a short battle royale: the Pistol, a chest, a gun, a switch, a knock-out s
   expect(s0.mapId).toBe(ROYALE_MAP);
   expect(s0.crates.length).toBe(ROYALE_RULES.maps[0].royale!.crates.length);
   expect(s0.zoneEnd).toBeGreaterThan(0);
+  // The 150 m map: everyone starts on one of its start spots, well apart (nobody meets anyone in the first seconds).
+  const map = ROYALE_RULES.maps[0];
+  expect([2 * map.halfX, 2 * map.halfZ]).toEqual([150, 150]);
+  const at = s0.players.map((p) => ({ x: p.x, z: p.z }));
+  for (const p of at) expect(map.spawns.some((s) => Math.hypot(s.x - p.x, s.z - p.z) < 0.5), `(${p.x}, ${p.z}) is a start spot`).toBe(true);
+  for (let i = 0; i < at.length; i++)
+    for (let j = i + 1; j < at.length; j++) expect(Math.hypot(at[i].x - at[j].x, at[i].z - at[j].z), `starts ${i} and ${j} apart`).toBeGreaterThan(30);
 
   // Once it started, nobody can take a seat (the invite says so), but anyone can watch.
   const d = await players.join(invite, "D", ROYALE_MAP);

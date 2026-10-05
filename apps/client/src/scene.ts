@@ -48,7 +48,14 @@ const VIEW_HEIGHT = 22;
 const SHADOW_FOLLOW_HALF = 24;
 /** Distance from the shadow area's centre to the sun, along the sun direction. */
 const SUN_DISTANCE = 45;
-const CAMERA_DISTANCE = 50;
+/**
+ * How far the camera sits from the point it looks at. The view is
+ * orthographic, so this changes nothing on screen; it only has to keep the
+ * whole visible floor in front of the near plane, even at the widest
+ * spectator view of the biggest map (Ironvale, 150 m: floor up to about 97 m
+ * nearer the camera than the point it looks at).
+ */
+const CAMERA_DISTANCE = 120;
 /**
  * Classic isometric view: 45 degrees of yaw, and a pitch of atan(1/sqrt(2)),
  * about 35.26 degrees. Looking along (-1, -1, -1) gives exactly both.
@@ -558,7 +565,7 @@ export class GameScene {
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.scene.background = new THREE.Color(0x1a1d24);
 
-    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 200);
+    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 320);
     this.camera.position.copy(this.offset);
     this.camera.lookAt(0, 0, 0);
 
