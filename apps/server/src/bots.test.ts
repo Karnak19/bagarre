@@ -116,6 +116,47 @@ describe("BotDriver", () => {
     expect(Math.max(...perTick.values())).toBe(1);
   });
 
+  test("decisions stay staggered after a long lobby and into the next match", () => {
+    const calls: number[] = [];
+    const brain: BotBrain = {
+      decide: (v) => {
+        calls.push(v.tick);
+        return ruleBrain.decide(v);
+      },
+    };
+    const r = room(9);
+    const driver = new BotDriver({ brain });
+    /** The busiest tick's decision count over `n` playing ticks, and the first decision's tick. */
+    const play = (n: number) => {
+      calls.length = 0;
+      r.state.phase = "playing";
+      const start = r.state.tick + 1;
+      for (let t = 0; t < n; t++) r.step(driver);
+      const perTick = new Map<number, number>();
+      for (const c of calls) perTick.set(c, (perTick.get(c) ?? 0) + 1);
+      return { busiest: Math.max(...perTick.values()), first: Math.min(...calls), start, ticks: perTick.size };
+    };
+    // The lobby: bots are fed (and their minds made) long before play.
+    r.state.phase = "waiting";
+    for (let t = 0; t < 200; t++) r.step(driver);
+    expect(calls).toHaveLength(0);
+    const first = play(120);
+    expect(first.busiest).toBe(1);
+    expect(first.ticks).toBeGreaterThan(9);
+    expect(first.first).toBe(first.start);
+    // The result, a new match, a warmup, then play again.
+    calls.length = 0;
+    r.state.phase = "ended";
+    for (let t = 0; t < 90; t++) r.step(driver);
+    driver.startMatch(MAP);
+    r.state.phase = "warmup";
+    for (let t = 0; t < 90; t++) r.step(driver);
+    expect(calls).toHaveLength(0);
+    const second = play(120);
+    expect(second.busiest).toBe(1);
+    expect(second.first).toBe(second.start);
+  });
+
   test("an answer that never comes: given up after the timeout, the next decision is the rule brain's; bots keep playing", async () => {
     let asked = 0;
     const brain: BotBrain = {

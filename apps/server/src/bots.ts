@@ -100,6 +100,14 @@ interface BotMind {
   goal: Goal;
   /** The tick of its next decision. */
   nextDecide: number;
+  /**
+   * Its place in the stagger, in ticks (0 to decideEvery - 1): its first
+   * decision of a match comes this long after play starts, so the room's
+   * bots decide on different ticks.
+   */
+  offset: number;
+  /** It was fed a "playing" tick last: false in the lobby, warmup and result. */
+  playing: boolean;
   /** The decision waiting for an answer: its token and the tick it was asked on. */
   pending: { gen: number; since: number } | null;
   /** An answer in, taken (if still valid) on the bot's next feed, with that tick's view. */
@@ -196,6 +204,8 @@ export class BotDriver {
       m.goal = { kind: "roam" };
       m.answer = null;
       m.fallback = false;
+      // Its first decision is staggered from the first tick of play.
+      m.playing = false;
     });
   }
 
@@ -221,10 +231,18 @@ export class BotDriver {
   input(world: BotWorld, id: string): InputMessage | null {
     const me = world.players.get(id);
     if (!me) return null;
-    const m = this.mind(id, world.tick);
+    const m = this.mind(id);
     if (world.phase !== "playing") {
+      m.playing = false;
       m.state.seq++;
       return idleInput(m.state, me);
+    }
+    // Play starts (or the bot joined during it): the schedule starts from
+    // this tick, staggered. Anchoring at the bot's creation instead would let
+    // every offset run out in the lobby, and all bots decide on one tick.
+    if (!m.playing) {
+      m.playing = true;
+      m.nextDecide = world.tick + m.offset;
     }
     const view = buildBotView(world, id);
     if (!view) return null;
@@ -232,12 +250,12 @@ export class BotDriver {
     return controlInput(m.state, m.goal, view, navGrid(world.map), m.rng);
   }
 
-  private mind(id: string, tick: number): BotMind {
+  private mind(id: string): BotMind {
     let m = this.minds.get(id);
     if (!m) {
       // Staggered: bots seen one after the other decide on different ticks.
       const offset = this.seen++ % ticks(BOT_TUNING.decideEvery);
-      m = { state: createBotState(id), rng: createRng(hash(id) ^ this.seed), goal: { kind: "roam" }, nextDecide: tick + 1 + offset, pending: null, answer: null, fallback: false };
+      m = { state: createBotState(id), rng: createRng(hash(id) ^ this.seed), goal: { kind: "roam" }, nextDecide: 0, offset, playing: false, pending: null, answer: null, fallback: false };
       this.minds.set(id, m);
     }
     return m;
