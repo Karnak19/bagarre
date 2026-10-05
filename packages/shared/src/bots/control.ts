@@ -313,7 +313,7 @@ export function botInput(state: BotState, goal: Goal, view: BotView, grid: NavGr
         startedHeal = press(state, "use", tick);
       }
       // Healing slows the walk: stand still unless the zone needs leaving.
-      if (view.zone?.outside) move = escapeDir(grid, view);
+      if (view.self.outsideZone) move = escapeDir(grid, view);
       break;
     case "fight": {
       if (fightTarget) move = fightMove(state, grid, view, fightTarget, rng);

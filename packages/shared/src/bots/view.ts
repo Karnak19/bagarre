@@ -113,8 +113,6 @@ export interface BotZone {
   tx: number;
   tz: number;
   tr: number;
-  /** Outside now (`BotSelf.outsideZone`; about to be is `BotSelf.zoneClosing`). */
-  outside: boolean;
   /** Metres to the edge: positive inside, negative outside. */
   edge: number;
   /** Damage per second outside right now. */
@@ -145,8 +143,6 @@ export interface BotSelf {
   guns: { slot: number; weapon: number; mag: number }[];
   /** A gun slot is free (walking over a gun takes it). */
   freeSlot: boolean;
-  /** Only the Pistol (one half of `weakKit`). */
-  pistolOnly: boolean;
   bandages: number;
   medkits: number;
   shields: number;
@@ -314,7 +310,6 @@ export function buildBotView(world: BotWorld, id: string): BotView | null {
     reloading: sim.reloadTicks > 0,
     guns,
     freeSlot: freeGunSlot(sim.kit) !== -1,
-    pistolOnly: guns.every((g) => g.weapon === PISTOL),
     bandages: sim.kit.bandages,
     medkits: sim.kit.medkits,
     shields: sim.kit.shields,
@@ -346,7 +341,6 @@ export function buildBotView(world: BotWorld, id: string): BotView | null {
       tx: world.zone.x1,
       tz: world.zone.z1,
       tr: world.zone.r1,
-      outside,
       edge: c.r - d,
       dps: zoneDps(world.zone, tick),
       shrinking,
