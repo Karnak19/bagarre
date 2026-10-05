@@ -8,17 +8,7 @@
 // stats, and a room left with only bots closes.
 
 import { MAX_HP, TEAM_BLUE, TEAM_RED } from "@bagarre/shared";
-import { FFA_MAP, expect, kill, place, roomExists, setRespawn, test, type Player } from "./fixtures.ts";
-
-/** Sends a bot request straight through the page's room, as a tampered client would, then lets the server tick past it. */
-async function sendBot(p: Player, type: "bot:add" | "bot:remove") {
-  const tick = (await p.state()).tick;
-  // oxlint-disable-next-line typescript/no-explicit-any
-  await p.page.evaluate((t) => (window as any).__bagarre.net.room.send(t, {}), type);
-  await expect.poll(async () => (await p.state()).tick, { message: `${p.name}: the server ticked past the bot request` }).toBeGreaterThan(tick + 10);
-}
-
-const bots = async (p: Player) => (await p.state()).players.filter((x) => x.bot);
+import { FFA_MAP, bots, expect, kill, place, roomExists, sendBot, setRespawn, test, type Player } from "./fixtures.ts";
 
 /** Someone among `ids` was hit: below full HP, dead, or died once already. */
 async function hurt(p: Player, ids: string[]): Promise<boolean> {

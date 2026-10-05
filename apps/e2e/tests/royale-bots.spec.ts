@@ -6,19 +6,9 @@
 // is the same): they move, loot, fight, and finish in the placement table.
 
 import { MAX_HP, NO_GUN, PISTOL, ROYALE_MAX_PLAYERS } from "@bagarre/shared";
-import { ROYALE_MAP, expect, kill, listedRooms, place, pressStart, roomExists, setLoot, test, type Player, type Players } from "./fixtures.ts";
+import { ROYALE_MAP, bots, expect, kill, listedRooms, place, pressStart, roomExists, sendBot, setLoot, test, type Player, type Players } from "./fixtures.ts";
 
 const RIFLE = 0;
-
-/** Sends a bot request straight through the page's room, as a tampered client would, then lets the server tick past it. */
-async function sendBot(p: Player, type: "bot:add" | "bot:remove") {
-  const tick = (await p.state()).tick;
-  // oxlint-disable-next-line typescript/no-explicit-any
-  await p.page.evaluate((t) => (window as any).__bagarre.net.room.send(t, {}), type);
-  await expect.poll(async () => (await p.state()).tick, { message: `${p.name}: the server ticked past the bot request` }).toBeGreaterThan(tick + 10);
-}
-
-const bots = async (p: Player) => (await p.state()).players.filter((x) => x.bot);
 
 test("battle royale: only the host adds and removes bots; they get bot names and a BOT tag, never the host's seat", async ({ players }) => {
   const { host: a, invite } = await players.host("royale", "A");

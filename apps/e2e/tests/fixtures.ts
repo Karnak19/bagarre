@@ -611,6 +611,20 @@ export async function pressStart(host: Player, n: number) {
   await start.click();
 }
 
+/**
+ * Sends a bot request ("bot:add" / "bot:remove") straight through the page's
+ * room, as a tampered client would, then lets the server tick past it.
+ */
+export async function sendBot(p: Player, type: "bot:add" | "bot:remove") {
+  const tick = (await p.state()).tick;
+  // oxlint-disable-next-line typescript/no-explicit-any
+  await p.page.evaluate((t) => (window as any).__bagarre.net.room.send(t, {}), type);
+  await expect.poll(async () => (await p.state()).tick, { message: `${p.name}: the server ticked past the bot request` }).toBeGreaterThan(tick + 10);
+}
+
+/** The bot seats in `p`'s latest state. */
+export const bots = async (p: Player) => (await p.state()).players.filter((x) => x.bot);
+
 export class Players {
   private all: Player[] = [];
   private browsers: Browser[] = [];
