@@ -140,8 +140,10 @@ test("battle royale: the bots play: they move, open chests and pick up the loot,
   const armed = async () => (await bots(a)).filter((b) => b.guns.some((g) => g !== NO_GUN && g !== PISTOL)).length;
   await expect.poll(armed, { message: "a bot picked up a rifle", timeout: 15_000 }).toBeGreaterThanOrEqual(1);
 
-  // They fight: two bots side by side shoot each other.
-  const [b1, b2] = (await bots(a)).filter((b) => b.alive);
+  // They fight: two bots side by side shoot each other (two still in: the loot step may have had one knocked out).
+  const living = async () => (await bots(a)).filter((b) => b.alive);
+  await expect.poll(async () => (await living()).length, { message: "two bots are still in" }).toBeGreaterThanOrEqual(2);
+  const [b1, b2] = await living();
   await place(code, b1.id, b2.x + 1.5, b2.z);
   await expect.poll(async () => (await bots(a)).filter((b) => b.hp < MAX_HP || !b.alive).length, { message: "a bot was hit", timeout: 15_000 }).toBeGreaterThanOrEqual(1);
 
