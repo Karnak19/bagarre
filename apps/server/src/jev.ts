@@ -1,10 +1,10 @@
 // The Jev brain (#48): a bot's goal picked by Jev (typesafe/jev-1.13 on
 // OpenRouter) instead of the rule table. Jev is a "decisions" model, not a
 // chat model: it is served on POST /api/alpha/decisions only. A request
-// carries a `state` (a JSON object here: it worked best in the spike, see
-// jev-spike.ts) and one `choice` question whose allowed answers are the keys
-// of `criteria`, so Jev can only answer one of ours ("fight 2", "loot 1",
-// "heal", ...). The answer comes back with a confidence.
+// carries a `state` (a JSON object here: it worked best in the spike, whose
+// results are in issue #48) and one `choice` question whose allowed answers
+// are the keys of `criteria`, so Jev can only answer one of ours ("fight 2",
+// "loot 1", "heal", ...). The answer comes back with a confidence.
 //
 // The state is built from BotView fields one by one: numbers, flags, gun and
 // item keys, and targets by index (enemy 1, loot 2). Never a player name or
