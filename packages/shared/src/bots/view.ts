@@ -113,9 +113,8 @@ export interface BotZone {
   tx: number;
   tz: number;
   tr: number;
-  /** Outside now (`BotSelf.outsideZone`), and about to be (`soon`: the same as `BotSelf.zoneClosing`). */
+  /** Outside now (`BotSelf.outsideZone`; about to be is `BotSelf.zoneClosing`). */
   outside: boolean;
-  soon: boolean;
   /** Metres to the edge: positive inside, negative outside. */
   edge: number;
   /** Damage per second outside right now. */
@@ -348,7 +347,6 @@ export function buildBotView(world: BotWorld, id: string): BotView | null {
       tz: world.zone.z1,
       tr: world.zone.r1,
       outside,
-      soon: closing,
       edge: c.r - d,
       dps: zoneDps(world.zone, tick),
       shrinking,
