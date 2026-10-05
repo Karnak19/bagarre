@@ -970,6 +970,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
         internal.gone = true;
         internal.queue.length = 0;
       }
+      // A bot's memory goes now, and any decision it has out (purgeGone frees the seat).
+      this.bots.forget(id);
       if (this.state.phase === "playing" && p.alive) {
         this.knockOut(p);
         // Now, not at the next tick: the room may be empty (and gone) by then.
