@@ -14,9 +14,11 @@
 // in_range) go into the state as they are.
 //
 // `decide` rejects on any failure (timeout, HTTP error, bad JSON, an answer
-// not among ours, low confidence) and, without calling the network, when a
-// bot asks too often or the day's budget is spent. The caller then falls back
-// to the rule brain. The API key never leaves the Authorization header: not in
+// not among ours, low confidence) and, without calling the network, when the
+// day's budget is spent. The caller then falls back to the rule brain. There
+// is no per-bot rate limit here: the driver (bots.ts) already has each bot
+// decide about once a second (BOT_TUNING.decideEvery) and caps the decisions
+// in flight per room. The API key never leaves the Authorization header: not in
 // an error, not in a log.
 
 import { HEAL_ITEMS, ITEM_GUN, ITEM_HEAL, ITEM_KINDS, ITEM_PERK, NO_HEAL, PERKS, WEAPONS, type BotBrain, type BotView, type Goal } from "@bagarre/shared";
@@ -30,8 +32,6 @@ export const JEV_DEFAULTS = {
   timeoutMs: 1000,
   /** Below this, the answer is a guess: the rule brain decides instead. */
   minConfidence: 0.3,
-  /** Decisions per bot per second (bots decide about once a second; a little slack). */
-  perBotPerSecond: 2,
   /** Dollars per UTC day, all bots together (JEV_DAILY_BUDGET_USD). */
   dailyBudgetUsd: 2,
   /** Charged up front for each call, corrected by the response's usage.cost. */
@@ -46,13 +46,13 @@ export interface JevOptions {
   fetch?: typeof fetch;
   timeoutMs?: number;
   minConfidence?: number;
-  budget?: { perBotPerSecond?: number; dailyBudgetUsd?: number; costPerCallUsd?: number };
+  budget?: { dailyBudgetUsd?: number; costPerCallUsd?: number };
   /** Milliseconds since the epoch (Date.now); the budget day is the UTC day. */
   now?: () => number;
 }
 
-/** Why a decision was refused. "rate" and "budget" never reached the network. */
-export type JevFailure = "rate" | "budget" | "timeout" | "network" | "http" | "bad_json" | "bad_answer" | "low_confidence";
+/** Why a decision was refused. "budget" never reached the network. */
+export type JevFailure = "budget" | "timeout" | "network" | "http" | "bad_json" | "bad_answer" | "low_confidence";
 
 export class JevError extends Error {
   constructor(
@@ -69,7 +69,7 @@ export interface JevStats {
   calls: number;
   /** Requests that gave a goal. */
   answered: number;
-  /** Refusals per reason (rate and budget ones made no call). */
+  /** Refusals per reason (budget ones made no call). */
   failed: Record<JevFailure, number>;
   /** Spent in the current UTC day, and since start. */
   spentTodayUsd: number;
@@ -170,22 +170,19 @@ export function createJevBrain(opts: JevOptions): JevBrain {
   const now = opts.now ?? Date.now;
   const timeoutMs = opts.timeoutMs ?? JEV_DEFAULTS.timeoutMs;
   const minConfidence = opts.minConfidence ?? JEV_DEFAULTS.minConfidence;
-  const perBotPerSecond = opts.budget?.perBotPerSecond ?? JEV_DEFAULTS.perBotPerSecond;
   const dailyBudgetUsd = opts.budget?.dailyBudgetUsd ?? JEV_DEFAULTS.dailyBudgetUsd;
   const costPerCallUsd = opts.budget?.costPerCallUsd ?? JEV_DEFAULTS.costPerCallUsd;
 
   const stats: JevStats = {
     calls: 0,
     answered: 0,
-    failed: { rate: 0, budget: 0, timeout: 0, network: 0, http: 0, bad_json: 0, bad_answer: 0, low_confidence: 0 },
+    failed: { budget: 0, timeout: 0, network: 0, http: 0, bad_json: 0, bad_answer: 0, low_confidence: 0 },
     spentTodayUsd: 0,
     spentTotalUsd: 0,
     dailyBudgetUsd,
     latencyMs: { last: 0, mean: 0 },
   };
   let day = Math.floor(now() / DAY_MS);
-  /** Per bot: the start of its current one-second window and the calls in it. */
-  const windows = new Map<string, { start: number; count: number }>();
 
   const spend = (usd: number) => {
     stats.spentTodayUsd += usd;
@@ -194,19 +191,6 @@ export function createJevBrain(opts: JevOptions): JevBrain {
   const fail = (reason: JevFailure, message: string): never => {
     stats.failed[reason]++;
     throw new JevError(reason, message);
-  };
-
-  /** True when bot `id` may ask now (and counts it). Stale windows are dropped so the map stays small. */
-  const takeRate = (id: string, t: number): boolean => {
-    if (windows.size > 64) for (const [k, w] of windows) if (t - w.start >= 1000) windows.delete(k);
-    const w = windows.get(id);
-    if (!w || t - w.start >= 1000) {
-      windows.set(id, { start: t, count: 1 });
-      return true;
-    }
-    if (w.count >= perBotPerSecond) return false;
-    w.count++;
-    return true;
   };
 
   async function call(body: object): Promise<DecisionsResponse> {
@@ -255,7 +239,6 @@ export function createJevBrain(opts: JevOptions): JevBrain {
       stats.spentTodayUsd = 0;
     }
     if (stats.spentTodayUsd + costPerCallUsd > dailyBudgetUsd) fail("budget", "daily budget spent");
-    if (!takeRate(view.id, t)) fail("rate", "too many decisions for this bot");
 
     const { body, answers } = jevRequest(view);
     stats.calls++;

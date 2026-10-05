@@ -144,7 +144,7 @@ describe("createJevBrain: the budget", () => {
   test("the daily budget spent: rejected with no network call, back the next UTC day", async () => {
     let t = Date.UTC(2026, 9, 2, 12);
     const f = fakeFetch(json(answer("roam", 0.9, 0.01)));
-    const brain = createJevBrain({ apiKey: "k", fetch: f.fn, now: () => t, budget: { dailyBudgetUsd: 0.01, perBotPerSecond: 100 } });
+    const brain = createJevBrain({ apiKey: "k", fetch: f.fn, now: () => t, budget: { dailyBudgetUsd: 0.01 } });
     await brain.decide(sampleView());
     expect(await failure(brain.decide(sampleView()))).toBe("budget");
     expect(f.calls.length).toBe(1);
@@ -152,22 +152,6 @@ describe("createJevBrain: the budget", () => {
     t += 86_400_000;
     expect(await brain.decide(sampleView())).toEqual({ kind: "roam" });
     expect(f.calls.length).toBe(2);
-  });
-
-  test("too many decisions for one bot in a second: rejected with no call; another bot still asks", async () => {
-    let t = 1_000_000;
-    const f = fakeFetch(json(answer("roam")));
-    const brain = createJevBrain({ apiKey: "k", fetch: f.fn, now: () => t, budget: { perBotPerSecond: 2 } });
-    const view = sampleView();
-    await brain.decide(view);
-    await brain.decide(view);
-    expect(await failure(brain.decide(view))).toBe("rate");
-    expect(f.calls.length).toBe(2);
-    await brain.decide({ ...view, id: "other" });
-    expect(f.calls.length).toBe(3);
-    t += 1000;
-    await brain.decide(view);
-    expect(f.calls.length).toBe(4);
   });
 });
 
