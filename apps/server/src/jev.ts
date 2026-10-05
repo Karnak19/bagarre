@@ -97,8 +97,6 @@ const HELP = {
   roam: "Walk toward the zone centre. Pick when nothing else applies.",
 } as const;
 
-const round = (n: number, step = 1): number => Math.round(n / step) * step;
-
 /** "chest", or the floor item's kind and key ("gun rifle", "heal medkit", "perk ..."). */
 function itemLabel(kind: number, item: number): string {
   const k = ITEM_KINDS[kind] ?? "item";
@@ -134,10 +132,10 @@ export function jevRequest(view: BotView): { body: object; answers: Map<string, 
     weak_kit: self.weakKit,
     outside_zone: self.outsideZone,
     zone_closing: self.zoneClosing,
-    zone_edge_m: zone ? round(Math.abs(zone.edge)) : null,
-    zone_reaches_bot_in_s: zone?.edgeIn != null ? round(zone.edgeIn) : null,
-    enemies: enemies.map((e, i) => ({ index: i + 1, dist_m: round(e.dist), hp: e.hp, gun: WEAPONS[e.weapon]?.key ?? "?", in_sight: true, in_range: e.inRange, shielded: e.shielded })),
-    loot: loot.map((l, i) => ({ index: i + 1, kind: l.label, dist_m: round(l.dist), ready: l.ready })),
+    zone_edge_m: zone ? Math.round(Math.abs(zone.edge)) : null,
+    zone_reaches_bot_in_s: zone?.edgeIn != null ? Math.round(zone.edgeIn) : null,
+    enemies: enemies.map((e, i) => ({ index: i + 1, dist_m: Math.round(e.dist), hp: e.hp, gun: WEAPONS[e.weapon]?.key ?? "?", in_sight: true, in_range: e.inRange, shielded: e.shielded })),
+    loot: loot.map((l, i) => ({ index: i + 1, kind: l.label, dist_m: Math.round(l.dist), ready: l.ready })),
   };
 
   const criteria: Record<string, string> = {};
