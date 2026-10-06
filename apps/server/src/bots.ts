@@ -41,6 +41,7 @@ import {
   type MapDef,
   type ZoneView,
 } from "@bagarre/shared";
+import { jevBrainFromEnv } from "./jev.ts";
 
 /**
  * Bot ids start with this. Colyseus session ids are letters, digits, `_` and
@@ -70,12 +71,19 @@ export const BOT_MAX_IN_FLIGHT = 4;
 /** The seed of a room's bots when none is given: the same bots every run. */
 export const BOT_ROOM_SEED = 48;
 
+let chosen: BotBrain | undefined;
+
 /**
- * The brain bots decide with. The one place to pick it: the rule brain for
- * now; the Jev brain (jev.ts) goes here.
+ * The brain bots decide with, the one place to pick it: the Jev brain
+ * (jev.ts) when OPENROUTER_API_KEY is set, the rule brain otherwise. One Jev
+ * brain for the whole server, so its daily budget covers every room.
  */
 export function chooseBrain(): BotBrain {
-  return ruleBrain;
+  if (chosen) return chosen;
+  const jev = jevBrainFromEnv();
+  if (!jev) console.warn("[bots] no OPENROUTER_API_KEY: bots use the rule brain");
+  chosen = jev ?? ruleBrain;
+  return chosen;
 }
 
 /**

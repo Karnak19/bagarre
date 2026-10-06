@@ -31,6 +31,8 @@ services:
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       MAIL_FROM: ${MAIL_FROM:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      JEV_DAILY_BUDGET_USD: ${JEV_DAILY_BUDGET_USD:-}
     depends_on:
       db:
         condition: service_healthy
