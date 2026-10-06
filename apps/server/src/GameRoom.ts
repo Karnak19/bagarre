@@ -45,8 +45,8 @@
 // removed by the host (MSG_BOT_ADD / MSG_BOT_REMOVE, `acceptsBot`). Its id
 // starts with BOT_ID_PREFIX, its identity is `{ kind: "bot" }`, it is always
 // connected and never in `joinOrder` (so never the host), and each tick
-// `feedBots` queues its input from `botInput`. Removing one is a leave
-// (`freeSeat`). Bots count toward the start minimum, not toward the stats
+// `feedBots` queues its input from the room's BotDriver (`bots`), which
+// plays it on the shared bot brain. Removing one is a leave (`freeSeat`). Bots count toward the start minimum, not toward the stats
 // (`royaleRecorded`), and a room left with only bots closes.
 
 import {
@@ -169,10 +169,11 @@ import {
   type RoomMeta,
   type Spawn,
   type Standing,
+  type BotWorld,
   type Vec2,
 } from "@bagarre/shared";
 import { guestName, recordMatch, resolveIdentity, type Identity } from "./accounts.ts";
-import { BOT_ID_PREFIX, botInput, botName } from "./bots.ts";
+import { BOT_ID_PREFIX, BotDriver, botName } from "./bots.ts";
 import { Floor } from "./floor.ts";
 import { matchResults, type SeatOutcome } from "./stats.ts";
 import { Bullet, GameState, Grenade, KillEvent, Player, Smoke } from "./state.ts";
@@ -434,6 +435,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   private royaleHumanStarters = 0;
   /** Bots added so far: the next bot's id is `bot:<n + 1>`. Never reused, so a removed bot's id never comes back. */
   private botsAdded = 0;
+  /** The bots' memory and brain (bots.ts): one input per bot per tick (feedBots). */
+  private bots = new BotDriver();
   /** The room is closing because only bots are left (closeIfOnlyBots). */
   private closing = false;
   /** Battle royale: someone was knocked out this tick; see who is left at its end (checkLastStanding). */
@@ -575,6 +578,13 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   private humanSeats(): number {
     let n = 0;
     this.internals.forEach((i) => (n += i.identity.kind !== "bot" && !i.gone ? 1 : 0));
+    return n;
+  }
+
+  /** Bots seated, those removed mid-match (`gone`, kept for their place) included. */
+  private botSeats(): number {
+    let n = 0;
+    this.internals.forEach((i) => (n += i.identity.kind === "bot" ? 1 : 0));
     return n;
   }
 
@@ -792,20 +802,33 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   }
 
   /**
-   * Bots: one input each per tick, from their brain (`botInput`, bots.ts),
+   * Bots: one input each per tick, from the room's BotDriver (bots.ts),
    * queued like a client's so it goes through the same applyInput. Not for a
-   * bot that left (`gone`) or one still with an input queued.
+   * bot that left (`gone`) or one still with an input queued. The world the
+   * bots read is built once for all of them; the seq is the server's
+   * (`botSeq`, bullet ids are made from it).
    */
   private feedBots() {
-    // What a human sees: everyone HIT_REWIND_TICKS back, the poses hits are judged against.
-    const seen = this.historyAt(this.state.tick - HIT_REWIND_TICKS);
-    const seenPose = (id: string) => seen?.poses.get(id);
+    let world: BotWorld | null = null;
     this.internals.forEach((internal, id) => {
       if (internal.identity.kind !== "bot" || internal.gone || internal.queue.length > 0) return;
-      const player = this.state.players.get(id);
-      if (!player?.connected) return;
+      if (!this.state.players.get(id)?.connected) return;
+      world ??= {
+        map: this.map,
+        tick: this.state.tick,
+        phase: this.state.phase,
+        zone: this.state.zone,
+        players: this.state.players,
+        // What a human sees: everyone HIT_REWIND_TICKS back, the poses hits are judged against.
+        rewound: this.historyAt(this.state.tick - HIT_REWIND_TICKS)?.poses ?? null,
+        items: this.state.items,
+        crates: this.state.crates,
+      };
+      const input = this.bots.input(world, id);
+      if (!input) return;
       internal.botSeq++;
-      internal.queue.push(botInput({ id, player, state: this.state, map: this.map, seq: internal.botSeq, seenPose }));
+      input.seq = internal.botSeq;
+      internal.queue.push(input);
     });
   }
 
@@ -947,6 +970,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
         internal.gone = true;
         internal.queue.length = 0;
       }
+      // A bot's memory goes now, and any decision it has out (purgeGone frees the seat).
+      this.bots.forget(id);
       if (this.state.phase === "playing" && p.alive) {
         this.knockOut(p);
         // Now, not at the next tick: the room may be empty (and gone) by then.
@@ -958,6 +983,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     this.state.players.delete(id);
     this.updateSeatLock();
     this.internals.delete(id);
+    this.bots.forget(id);
     this.joinOrder = this.joinOrder.filter((s) => s !== id);
 
     if (this.rules.mode === "duel") {
@@ -1149,11 +1175,13 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
         p.aim = this.hubAim(spawn);
       });
     }
-    // Battle royale: a closed chest on every crate spot, no zone until play starts.
+    // Battle royale: a closed chest on every crate spot, no zone until play
+    // starts. The bots start afresh, their map's grid built now (not in a tick).
     if (this.rules.royale) {
       this.floor.reset(this.map.royale?.crates ?? []);
       this.state.zone.end = 0;
       this.knockedOut = false;
+      if (this.botSeats() > 0) this.bots.startMatch(this.map);
     }
     // Not started yet: the clock, the time limit and the tiebreaks begin
     // with `playing` (beginPlay).
@@ -1194,6 +1222,8 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       const t = this.state.startTick;
       const z = pickZone(this.map, this.matchId, t + ticks(royale.zoneWait), t + ticks(Math.max(royale.zoneWait, royale.zoneClose)));
       Object.assign(this.state.zone, z);
+      // The bots' way out of this zone (escape_zone), built now rather than in a tick.
+      if (this.botSeats() > 0) this.bots.zoneSet(this.map, this.state.zone);
     }
     this.setPhase("playing");
   }
@@ -1820,6 +1850,9 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
       this.floor.clear();
       this.state.zone.end = 0;
       this.knockedOut = false;
+      // Where this match's bot decisions came from (the Jev brain, or the rule brain), counted again from 0.
+      const counts = this.bots.takeCounts();
+      if (this.botSeats() > 0) console.log("[room] bots: decisions", counts);
     }
     this.recordStats();
   }
@@ -1902,6 +1935,7 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
     for (const id of gone) {
       this.state.players.delete(id);
       this.internals.delete(id);
+      this.bots.forget(id);
       this.joinOrder = this.joinOrder.filter((s) => s !== id);
     }
     this.updateSeatLock();
