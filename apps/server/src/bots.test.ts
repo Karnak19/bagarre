@@ -380,7 +380,7 @@ describe("BotDriver: no zone, no loot (a duel, an FFA, a team deathmatch)", () =
     const map = mapById("crossroads");
     const spawns = map.spawns.slice(0, 2);
     const r = loadoutRoom(spawns);
-    const driver = new BotDriver();
+    const driver = new BotDriver({ brain: ruleBrain });
     let fired = 0;
     for (let t = 0; t < 600; t++) fired += r.step(driver).filter((i) => i.fire).length;
     // Roaming brought them into sight of each other, and they fired.
@@ -394,7 +394,7 @@ describe("BotDriver: no zone, no loot (a duel, an FFA, a team deathmatch)", () =
     const map = mapById("crossroads");
     const spawns = map.spawns.slice(0, 2).map((s) => ({ ...s, team: TEAM_RED }));
     const r = loadoutRoom(spawns);
-    const driver = new BotDriver();
+    const driver = new BotDriver({ brain: ruleBrain });
     let fired = 0;
     for (let t = 0; t < 300; t++) fired += r.step(driver).filter((i) => i.fire).length;
     expect(fired).toBe(0);
@@ -407,7 +407,7 @@ describe("BotDriver: no zone, no loot (a duel, an FFA, a team deathmatch)", () =
       { x: 1.5, z: 0, team: TEAM_RED },
       { x: 0, z: 5, team: TEAM_BLUE },
     ]);
-    const driver = new BotDriver();
+    const driver = new BotDriver({ brain: ruleBrain });
     let aimedAtFoe = 0;
     for (let t = 0; t < 60; t++) {
       const [mine] = r.step(driver);
