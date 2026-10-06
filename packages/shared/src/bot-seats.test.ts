@@ -1,12 +1,12 @@
-// Tests of the battle royale's bot seats (modes.ts): which add / remove
+// Tests of the bot seats (modes.ts), in every mode: which add / remove
 // requests are honoured (`acceptsBot`) and which matches with bots go into the
-// stats (`royaleRecorded`).
+// stats (`royaleRecorded`, `matchRecorded`).
 // Run with `bun run test` (or `bun test src/bot-seats.test.ts` in packages/shared).
 
 import { describe, expect, test } from "bun:test";
-import { ROYALE_MAX_PLAYERS, ROYALE_MIN_RECORDED } from "./constants.ts";
+import { FFA_MAX_PLAYERS, MAX_PLAYERS, ROYALE_MAX_PLAYERS, ROYALE_MIN_RECORDED, TEAM_MAX_PLAYERS } from "./constants.ts";
 import { parseBotRequest } from "./messages.ts";
-import { DUEL_RULES, FFA_RULES, ROYALE_RULES, TEAM_RULES, acceptsBot, royaleRecorded } from "./modes.ts";
+import { DUEL_RULES, FFA_RULES, ROYALE_RULES, TEAM_RULES, acceptsBot, matchRecorded, royaleRecorded } from "./modes.ts";
 
 describe("acceptsBot", () => {
   const add = { add: true, phase: "waiting", sender: "a", host: "a", seats: 1 };
@@ -31,11 +31,25 @@ describe("acceptsBot", () => {
       expect(acceptsBot(ROYALE_RULES, { ...remove, phase })).toBe(true);
     }
   });
-  test("no bots outside the battle royale", () => {
-    for (const rules of [DUEL_RULES, FFA_RULES, TEAM_RULES]) {
-      expect(acceptsBot(rules, add)).toBe(false);
-      expect(acceptsBot(rules, remove)).toBe(false);
+  test("every mode takes bots, up to its own seat cap: a duel's second seat, an FFA's, a team deathmatch's", () => {
+    for (const [rules, max] of [
+      [DUEL_RULES, MAX_PLAYERS],
+      [FFA_RULES, FFA_MAX_PLAYERS],
+      [TEAM_RULES, TEAM_MAX_PLAYERS],
+    ] as const) {
+      expect(acceptsBot(rules, { ...add, seats: max - 1 })).toBe(true);
+      expect(acceptsBot(rules, { ...add, seats: max })).toBe(false);
+      expect(acceptsBot(rules, { ...add, sender: "b" })).toBe(false);
+      expect(acceptsBot(rules, { ...remove, sender: "b" })).toBe(false);
+      for (const phase of ["warmup", "playing", "ended"]) {
+        expect(acceptsBot(rules, { ...add, phase })).toBe(false);
+        expect(acceptsBot(rules, { ...remove, phase })).toBe(true);
+      }
     }
+    // A duel: the host alone in it adds one bot, the second never.
+    expect(MAX_PLAYERS).toBe(2);
+    expect(acceptsBot(DUEL_RULES, { ...add, seats: 1 })).toBe(true);
+    expect(acceptsBot(DUEL_RULES, { ...add, seats: 2 })).toBe(false);
   });
 });
 
@@ -47,6 +61,23 @@ describe("royaleRecorded", () => {
   test("too few humans: not recorded, bots don't make up the number", () => {
     expect(royaleRecorded(ROYALE_MIN_RECORDED - 1)).toBe(false);
     expect(royaleRecorded(1)).toBe(false);
+  });
+});
+
+describe("matchRecorded", () => {
+  test("a duel with a bot in it: never recorded; without one, as before", () => {
+    expect(matchRecorded(DUEL_RULES, { humanStarters: 1, bots: 1 })).toBe(false);
+    expect(matchRecorded(DUEL_RULES, { humanStarters: 2, bots: 0 })).toBe(true);
+  });
+  test("an FFA or a team deathmatch: recorded, bots or not (only the humans' rows are written)", () => {
+    for (const rules of [FFA_RULES, TEAM_RULES]) {
+      expect(matchRecorded(rules, { humanStarters: 1, bots: 5 })).toBe(true);
+      expect(matchRecorded(rules, { humanStarters: 3, bots: 0 })).toBe(true);
+    }
+  });
+  test("a battle royale: royaleRecorded on the humans who started it, whatever the bots", () => {
+    expect(matchRecorded(ROYALE_RULES, { humanStarters: ROYALE_MIN_RECORDED, bots: 7 })).toBe(true);
+    expect(matchRecorded(ROYALE_RULES, { humanStarters: ROYALE_MIN_RECORDED - 1, bots: 0 })).toBe(false);
   });
 });
 

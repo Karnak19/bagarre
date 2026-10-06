@@ -21,19 +21,21 @@ import { TextInput } from "@astryxdesign/core/TextInput";
 import {
   FFA_MAX_PLAYERS,
   FFA_MIN_PLAYERS,
+  MAX_PLAYERS,
   NO_TEAM,
   RECONNECT_GRACE_S,
   ROYALE_MAX_PLAYERS,
   ROYALE_MIN_PLAYERS,
   ROYALE_MIN_RECORDED,
   TEAM_BLUE,
+  TEAM_MAX_PLAYERS,
   TEAM_MIN_PER_TEAM,
   TEAM_NAMES,
   TEAM_RED,
   TEAM_SIZE,
   TICK_RATE,
+  matchRecorded,
   rulesOf,
-  royaleRecorded,
   type PlayerView,
   type TiebreakReason,
 } from "@bagarre/shared";
@@ -396,6 +398,56 @@ function InviteLink() {
   );
 }
 
+/**
+ * Add bot / Remove bot, in every mode's lobby, for the room's host alone (the
+ * first person in; the server ignores anyone else's request, acceptsBot). A
+ * bot takes an open seat up to `max`, the mode's seats: in a duel, one bot is
+ * the opponent and the match starts at once.
+ */
+function BotButtons({ max }: { max: number }) {
+  countRender("card.botButtons");
+  const { app, view, gesture } = useEngine();
+  const s = useSelector(
+    view,
+    (v) => {
+      let bots = 0;
+      v?.snapshot?.players.forEach((p) => (bots += p.bot ? 1 : 0));
+      const host = v?.snapshot?.host ?? "";
+      return { host: !!host && host === v?.you, players: v?.snapshot?.players.size ?? 0, bots };
+    },
+    shallowEqual,
+  );
+  if (!s.host) return null;
+  const full = s.players >= max;
+  return (
+    <HStack gap={2} xstyle={styles.botButtons}>
+      <Button
+        label="Add bot"
+        variant="secondary"
+        isDisabled={full}
+        tooltip={full ? "Every seat is taken" : "A bot takes an open seat"}
+        data-testid="add-bot"
+        onClick={() => {
+          gesture();
+          app.addBot();
+        }}
+      />
+      <Button
+        label="Remove bot"
+        variant="secondary"
+        isDisabled={s.bots === 0}
+        tooltip={s.bots === 0 ? "No bot to remove" : "Removes the last bot added"}
+        data-testid="remove-bot"
+        data-bots={s.bots}
+        onClick={() => {
+          gesture();
+          app.removeBot();
+        }}
+      />
+    </HStack>
+  );
+}
+
 function WaitingCard() {
   const { view } = useEngine();
   const mode = useSelector(view, (v) => v?.snapshot?.mode ?? "duel");
@@ -426,6 +478,7 @@ function DuelWaitingCard() {
         Players
       </Text>
       <Seats />
+      <BotButtons max={MAX_PLAYERS} />
       <Text as="p" xstyle={shared.eyebrow}>
         Invite link
       </Text>
@@ -489,6 +542,7 @@ function FfaWaitingCard() {
         Players
       </Text>
       <Seats total={FFA_MAX_PLAYERS} showAway />
+      <BotButtons max={FFA_MAX_PLAYERS} />
       <Text as="p" xstyle={shared.eyebrow}>
         Invite link
       </Text>
@@ -523,13 +577,11 @@ function RoyaleWaitingCard() {
     (v) => {
       const away: string[] = [];
       let connected = 0;
-      let bots = 0;
       v?.snapshot?.players.forEach((p) => {
         if (p.connected) connected++;
         else away.push(p.name);
-        if (p.bot) bots++;
       });
-      return { players: v?.snapshot?.players.size ?? 0, connected, away, bots };
+      return { players: v?.snapshot?.players.size ?? 0, connected, away };
     },
     jsonEqual,
   );
@@ -623,31 +675,7 @@ function RoyaleWaitingCard() {
             </Text>
           )}
           {/* Bots fill the seats nobody takes: the host's alone (the server ignores anyone else's). */}
-          <HStack gap={2} xstyle={styles.botButtons}>
-            <Button
-              label="Add bot"
-              variant="secondary"
-              isDisabled={players >= ROYALE_MAX_PLAYERS}
-              tooltip={players >= ROYALE_MAX_PLAYERS ? "Every seat is taken" : "A bot takes an open seat"}
-              data-testid="royale-add-bot"
-              onClick={() => {
-                gesture();
-                app.addBot();
-              }}
-            />
-            <Button
-              label="Remove bot"
-              variant="secondary"
-              isDisabled={seats.bots === 0}
-              tooltip={seats.bots === 0 ? "No bot to remove" : "Removes the last bot added"}
-              data-testid="royale-remove-bot"
-              data-bots={seats.bots}
-              onClick={() => {
-                gesture();
-                app.removeBot();
-              }}
-            />
-          </HStack>
+          <BotButtons max={ROYALE_MAX_PLAYERS} />
         </VStack>
       )}
       <Text color="secondary" xstyle={styles.sub}>
@@ -742,6 +770,7 @@ function TeamWaitingCard() {
           </VStack>
         ))}
       </VStack>
+      <BotButtons max={TEAM_MAX_PLAYERS} />
       {t.you !== NO_TEAM && (
         <HStack gap={2} align="center" xstyle={styles.switch}>
           <Button
@@ -857,11 +886,12 @@ function ResultCard() {
   const royale = model.mode === "royale";
   const ffa = model.mode === "ffa" || royale;
   const teams = model.teams;
-  // Places recorded: a royale started with too few people isn't counted (bots don't count toward it).
+  // Recorded: a royale started with too few people isn't (bots don't count toward it), nor a duel against a bot.
   const counted = useSelector(view, (v) => {
     let humans = 0;
-    v?.snapshot?.players.forEach((p) => (humans += p.bot ? 0 : 1));
-    return royaleRecorded(humans);
+    let bots = 0;
+    v?.snapshot?.players.forEach((p) => (p.bot ? bots++ : humans++));
+    return matchRecorded(rulesOf(v?.snapshot?.mode ?? "duel"), { humanStarters: humans, bots });
   });
   // FFA: our place, the server's (every place is its own: no draws).
   const mine = model.rows.find((r) => r.you);
@@ -916,6 +946,11 @@ function ResultCard() {
           {counted
             ? "Places follow the order you went out in. 1st place counts as a win in your stats, any other place as a loss."
             : `Places follow the order you went out in. Not counted in the stats: it takes ${ROYALE_MIN_RECORDED} players, bots not included.`}
+        </Text>
+      )}
+      {!royale && !counted && (
+        <Text color="secondary" xstyle={styles.resultSub} data-testid="result-stats">
+          Not counted in the stats: a duel against a bot never is.
         </Text>
       )}
       {why && (

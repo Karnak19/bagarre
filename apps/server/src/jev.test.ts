@@ -5,7 +5,7 @@
 // Run with `bun run test` (or `bun test src/jev.test.ts` in apps/server).
 
 import { describe, expect, test } from "bun:test";
-import { buildBotView, MAPS, PISTOL, WEAPONS, type BotView, type BotWorld, type CrateView, type MapDef, type ZoneView } from "@bagarre/shared";
+import { buildBotView, MAPS, PISTOL, TEAM_BLUE, TEAM_RED, WEAPONS, type BotView, type BotWorld, type CrateView, type Goal, type MapDef, type ZoneView } from "@bagarre/shared";
 import { createJevBrain, JEV_URL, JevError, jevRequest, type JevFailure } from "./jev.ts";
 import { Player } from "./state.ts";
 
@@ -183,5 +183,23 @@ describe("the request", () => {
     p.weapon = PISTOL;
     const { answers } = jevRequest(buildBotView(world({ me: p }), "me")!);
     expect([...answers.keys()]).toEqual(["roam"]);
+  });
+
+  test("a duel, an FFA or a team deathmatch (no zone, no chests, no floor items, an empty kit): fight and roam only, never a teammate", () => {
+    const loadout = (x: number, z: number, team: number) => {
+      const p = new Player();
+      p.x = x;
+      p.z = z;
+      p.hp = 100;
+      p.weapon = RIFLE;
+      p.team = team;
+      return p;
+    };
+    const view = buildBotView(world({ me: loadout(0, 0, TEAM_RED), mate: loadout(3, 0, TEAM_RED), foe: loadout(8, 0, TEAM_BLUE) }), "me")!;
+    expect(view.zone).toBeNull();
+    const { body, answers } = jevRequest(view) as { body: { state: Record<string, unknown> }; answers: Map<string, Goal> };
+    expect([...answers.keys()]).toEqual(["fight 1", "roam"]);
+    expect(answers.get("fight 1")).toEqual({ kind: "fight", target: "foe" });
+    expect(body.state).toMatchObject({ gun: "rifle", outside_zone: false, zone_closing: false, zone_edge_m: null, zone_reaches_bot_in_s: null, loot: [] });
   });
 });

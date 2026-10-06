@@ -1,11 +1,12 @@
 // Tests of what a finished match writes into the stats (stats.ts), bots
 // included: a battle royale with bots is recorded only when enough humans
 // started it, and then every account's place counts the bots that finished
-// ahead of it.
+// ahead of it; a duel against a bot never is; an FFA or a team deathmatch
+// with bots records the humans only.
 // Run with `bun run test` (or `bun test src/stats.test.ts` in apps/server).
 
 import { describe, expect, test } from "bun:test";
-import { FFA_RULES, NO_TEAM, ROYALE_RULES } from "@bagarre/shared";
+import { DUEL_RULES, FFA_RULES, NO_TEAM, ROYALE_RULES, TEAM_BLUE, TEAM_RED, TEAM_RULES } from "@bagarre/shared";
 import type { Identity } from "./accounts.ts";
 import { botName } from "./bots.ts";
 import { matchResults, type SeatOutcome } from "./stats.ts";
@@ -60,6 +61,37 @@ describe("matchResults: the other modes", () => {
     expect(results?.map((r) => [r.userId, r.won])).toEqual([
       ["ann", true],
       ["bob", false],
+    ]);
+  });
+});
+
+describe("matchResults: bots in a duel, an FFA, a team deathmatch", () => {
+  test("a duel against a bot: never recorded, won or lost", () => {
+    expect(matchResults(DUEL_RULES, [seat(account("ann"), 1, 2, 0), seat(bot("Bot Ada"), 2)], 1)).toBeNull();
+    expect(matchResults(DUEL_RULES, [seat(bot("Bot Ada"), 1, 2, 0), seat(account("ann"), 2)], 1)).toBeNull();
+  });
+
+  test("a duel between two people: recorded as before", () => {
+    expect(matchResults(DUEL_RULES, [seat(account("ann"), 1, 2, 0), seat(account("bob"), 2)], 0)?.map((r) => [r.userId, r.won])).toEqual([
+      ["ann", true],
+      ["bob", false],
+    ]);
+  });
+
+  test("an FFA with bots: the humans recorded at the place they finished, bots ahead of them included; the bots never", () => {
+    const seats = [seat(bot("Bot Ada"), 1, 5, 0), seat(account("ann"), 2, 3), seat(bot("Bot Rex"), 3), seat(account("bob"), 4)];
+    expect(matchResults(FFA_RULES, seats, 0)).toEqual([
+      { userId: "ann", kills: 3, deaths: 1, won: false, place: 2 },
+      { userId: "bob", kills: 0, deaths: 1, won: false, place: 4 },
+    ]);
+  });
+
+  test("a team deathmatch with bots: the humans on the winning team win, the bots are never recorded", () => {
+    const team = (identity: Identity, place: number, t: number): SeatOutcome => ({ ...seat(identity, place), team: t });
+    const seats = [team(bot("Bot Ada"), 1, TEAM_RED), team(account("ann"), 2, TEAM_RED), team(account("bob"), 3, TEAM_BLUE), team(bot("Bot Rex"), 4, TEAM_BLUE)];
+    expect(matchResults(TEAM_RULES, seats, 0, TEAM_RED)?.map((r) => [r.userId, r.won, r.team])).toEqual([
+      ["ann", true, TEAM_RED],
+      ["bob", false, TEAM_BLUE],
     ]);
   });
 });

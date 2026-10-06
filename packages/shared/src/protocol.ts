@@ -30,9 +30,9 @@ export const MSG_TAKE_SEAT = "seat";
 export const MSG_START = "start";
 /**
  * Host -> room: add a bot to a free seat (MSG_BOT_ADD), or remove the bot
- * added last (MSG_BOT_REMOVE). Payload `{}`. Only in a mode whose host starts
- * it (the battle royale), only honoured from the host, and a bot is only
- * added while waiting, up to the seat cap (`acceptsBot`). A bot is a seat
+ * added last (MSG_BOT_REMOVE). Payload `{}`. In every mode, only honoured
+ * from the host, and a bot is only added while waiting, up to the mode's
+ * seat cap (`acceptsBot`). A bot is a seat
  * with no client, driven by the server (`Player.bot`).
  */
 export const MSG_BOT_ADD = "bot:add";
@@ -313,7 +313,7 @@ export interface PlayerView extends PlayerSim {
   account: boolean;
   /**
    * A bot: a seat the server drives, with no client behind it (added by the
-   * battle royale's host). Never the host; shown with a BOT tag. False from
+   * room's host). Never the host; shown with a BOT tag. False from
    * an older server.
    */
   bot: boolean;

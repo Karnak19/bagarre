@@ -49,7 +49,7 @@ export interface PlayerState {
   mapId: string | null;
   /** The latest snapshot's server tick (0 before any). */
   tick: number;
-  /** Session id of the room's host (the battle royale's host starts the match). */
+  /** Session id of the room's host (the battle royale's host starts the match; in every mode, the host adds bots). */
   host: string;
   /** Warmup: the server tick it ends on (0 outside warmup), and the tick the match clock started on. */
   warmupEnd: number;
@@ -99,7 +99,7 @@ export interface PlayerState {
     name: string;
     /** The server saw an account with a username (false: a guest). */
     account: boolean;
-    /** A bot: a seat the server drives, no client (added by the royale's host). */
+    /** A bot: a seat the server drives, no client (added by the room's host). */
     bot: boolean;
     kills: number;
     deaths: number;
@@ -610,6 +610,20 @@ export async function pressStart(host: Player, n: number) {
   await expect(start).toHaveAttribute("data-ready", "true");
   await start.click();
 }
+
+/**
+ * Sends a bot request ("bot:add" / "bot:remove") straight through the page's
+ * room, as a tampered client would, then lets the server tick past it.
+ */
+export async function sendBot(p: Player, type: "bot:add" | "bot:remove") {
+  const tick = (await p.state()).tick;
+  // oxlint-disable-next-line typescript/no-explicit-any
+  await p.page.evaluate((t) => (window as any).__bagarre.net.room.send(t, {}), type);
+  await expect.poll(async () => (await p.state()).tick, { message: `${p.name}: the server ticked past the bot request` }).toBeGreaterThan(tick + 10);
+}
+
+/** The bot seats in `p`'s latest state. */
+export const bots = async (p: Player) => (await p.state()).players.filter((x) => x.bot);
 
 export class Players {
   private all: Player[] = [];

@@ -494,7 +494,7 @@ export class Net {
     this.delay(() => this.send(MSG_START, {}));
   }
 
-  /** Battle royale host, while waiting: add a bot, or remove the one added last (the server ignores it from anyone else). */
+  /** The host, while waiting (any mode): add a bot, or remove the one added last (the server ignores it from anyone else). */
   sendBot(add: boolean) {
     if (this.status !== "connected" || this.role === "spectator") return;
     this.delay(() => this.send(add ? MSG_BOT_ADD : MSG_BOT_REMOVE, {}));

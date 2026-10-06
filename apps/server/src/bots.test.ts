@@ -3,11 +3,13 @@
 // gone), every bot gets an input every tick, synchronously, and keeps
 // playing; the decision counts and the cap on decisions in flight hold.
 // The world is a real GameState (state.ts) on Ironvale, stepped with the
-// shared `stepPlayer` like GameRoom does, with no room around it.
+// shared `stepPlayer` like GameRoom does, with no room around it; the other
+// modes' bots (no zone, no chests, the loadout kit, teams, respawns) on an
+// FFA map the same way.
 // Run with `bun run test` (or `bun test src/bots.test.ts` in apps/server).
 
 import { describe, expect, test } from "bun:test";
-import { GRENADE_FRAG, HIT_REWIND_TICKS, PISTOL, mapById, readSim, ruleBrain, spawnSim, startKit, stepPlayer, writeSim, type BotBrain, type BotView, type BotWorld, type Goal, type InputMessage } from "@bagarre/shared";
+import { DEFAULT_WEAPON, GRENADE_FRAG, HIT_REWIND_TICKS, NO_TEAM, PISTOL, TEAM_BLUE, TEAM_RED, mapById, readSim, ruleBrain, spawnSim, startKit, stepPlayer, writeSim, type BotBrain, type BotView, type BotWorld, type Goal, type InputMessage } from "@bagarre/shared";
 import { BOT_DECISION_TIMEOUT, BOT_MAX_IN_FLIGHT, BotDriver, saneGoal } from "./bots.ts";
 import { GameState, Player } from "./state.ts";
 
@@ -335,5 +337,124 @@ describe("BotDriver", () => {
     expect(saneGoal({ kind: "fight", target: "" })).toBeNull();
     expect(saneGoal({ kind: "fight", target: 3 })).toBeNull();
     expect(saneGoal(undefined)).toBeNull();
+  });
+});
+
+/**
+ * A duel, an FFA or a team deathmatch: bots on Crossroads (an FFA map) with
+ * the loadout kit (DEFAULT_WEAPON, nothing else), no zone, no chests, no
+ * floor items, playing. `at`: each bot's spot and team.
+ */
+function loadoutRoom(at: { x: number; z: number; team?: number }[]) {
+  const map = mapById("crossroads");
+  const state = new GameState();
+  state.phase = "playing";
+  const ids: string[] = [];
+  at.forEach((s, i) => {
+    const id = `bot:${i + 1}`;
+    const p = new Player();
+    p.weapon = DEFAULT_WEAPON;
+    p.team = s.team ?? NO_TEAM;
+    writeSim(p, spawnSim(s.x, s.z, DEFAULT_WEAPON));
+    state.players.set(id, p);
+    ids.push(id);
+  });
+  const world = (): BotWorld => ({ map, tick: state.tick, phase: state.phase, zone: state.zone, players: state.players, rewound: null, items: state.items, crates: state.crates });
+  const step = (driver: BotDriver): InputMessage[] => {
+    state.tick++;
+    const w = world();
+    return ids.map((id) => {
+      const input = driver.input(w, id)!;
+      expect(input).not.toBeNull();
+      const p = state.players.get(id)!;
+      writeSim(p, stepPlayer(map, readSim(p), input, p.weapon, { act: p.alive, armed: p.alive }, GRENADE_FRAG, "loadout").sim);
+      return input;
+    });
+  };
+  const positions = () => ids.map((id) => ({ x: state.players.get(id)!.x, z: state.players.get(id)!.z }));
+  return { map, state, ids, step, positions };
+}
+
+describe("BotDriver: no zone, no loot (a duel, an FFA, a team deathmatch)", () => {
+  test("two bots in sight of each other: they shoot; alone they roam the map's middle, never stuck on a spot", () => {
+    const map = mapById("crossroads");
+    const spawns = map.spawns.slice(0, 2);
+    const r = loadoutRoom(spawns);
+    const driver = new BotDriver({ brain: ruleBrain });
+    let fired = 0;
+    for (let t = 0; t < 600; t++) fired += r.step(driver).filter((i) => i.fire).length;
+    // Roaming brought them into sight of each other, and they fired.
+    expect(moved(spawns, r.positions())).toBe(2);
+    expect(fired).toBeGreaterThan(0);
+    // Every decision is the rule brain's, none a goal it can't follow with no zone or loot.
+    expect(driver.counts).toMatchObject({ jev: 0, fallback: 0, dropped: 0 });
+  });
+
+  test("teammates alone never fire at each other, and still move", () => {
+    const map = mapById("crossroads");
+    const spawns = map.spawns.slice(0, 2).map((s) => ({ ...s, team: TEAM_RED }));
+    const r = loadoutRoom(spawns);
+    const driver = new BotDriver({ brain: ruleBrain });
+    let fired = 0;
+    for (let t = 0; t < 300; t++) fired += r.step(driver).filter((i) => i.fire).length;
+    expect(fired).toBe(0);
+    expect(moved(spawns, r.positions())).toBeGreaterThanOrEqual(1);
+  });
+
+  test("an enemy next to a teammate: shot at, the teammate never", () => {
+    const r = loadoutRoom([
+      { x: 0, z: 0, team: TEAM_RED },
+      { x: 1.5, z: 0, team: TEAM_RED },
+      { x: 0, z: 5, team: TEAM_BLUE },
+    ]);
+    const driver = new BotDriver({ brain: ruleBrain });
+    let aimedAtFoe = 0;
+    for (let t = 0; t < 60; t++) {
+      const [mine] = r.step(driver);
+      if (!mine.fire) continue;
+      // Bot 1's shots go toward the blue one, never along the line to its red teammate.
+      const foe = r.state.players.get(r.ids[2])!;
+      const me = r.state.players.get(r.ids[0])!;
+      const toFoe = Math.atan2(foe.z - me.z, foe.x - me.x);
+      const off = Math.abs(Math.atan2(Math.sin(mine.aim - toFoe), Math.cos(mine.aim - toFoe)));
+      expect(off).toBeLessThan(0.5);
+      aimedAtFoe++;
+    }
+    expect(aimedAtFoe).toBeGreaterThan(0);
+  });
+
+  test("a dead bot stands still and decides nothing; respawned, it starts afresh and plays on", () => {
+    const map = mapById("crossroads");
+    const r = loadoutRoom(map.spawns.slice(0, 2));
+    let decided = 0;
+    const brain: BotBrain = {
+      decide: (v) => {
+        decided++;
+        return ruleBrain.decide(v);
+      },
+    };
+    const driver = new BotDriver({ brain });
+    for (let t = 0; t < 60; t++) r.step(driver);
+    const dead = r.state.players.get(r.ids[0])!;
+    dead.alive = false;
+    const before = decided;
+    let last: InputMessage | undefined;
+    for (let t = 0; t < 90; t++) {
+      const [input] = r.step(driver);
+      expect([input.mx, input.mz, input.fire]).toEqual([0, 0, false]);
+      last = input;
+    }
+    // Only the living one decided meanwhile (once a second: 3 at most in 90 ticks).
+    expect(decided - before).toBeLessThanOrEqual(3);
+    // Back on a spawn, alive: a decision at once, and it moves off.
+    const spawn = map.spawns[3];
+    writeSim(dead, spawnSim(spawn.x, spawn.z, DEFAULT_WEAPON, readSim(dead)));
+    dead.alive = true;
+    const at = decided;
+    const [first] = r.step(driver);
+    expect(first.seq).toBe(last!.seq + 1);
+    expect(decided).toBeGreaterThan(at);
+    for (let t = 0; t < 120; t++) r.step(driver);
+    expect(Math.hypot(dead.x - spawn.x, dead.z - spawn.z)).toBeGreaterThan(2);
   });
 });
