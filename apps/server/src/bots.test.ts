@@ -85,7 +85,7 @@ async function run(r: ReturnType<typeof room>, driver: BotDriver, n: number) {
 describe("BotDriver", () => {
   test("rule brain: 9 bots get an input each tick, with the seq going up by one, and move off their spawns", () => {
     const r = room(9);
-    const driver = new BotDriver();
+    const driver = new BotDriver({ brain: ruleBrain });
     const start = r.positions();
     const seqs = new Map<string, number>();
     for (let t = 0; t < 300; t++) {
@@ -312,7 +312,7 @@ describe("BotDriver", () => {
 
   test("outside play the bots stand still; a new match keeps their press counters and seq", () => {
     const r = room(2);
-    const driver = new BotDriver();
+    const driver = new BotDriver({ brain: ruleBrain });
     let last: InputMessage[] = [];
     for (let t = 0; t < 200; t++) last = r.step(driver);
     r.state.phase = "waiting";
