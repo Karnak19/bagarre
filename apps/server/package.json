@@ -10,9 +10,10 @@
     "dev": "bun --env-file=../../.env.local --watch src/index.ts",
     "start": "bun --env-file=../../.env.local src/index.ts",
     "build:bin": "bun build src/index.ts --compile --minify --bytecode --format=esm --external @electric-sql/pglite --external drizzle-orm/pglite --external 'drizzle-orm/pglite/*' --outfile dist/bagarre-server",
-    "typecheck": "tsc --noEmit -p .",
+    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p tsconfig.test.json",
     "lint": "oxlint src smoke.ts smoke-accounts.ts smoke-ffa.ts smoke-spectate.ts smoke-teams.ts smoke-warmup.ts",
-    "smoke": "bun --env-file=../../.env.local smoke.ts"
+    "smoke": "bun --env-file=../../.env.local smoke.ts",
+    "test": "bun test ./src"
   },
   "dependencies": {
     "@bagarre/shared": "workspace:*",
@@ -27,6 +28,7 @@
   },
   "devDependencies": {
     "@colyseus/sdk": "^0.18.4",
+    "@types/bun": "^1.4.2",
     "@types/node": "^26.6.3",
     "jose": "^6.2.12",
     "typescript": "^7.0.2"

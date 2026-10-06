@@ -75,6 +75,8 @@ export interface ScoreboardRow {
   /** Most kills, alone at the top (once ended: the winner, 1st). */
   leader: boolean;
   account: boolean;
+  /** A bot (the server drives it): tagged BOT. */
+  bot: boolean;
   /** Lost connection, seat held. */
   away: boolean;
   kills: number;
@@ -152,6 +154,7 @@ export function scoreboardModel(s: Snapshot | null, you: string): ScoreboardMode
     // The winner once ended (a broken tie included); while playing, the one most kills.
     leader: ended ? place === 1 : s?.mode !== "royale" && top > 0 && alone && p.kills === top,
     account: p.account,
+    bot: !!p.bot,
     away: !p.connected,
     kills: p.kills,
     deaths: p.deaths,

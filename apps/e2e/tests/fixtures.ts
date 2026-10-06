@@ -15,6 +15,7 @@
 // - `unique()` / `signUp()` make an account through the account panel.
 
 import { test as base, expect, type Browser, type BrowserContext, type BrowserType, type LaunchOptions, type Page } from "@playwright/test";
+import { GAMES_ROUTE } from "@bagarre/shared";
 import { GL, SERVER_PORT } from "../playwright.config.ts";
 
 /** Every game page pins the map, so a run is the same every time. FFA pins its own. */
@@ -98,6 +99,8 @@ export interface PlayerState {
     name: string;
     /** The server saw an account with a username (false: a guest). */
     account: boolean;
+    /** A bot: a seat the server drives, no client (added by the royale's host). */
+    bot: boolean;
     kills: number;
     deaths: number;
     weapon: number;
@@ -207,6 +210,7 @@ export class Player {
           id,
           name: String(p.name),
           account: !!p.account,
+          bot: !!p.bot,
           kills: Number(p.kills),
           deaths: Number(p.deaths),
           weapon: Number(p.weapon),
@@ -481,6 +485,19 @@ export async function setSmoke(roomId: string, seconds: number): Promise<number[
   const text = await res.text();
   expect(res.status, text).toBe(200);
   return JSON.parse(text) as number[];
+}
+
+/** Whether the e2e server still has that room (server.ts' /room): false once it closed. */
+export async function roomExists(roomId: string): Promise<boolean> {
+  const res = await fetch(`http://localhost:${SERVER_PORT + 1}/room`, { method: "POST", body: JSON.stringify({ roomId }) });
+  return res.status === 200;
+}
+
+/** The game server's open games list (GET /games, the menu's), as its room ids. */
+export async function listedRooms(): Promise<string[]> {
+  const res = await fetch(`http://localhost:${SERVER_PORT}${GAMES_ROUTE}`);
+  const { games } = (await res.json()) as { games: { roomId: string }[] };
+  return games.map((g) => g.roomId);
 }
 
 /** Asks the e2e server to put a player on (x, z) at once (server.ts' /place). */

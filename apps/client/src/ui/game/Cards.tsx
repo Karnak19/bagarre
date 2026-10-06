@@ -33,6 +33,7 @@ import {
   TEAM_SIZE,
   TICK_RATE,
   rulesOf,
+  royaleRecorded,
   type PlayerView,
   type TiebreakReason,
 } from "@bagarre/shared";
@@ -113,6 +114,16 @@ const styles = stylex.create({
   seatName: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   seatAway: { opacity: 0.6 },
   seatHostMark: { marginInlineStart: "auto", flexShrink: 0, color: "var(--bagarre-gold)", fontSize: "12px", fontWeight: 600 },
+  seatBotMark: {
+    marginInlineStart: "auto",
+    flexShrink: 0,
+    padding: "1px 5px",
+    borderRadius: "4px",
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    color: "var(--color-text-secondary)",
+    fontSize: "11px",
+    fontWeight: 700,
+  },
   seatAwayMark: { marginInlineStart: "auto", flexShrink: 0, color: "var(--color-text-yellow)", fontSize: "12px", fontWeight: 600 },
   countdown: { fontSize: "44px", lineHeight: 1, color: "var(--bagarre-sand)" },
   countdownNumber: { color: "var(--bagarre-gold)" },
@@ -120,6 +131,7 @@ const styles = stylex.create({
   invite: { flexGrow: 1, minWidth: 0 },
   nowrap: { whiteSpace: "nowrap", font: "inherit", letterSpacing: "inherit" },
   startBlock: { marginBlockStart: "18px", marginBlockEnd: "14px" },
+  botButtons: { marginBlockStart: "8px" },
   resultTitle: {
     fontSize: "48px",
     lineHeight: 1,
@@ -291,6 +303,7 @@ function Seats({ total = 2, showAway = false, showHost = false, team }: { total?
         name: p === me ? `${p.name} (you)` : p.name,
         away: !p.connected,
         host: p === host,
+        bot: !!p.bot,
       }));
     },
     jsonEqual,
@@ -314,11 +327,17 @@ function Seats({ total = 2, showAway = false, showHost = false, team }: { total?
           data-testid="seat"
           data-away={(showAway && s.away) || undefined}
           data-host={(showHost && s.host) || undefined}
+          data-bot={s.bot || undefined}
         >
           <HStack as="span" xstyle={[shared.dot, slotDot(s.paint)]} aria-hidden="true" />
           <Text as="span" color="inherit" xstyle={[styles.seatName, showAway && slotText(s.paint)]}>
             {s.name}
           </Text>
+          {s.bot && (
+            <Text as="span" xstyle={styles.seatBotMark}>
+              BOT
+            </Text>
+          )}
           {showHost && s.host && !(showAway && s.away) && (
             <Text as="span" xstyle={styles.seatHostMark}>
               host
@@ -504,8 +523,13 @@ function RoyaleWaitingCard() {
     (v) => {
       const away: string[] = [];
       let connected = 0;
-      v?.snapshot?.players.forEach((p) => (p.connected ? connected++ : away.push(p.name)));
-      return { players: v?.snapshot?.players.size ?? 0, connected, away };
+      let bots = 0;
+      v?.snapshot?.players.forEach((p) => {
+        if (p.connected) connected++;
+        else away.push(p.name);
+        if (p.bot) bots++;
+      });
+      return { players: v?.snapshot?.players.size ?? 0, connected, away, bots };
     },
     jsonEqual,
   );
@@ -525,7 +549,7 @@ function RoyaleWaitingCard() {
   const reason =
     seats.away.length >= need
       ? `Waiting for ${seats.away.join(", ")} to reconnect`
-      : `Start needs ${need === 1 ? "one more player" : `${need} more players`}: send them the invite link`;
+      : `Start needs ${need === 1 ? "one more player" : `${need} more players`}: send them the invite link, or add a bot`;
   const count = `${players}/${ROYALE_MAX_PLAYERS} players`;
   const start = useRef<HTMLButtonElement>(null);
   // Made host while the card is up (the host left): Start takes the focus, so Enter presses it.
@@ -598,6 +622,32 @@ function RoyaleWaitingCard() {
               {reason}.
             </Text>
           )}
+          {/* Bots fill the seats nobody takes: the host's alone (the server ignores anyone else's). */}
+          <HStack gap={2} xstyle={styles.botButtons}>
+            <Button
+              label="Add bot"
+              variant="secondary"
+              isDisabled={players >= ROYALE_MAX_PLAYERS}
+              tooltip={players >= ROYALE_MAX_PLAYERS ? "Every seat is taken" : "A bot takes an open seat"}
+              data-testid="royale-add-bot"
+              onClick={() => {
+                gesture();
+                app.addBot();
+              }}
+            />
+            <Button
+              label="Remove bot"
+              variant="secondary"
+              isDisabled={seats.bots === 0}
+              tooltip={seats.bots === 0 ? "No bot to remove" : "Removes the last bot added"}
+              data-testid="royale-remove-bot"
+              data-bots={seats.bots}
+              onClick={() => {
+                gesture();
+                app.removeBot();
+              }}
+            />
+          </HStack>
         </VStack>
       )}
       <Text color="secondary" xstyle={styles.sub}>
@@ -807,8 +857,12 @@ function ResultCard() {
   const royale = model.mode === "royale";
   const ffa = model.mode === "ffa" || royale;
   const teams = model.teams;
-  // Places recorded: a royale started with too few players isn't counted.
-  const counted = useSelector(view, (v) => (v?.snapshot?.players.size ?? 0) >= ROYALE_MIN_RECORDED);
+  // Places recorded: a royale started with too few people isn't counted (bots don't count toward it).
+  const counted = useSelector(view, (v) => {
+    let humans = 0;
+    v?.snapshot?.players.forEach((p) => (humans += p.bot ? 0 : 1));
+    return royaleRecorded(humans);
+  });
   // FFA: our place, the server's (every place is its own: no draws).
   const mine = model.rows.find((r) => r.you);
   // Teams: our team's result; a spectator (or a player without a team) reads which team won.
@@ -861,7 +915,7 @@ function ResultCard() {
         <Text color="secondary" xstyle={styles.resultSub} data-testid="result-stats">
           {counted
             ? "Places follow the order you went out in. 1st place counts as a win in your stats, any other place as a loss."
-            : `Places follow the order you went out in. Not counted in the stats: it takes ${ROYALE_MIN_RECORDED} players.`}
+            : `Places follow the order you went out in. Not counted in the stats: it takes ${ROYALE_MIN_RECORDED} players, bots not included.`}
         </Text>
       )}
       {why && (

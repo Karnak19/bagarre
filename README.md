@@ -696,7 +696,17 @@ the royale map's layout, see [docs/royale-maps.md](docs/royale-maps.md)).
 - **Stats**: like FFA, 1st place is a win and every other place a loss,
   kept on `bagarre_matches` with `mode: "royale"`. A royale that started
   with fewer than 3 players isn't recorded (`ROYALE_MIN_RECORDED`): with two,
-  one kill would be a win. The result card says which.
+  one kill would be a win. Bots don't count toward it: a royale with bots
+  is recorded only if at least 3 people started it (`royaleRecorded`), and
+  then places count the bots that finished ahead. The result card says which.
+- **Bots**: in the lobby the host has Add bot and Remove bot next to Start
+  (nobody else sees them, and the server ignores anyone else's requests). A
+  bot takes an open seat, up to the 10, with a bot name ("Bot Ada") and a
+  BOT tag on the seats, its name plate, the scoreboard and the placement
+  table. It counts toward the 2 needed to start, so one person with bots can
+  play. A bot never becomes host, and a room left with only bots closes.
+  The server drives bots itself (`apps/server/src/bots.ts`, `botInput`):
+  for now they stand still.
 - **After the result** (10 s, `ROYALE_END_DELAY`): no rematch on its own.
   Everyone still in the room is back in the lobby, on their feet with the
   Pistol, and the host starts the next match with Start, like the first.

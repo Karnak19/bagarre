@@ -878,8 +878,10 @@ export class Match {
       m.setHealing(s.alive && s.kit.heal !== NO_HEAL ? healProgress(s.kit) : -1);
       // Their plate follows the interpolated body, and shows what it shows (hits land when drawn).
       const fade = veil === "hidden" ? 0 : veil === "faded" ? FADED_OPACITY : 1;
-      // Their perk, as a glyph after the name: what they hold is everyone's to see.
-      scene.plates.set(id, s.x, s.z, s.name, paintOf(s), s.hp / MAX_HP, shield, s.alive, s.connected, showNames, fade, perkView(s.perk)?.icon ?? "");
+      // Their perk, as a glyph after the name: what they hold is everyone's to see. A bot's plate says BOT, first.
+      const perk = perkView(s.perk)?.icon ?? "";
+      const badge = s.bot ? (perk ? `BOT ${perk}` : "BOT") : perk;
+      scene.plates.set(id, s.x, s.z, s.name, paintOf(s), s.hp / MAX_HP, shield, s.alive, s.connected, showNames, fade, badge);
       if (!s.alive) return;
       // Our predicted bullets stop on whoever they can hurt, and fly through
       // teammates, like the server's (canDamage).

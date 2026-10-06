@@ -31,6 +31,8 @@ import { matches, users, type Database, type Placement } from "./db.ts";
 
 export type Identity =
   | { kind: "guest"; name: string }
+  /** A seat the server drives (bots.ts), added by a battle royale's host: no client, never recorded. */
+  | { kind: "bot"; name: string }
   | {
       kind: "account";
       name: string;

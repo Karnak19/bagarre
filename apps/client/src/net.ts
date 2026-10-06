@@ -7,6 +7,8 @@ import {
   MSG_PING,
   MSG_PONG,
   MSG_START,
+  MSG_BOT_ADD,
+  MSG_BOT_REMOVE,
   MSG_TAKE_SEAT,
   MSG_TEAM,
   NO_TEAM,
@@ -490,6 +492,12 @@ export class Net {
   sendStart() {
     if (this.status !== "connected" || this.role === "spectator") return;
     this.delay(() => this.send(MSG_START, {}));
+  }
+
+  /** Battle royale host, while waiting: add a bot, or remove the one added last (the server ignores it from anyone else). */
+  sendBot(add: boolean) {
+    if (this.status !== "connected" || this.role === "spectator") return;
+    this.delay(() => this.send(add ? MSG_BOT_ADD : MSG_BOT_REMOVE, {}));
   }
 
   /** Spectator: take the free seat (the role flips on the snapshot that has us in `players`). */
