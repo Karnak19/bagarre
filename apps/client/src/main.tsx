@@ -21,7 +21,7 @@ import { EngineContext } from "./ui/hooks.ts";
 // into this bundle at build time (import.meta.env.VITE_SENTRY_DSN). Unset in
 // dev, where the browser reports nothing.
 const sentryDsn = import.meta.env.VITE_SENTRY_DSN;
-if (sentryDsn) Sentry.init({ dsn: sentryDsn });
+if (sentryDsn) Sentry.init({ dsn: sentryDsn, release: import.meta.env.VITE_SENTRY_RELEASE });
 
 const config = bootConfig();
 let router: AppRouter | null = null;
