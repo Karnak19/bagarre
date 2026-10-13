@@ -37,6 +37,9 @@ services:
       # key, so it has a committed default: the container gets it with no
       # Coolify env var. Only read at runtime (process.env.SENTRY_DSN).
       SENTRY_DSN: ${SENTRY_DSN:-https://7be5b705786c413796e0dbb26dc464b7@rustrack.bazlab.si/4}
+      # The release tag every event and session carries: the deploy's commit
+      # sha (SOURCE_COMMIT, which Coolify sets), unless overridden explicitly.
+      SENTRY_RELEASE: ${SENTRY_RELEASE:-${SOURCE_COMMIT:-}}
     depends_on:
       db:
         condition: service_healthy
@@ -56,6 +59,9 @@ services:
         # Same public key as the server's SENTRY_DSN, inlined into the browser
         # bundle at build time (import.meta.env.VITE_SENTRY_DSN).
         VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-https://7be5b705786c413796e0dbb26dc464b7@rustrack.bazlab.si/4}
+        # The release tag inlined into the bundle at build time (vite.config.ts):
+        # the deploy's commit sha (SOURCE_COMMIT), unless overridden explicitly.
+        SENTRY_RELEASE: ${SENTRY_RELEASE:-${SOURCE_COMMIT:-}}
     restart: unless-stopped
     expose:
       - "80"

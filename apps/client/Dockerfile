@@ -26,6 +26,13 @@ ENV VITE_SERVER_URL=$VITE_SERVER_URL
 # `docker build` without compose passes none, so the client reports nothing.
 ARG VITE_SENTRY_DSN
 ENV VITE_SENTRY_DSN=$VITE_SENTRY_DSN
+
+# The Rustrak release tag inlined into the bundle at build time (vite.config.ts
+# reads process.env.SENTRY_RELEASE). Passed by docker-compose.yaml from
+# SENTRY_RELEASE / SOURCE_COMMIT; a bare `docker build` gets none, so vite falls
+# back to the local git sha or "dev".
+ARG SENTRY_RELEASE
+ENV SENTRY_RELEASE=$SENTRY_RELEASE
 RUN cd apps/client && bun run build
 
 FROM caddy:2-alpine

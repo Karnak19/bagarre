@@ -9,7 +9,10 @@ import { createServer } from "./app.ts";
 // `bun build --compile` binary does not have, so the server also reports
 // explicitly where it catches errors (GameRoom.onUncaughtException).
 const sentryDsn = process.env.SENTRY_DSN?.trim();
-if (sentryDsn) Sentry.init({ dsn: sentryDsn });
+// The release tag (the deploy's commit sha, from docker-compose.yaml). Unset
+// in dev and in the smoke/e2e servers, which report nothing anyway.
+const sentryRelease = process.env.SENTRY_RELEASE?.trim();
+if (sentryDsn) Sentry.init({ dsn: sentryDsn, ...(sentryRelease ? { release: sentryRelease } : {}) });
 
 const port = Number(process.env.PORT ?? SERVER_PORT);
 
