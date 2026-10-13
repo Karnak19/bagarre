@@ -65,6 +65,7 @@ import {
   type RoomException,
   type RoomMethodName,
 } from "@colyseus/core";
+import * as Sentry from "@sentry/bun";
 import {
   BULLET_RADIUS,
   DEFAULT_MAP_ID,
@@ -946,10 +947,12 @@ export class GameRoom extends Room<{ state: GameState; metadata: RoomMeta }> {
   /**
    * Room errors (a throwing tick, message handler or timer) are logged here
    * instead of reaching the process: without this hook, Colyseus' uncaught
-   * exception handler shuts the whole server down.
+   * exception handler shuts the whole server down. Reported to Sentry too:
+   * this is where the server's errors surface (see index.ts).
    */
   onUncaughtException(err: RoomException, methodName: RoomMethodName) {
     console.error(`[room ${this.roomId}] ${methodName} failed:`, err.cause ?? err);
+    Sentry.captureException(err.cause ?? err);
   }
 
   /** Gone for good: a Leave, the grace period running out, or a shutdown. Frees the seat. */

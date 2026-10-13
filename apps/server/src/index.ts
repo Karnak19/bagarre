@@ -1,5 +1,15 @@
+import * as Sentry from "@sentry/bun";
 import { GAMES_ROUTE, SERVER_PORT } from "@bagarre/shared";
 import { createServer } from "./app.ts";
+
+// Error tracking (our self-hosted Rustrak, Sentry protocol). The DSN is a
+// public ingest key set by docker-compose.yaml and read from the environment at
+// startup. Unset in dev and in the smoke/e2e servers, which report nothing.
+// Sentry's auto-instrumentation needs module hooks that a bundled
+// `bun build --compile` binary does not have, so the server also reports
+// explicitly where it catches errors (GameRoom.onUncaughtException).
+const sentryDsn = process.env.SENTRY_DSN?.trim();
+if (sentryDsn) Sentry.init({ dsn: sentryDsn });
 
 const port = Number(process.env.PORT ?? SERVER_PORT);
 

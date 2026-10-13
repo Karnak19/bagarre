@@ -20,6 +20,12 @@ COPY apps/client apps/client
 # A path: the browser talks to the game server through this same origin.
 ARG VITE_SERVER_URL=/colyseus
 ENV VITE_SERVER_URL=$VITE_SERVER_URL
+
+# Error tracking (Sentry protocol): the same public Rustrak key as the server's
+# SENTRY_DSN, passed by docker-compose.yaml's client build args. A bare
+# `docker build` without compose passes none, so the client reports nothing.
+ARG VITE_SENTRY_DSN
+ENV VITE_SENTRY_DSN=$VITE_SENTRY_DSN
 RUN cd apps/client && bun run build
 
 FROM caddy:2-alpine

@@ -23,6 +23,7 @@
     "@colyseus/schema": "^5.0.34",
     "@colyseus/ws-transport": "^0.18.4",
     "@electric-sql/pglite": "^0.5.8",
+    "@sentry/bun": "^11.7.0",
     "drizzle-orm": "1.0.0-rc.2",
     "postgres": "^3.4.7"
   },

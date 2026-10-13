@@ -23,6 +23,7 @@
     "@astryxdesign/theme-neutral": "^0.6.3",
     "@bagarre/shared": "workspace:*",
     "@colyseus/sdk": "^0.18.4",
+    "@sentry/react": "^11.7.0",
     "@stylexjs/stylex": "^0.19.1",
     "@tanstack/react-router": "^1.170.39",
     "react": "^19.3.0",

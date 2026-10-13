@@ -33,6 +33,10 @@ services:
       MAIL_FROM: ${MAIL_FROM:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       JEV_DAILY_BUDGET_USD: ${JEV_DAILY_BUDGET_USD:-}
+      # Error tracking (Sentry protocol), our self-hosted Rustrak. Public ingest
+      # key, so it has a committed default: the container gets it with no
+      # Coolify env var. Only read at runtime (process.env.SENTRY_DSN).
+      SENTRY_DSN: ${SENTRY_DSN:-https://7be5b705786c413796e0dbb26dc464b7@rustrack.bazlab.si/4}
     depends_on:
       db:
         condition: service_healthy
@@ -49,6 +53,9 @@ services:
       dockerfile: apps/client/Dockerfile
       args:
         VITE_SERVER_URL: ${VITE_SERVER_URL:-/colyseus}
+        # Same public key as the server's SENTRY_DSN, inlined into the browser
+        # bundle at build time (import.meta.env.VITE_SENTRY_DSN).
+        VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-https://7be5b705786c413796e0dbb26dc464b7@rustrack.bazlab.si/4}
     restart: unless-stopped
     expose:
       - "80"
